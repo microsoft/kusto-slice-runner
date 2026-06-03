@@ -174,9 +174,9 @@
         pointBorderColor: "#fff",
         pointBorderWidth: 1.25,
         pointHitRadius: 10,
-        pointHoverRadius: 5,
+        pointHoverRadius: 10,
         pointRadius: function (context) {
-          return context.raw && context.raw.y !== null ? 2.75 : 0;
+          return context.raw && context.raw.y !== null ? 5.5 : 0;
         },
         tension: 0.22,
         spanGaps: false
@@ -305,13 +305,13 @@
         pointBorderColor: "#fff",
         pointBorderWidth: 1.25,
         pointHitRadius: 10,
-        pointHoverRadius: 5,
+        pointHoverRadius: 10,
         pointRadius: function (context) {
           var raw = context.raw || {};
-          return raw.y !== null && typeof raw.y !== "undefined" && raw.y !== 0 ? 2.75 : 0;
+          return raw.y !== null && typeof raw.y !== "undefined" && raw.y !== 0 ? 5.5 : 0;
         },
         tension: isDurationChart ? 0.18 : 0,
-        spanGaps: false
+        spanGaps: isDurationChart
       };
     });
 
