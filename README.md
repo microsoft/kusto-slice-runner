@@ -32,7 +32,8 @@ From the repository root:
 ```powershell
 npm ci
 
-dotnet run --project .\src\KoLite.LocalApp\KoLite.LocalApp.csproj```
+dotnet run --project .\src\KoLite.LocalApp\KoLite.LocalApp.csproj
+```
 
 Open `http://127.0.0.1:5057` and check `http://127.0.0.1:5057/status/health`
 
