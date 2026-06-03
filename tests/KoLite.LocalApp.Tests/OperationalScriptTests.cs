@@ -20,7 +20,7 @@ namespace KoLite.LocalApp.Tests
         [Fact]
         public void Stop_script_defaults_to_dry_run_and_uses_graceful_drain_endpoint()
         {
-            var script = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "scripts", "Stop-KoLitePublishedApp.ps1"));
+            var script = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "scripts", "Stop-KoLiteApp.ps1"));
 
             Assert.Contains("[switch]$DryRun", script, StringComparison.Ordinal);
             Assert.Contains("if ($DryRun)", script, StringComparison.Ordinal);
