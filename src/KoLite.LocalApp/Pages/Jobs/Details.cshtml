@@ -1,0 +1,221 @@
+@page "/jobs/{jobId}"
+@model KoLite.LocalApp.Pages.Jobs.DetailsModel
+@{
+    ViewData["Title"] = Model.Data?.Job.JobId ?? "Job";
+}
+
+@if (Model.Data is null || Model.Editor is null)
+{
+    <section class="card"><h1>Job not found</h1></section>
+}
+else
+{
+    var data = Model.Data;
+    var showPausedIndicator = data.Lifecycle?.IsSoftDeleted != true && (!data.Job.IsEnabled || data.Definition.IsPaused);
+    <div class="page-heading">
+        <div>
+            <h1>@data.Job.JobId</h1>
+            <p class="muted">@data.Definition.FunctionName -> @data.Definition.OutputTable</p>
+        </div>
+        @if (showPausedIndicator)
+        {
+            <div class="paused-job-indicator" role="status">
+                <span class="badge badge-warning">Paused</span>
+                <span>Scheduling is paused. New slices and queued retries will not run until this job is resumed.</span>
+            </div>
+        }
+        <div class="button-row">
+            <a class="btn" href="/">Back to jobs</a>
+            <a class="btn" href="/catalog/@Uri.EscapeDataString(data.Job.JobId)/export">Export</a>
+            <a class="btn" href="/catalog/@Uri.EscapeDataString(data.Job.JobId)/copy">Copy</a>
+            @if (data.Lifecycle?.IsSoftDeleted == true)
+            {
+                <form method="post" action="/catalog/@Uri.EscapeDataString(data.Job.JobId)/restore" class="inline-form">
+                    @Html.AntiForgeryToken()
+                    <input type="hidden" name="expectedVersion" value="@data.Job.CatalogVersion" />
+                    <input type="hidden" name="reason" value="Restored from details page" />
+                    <button class="btn" type="submit">Restore</button>
+                </form>
+                <a class="btn danger" href="/catalog/@Uri.EscapeDataString(data.Job.JobId)/hard-delete">Hard delete</a>
+            }
+            else
+            {
+                @if (data.Job.IsEnabled)
+                {
+                    <form method="post" action="/catalog/@Uri.EscapeDataString(data.Job.JobId)/disable" class="inline-form">
+                        @Html.AntiForgeryToken()
+                        <input type="hidden" name="expectedVersion" value="@data.Job.CatalogVersion" />
+                        <button class="btn" type="submit">Pause</button>
+                    </form>
+                }
+                else
+                {
+                    <form method="post" action="/catalog/@Uri.EscapeDataString(data.Job.JobId)/enable" class="inline-form">
+                        @Html.AntiForgeryToken()
+                        <input type="hidden" name="expectedVersion" value="@data.Job.CatalogVersion" />
+                        <button class="btn" type="submit">Resume</button>
+                    </form>
+                }
+                <form method="post" action="/catalog/@Uri.EscapeDataString(data.Job.JobId)/soft-delete" class="inline-form">
+                    @Html.AntiForgeryToken()
+                    <input type="hidden" name="expectedVersion" value="@data.Job.CatalogVersion" />
+                    <input type="hidden" name="reason" value="Soft deleted from details page" />
+                    <button class="btn danger" type="submit">Soft delete</button>
+                </form>
+            }
+        </div>
+    </div>
+
+    <section class="card">
+        <div class="card-header">
+            <div>
+                <h2>Slice history</h2>
+                <p class="muted">Each cell is one scheduled slice. Colors distinguish completed, completed after retry, queued, running, paused, failed, and missing work.</p>
+            </div>
+            <a class="btn small" href="/jobs/@Uri.EscapeDataString(data.Job.JobId)/history">Open full history</a>
+        </div>
+        <partial name="_SliceHistory" model="data.SliceHistory" />
+    </section>
+
+    <section class="section-block">
+        <div class="section-title">
+            <h2>Job definition</h2>
+            <p class="muted">Edit the schedule fields or the raw schedule JSON for this job.</p>
+        </div>
+        <partial name="_ScheduleEditor" model="Model.Editor" />
+    </section>
+
+    <section class="section-block">
+        <div class="section-title">
+            <h2>Operations</h2>
+            <p class="muted">Recent execution attempts, state events, and logs for this job.</p>
+        </div>
+        <div class="grid-two">
+        <div class="card">
+            <div class="card-header">
+                <h3>Recent attempts</h3>
+                <span class="muted">@data.RecentAttempts.Count row(s)</span>
+            </div>
+            @if (data.RecentAttempts.Count == 0)
+            {
+                <p class="empty">No attempts recorded.</p>
+            }
+            else
+            {
+                <div class="table-wrap scroll-panel">
+                    <table class="ko-table compact">
+                        <thead><tr><th>Slice</th><th>Attempt</th><th>Status</th><th>Completed</th><th>Error</th></tr></thead>
+                        <tbody>
+                        @foreach (var attempt in data.RecentAttempts)
+                        {
+                            <tr>
+                                <td><a href="/jobs/@Uri.EscapeDataString(data.Job.JobId)/slices?start=@Uri.EscapeDataString(AppFormatting.Iso(attempt.SliceStartUtc))&end=@Uri.EscapeDataString(AppFormatting.Iso(attempt.SliceEndUtc))">@AppFormatting.Iso(attempt.SliceStartUtc)</a></td>
+                                <td>@attempt.Attempt</td>
+                                <td><span class="badge @AppFormatting.BadgeCss(attempt.Status)">@attempt.Status</span></td>
+                                <td>@AppFormatting.Local(attempt.CompletedAtUtc)</td>
+                                <td><span class="text-truncate" title="@attempt.ErrorMessage">@attempt.ErrorMessage</span></td>
+                            </tr>
+                        }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </div>
+        <div class="card">
+            <div class="card-header">
+                <h3>Recent logs and events</h3>
+                <span class="muted">Latest activity</span>
+            </div>
+            @if (data.RecentLogs.Count == 0 && data.RecentEvents.Count == 0)
+            {
+                <p class="empty">No logs or events recorded.</p>
+            }
+            else
+            {
+                <div class="scroll-panel">
+                    <ul class="plain-list dense-list">
+                        @foreach (var evt in data.RecentEvents)
+                        {
+                            <li><span class="badge">@evt.EventType</span> @AppFormatting.Iso(evt.SliceStartUtc) <span class="muted">@AppFormatting.Local(evt.RecordedAtUtc)</span> @evt.Reason</li>
+                        }
+                        @foreach (var log in data.RecentLogs)
+                        {
+                            <li><span class="badge">@log.Level</span> @log.Message <span class="muted">@AppFormatting.Local(log.RecordedAtUtc)</span></li>
+                        }
+                    </ul>
+                </div>
+            }
+        </div>
+        </div>
+    </section>
+
+    <section class="section-block">
+        <div class="section-title">
+            <h2>Change history</h2>
+            <p class="muted">Catalog history tracks schedule definition versions and highlights JSON changes between versions.</p>
+        </div>
+        <div class="card">
+            <div class="card-header">
+                <h3>Catalog definition history</h3>
+                <span class="muted">@data.CatalogHistory.Count version(s)</span>
+            </div>
+            @if (data.CatalogHistory.Count == 0)
+            {
+                <p class="empty">No catalog history recorded.</p>
+            }
+            else
+            {
+                <ul class="plain-list catalog-history-list">
+                    @foreach (var history in data.CatalogHistory)
+                    {
+                        <li>
+                            <div class="catalog-history-entry-header">
+                                <strong>Catalog version @(history.CatalogVersion)</strong>
+                                <span class="badge">@history.EventType</span>
+                                <span class="muted">@AppFormatting.Local(history.RecordedAtUtc)</span>
+                                @if (!string.IsNullOrWhiteSpace(history.Actor))
+                                {
+                                    <span class="muted">by @history.Actor</span>
+                                }
+                            </div>
+                            @if (history.IsInitialDefinition)
+                            {
+                                <p class="muted catalog-history-note">Initial schedule definition.</p>
+                            }
+                            else if (!history.HasScheduleChanges)
+                            {
+                                <p class="muted catalog-history-note">No schedule JSON changes.</p>
+                            }
+                            else
+                            {
+                                <div class="table-wrap">
+                                    <table class="ko-table compact catalog-diff-table">
+                                        <thead>
+                                            <tr>
+                                                <th>Path</th>
+                                                <th>Change</th>
+                                                <th>Previous</th>
+                                                <th>Current</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                        @foreach (var diff in history.DiffRows)
+                                        {
+                                            <tr>
+                                                <td class="catalog-diff-path"><code>@diff.Path</code></td>
+                                                <td><span class="badge">@diff.ChangeType</span></td>
+                                                <td class="catalog-diff-value">@(diff.PreviousValue ?? "-")</td>
+                                                <td class="catalog-diff-value">@(diff.CurrentValue ?? "-")</td>
+                                            </tr>
+                                        }
+                                        </tbody>
+                                    </table>
+                                </div>
+                            }
+                        </li>
+                    }
+                </ul>
+            }
+        </div>
+    </section>
+}

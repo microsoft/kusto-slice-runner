@@ -1,0 +1,15 @@
+bin/
+obj/
+TestResults/
+node_modules/
+.playwright-mcp/
+*.user
+*.db
+*.db-shm
+*.db-wal
+*.db-journal
+*.log
+logs/
+artifacts/
+publish/
+run-app/

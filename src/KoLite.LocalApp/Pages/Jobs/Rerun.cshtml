@@ -1,0 +1,79 @@
+@page "/jobs/{jobId}/rerun"
+@model KoLite.LocalApp.Pages.Jobs.RerunModel
+@{
+    ViewData["Title"] = "Plan rerun";
+}
+
+<div class="page-heading">
+    <div>
+        <h1>Plan rerun: @Model.JobId</h1>
+        <p class="muted">Reset selected slices and affected downstream slices after you manually handle Kusto cleanup.</p>
+    </div>
+    <a class="btn" href="/jobs/@Uri.EscapeDataString(Model.JobId)">Back to details</a>
+</div>
+
+<section class="card form-card">
+    @if (Model.ErrorMessage is not null)
+    {
+        <div class="alert danger">@Model.ErrorMessage</div>
+    }
+    <form method="get" action="/jobs/@Uri.EscapeDataString(Model.JobId)/rerun">
+        <div class="form-grid">
+            <label>Start (UTC)<input type="datetime-local" name="start" value="@Model.StartInput" /></label>
+            <label>End (UTC)<input type="datetime-local" name="end" value="@Model.EndInput" /></label>
+            <label>Requested by<input type="text" name="requestedBy" value="@Model.RequestedBy" /></label>
+            <label>Reason<input type="text" name="reason" value="@Model.Reason" /></label>
+        </div>
+        <button class="btn primary" type="submit">Preview rerun</button>
+    </form>
+</section>
+
+@if (Model.Plan is not null)
+{
+    <section class="card">
+        <div class="card-header">
+            <h2>Rerun plan</h2>
+            <span class="badge @AppFormatting.BadgeCss(Model.Plan.Status.ToString())">@Model.Plan.Status</span>
+        </div>
+        @if (!Model.Plan.CanExecute)
+        {
+            <div class="alert warning">This plan has active queued or running slices. Wait for them to finish before executing the rerun.</div>
+        }
+        <p class="muted">@Model.Plan.Slices.Count affected slice(s), including downstream jobs.</p>
+        <div class="table-wrap">
+            <table class="ko-table compact">
+                <thead><tr><th>Role</th><th>Job</th><th>Slice</th><th>Previous</th><th>Local rows</th><th>Blocker</th></tr></thead>
+                <tbody>
+                @foreach (var slice in Model.Plan.Slices)
+                {
+                    <tr>
+                        <td>@slice.Role</td>
+                        <td>@slice.JobId</td>
+                        <td>@AppFormatting.Iso(slice.Slice.StartUtc) - @AppFormatting.Iso(slice.Slice.EndUtc)</td>
+                        <td>@(slice.PreviousState ?? "Missing") attempt @(slice.PreviousAttempt ?? 0)</td>
+                        <td>queue @slice.QueueRows, attempts @slice.AttemptRows, events @slice.EventRows, logs @slice.LogRows</td>
+                        <td>@slice.BlockerReason</td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    </section>
+
+    <section class="card">
+        <div class="card-header"><h2>Suggested Kusto cleanup</h2></div>
+        <p class="muted">Run or adapt these commands before executing the rerun. KO Lite will ask you to acknowledge cleanup, but it will not run these commands for you.</p>
+        <pre class="code-block">@Model.Plan.KustoCleanupCommands</pre>
+    </section>
+
+    <section class="card">
+        <form method="post" action="/jobs/@Uri.EscapeDataString(Model.JobId)/rerun">
+            @Html.AntiForgeryToken()
+            <input type="hidden" name="start" value="@Model.StartInput" />
+            <input type="hidden" name="end" value="@Model.EndInput" />
+            <input type="hidden" name="requestedBy" value="@Model.RequestedBy" />
+            <input type="hidden" name="reason" value="@Model.Reason" />
+            <button class="btn primary" type="submit">Create rerun batch</button>
+        </form>
+    </section>
+}

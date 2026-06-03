@@ -1,0 +1,20 @@
+@page "/catalog/create"
+@model KoLite.LocalApp.Pages.Catalog.CreateModel
+@{
+    ViewData["Title"] = "Create job";
+}
+
+<div class="page-heading">
+    <div>
+        <h1>Create job</h1>
+        <p class="muted">Fix validation errors and submit again.</p>
+    </div>
+    <a class="btn" href="/">Back to jobs</a>
+</div>
+
+@if (!string.IsNullOrWhiteSpace(Model.ErrorMessage))
+{
+    <div class="alert danger">@Model.ErrorMessage</div>
+}
+
+<partial name="_ScheduleEditor" model="Model.Editor" />

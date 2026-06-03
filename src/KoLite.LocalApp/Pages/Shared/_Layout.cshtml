@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>@ViewData["Title"] - KO Lite</title>
+    <link rel="stylesheet" href="/css/site.css" />
+</head>
+<body>
+    <header class="topbar">
+        <a class="brand" href="/">KO Lite</a>
+        <nav>
+            <a href="/">Jobs</a>
+            <a href="/catalog/new">New job</a>
+            <a href="/catalog/import">Import</a>
+            <a href="/status/health">Health</a>
+        </nav>
+    </header>
+    <main class="container">
+        @RenderBody()
+    </main>
+    <script src="/lib/chartjs/chart.umd.min.js"></script>
+    <script src="/js/site.js"></script>
+    @await RenderSectionAsync("Scripts", required: false)
+</body>
+</html>

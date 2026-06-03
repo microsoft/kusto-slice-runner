@@ -1,0 +1,109 @@
+@page "/reruns/{rerunBatchId}"
+@model KoLite.LocalApp.Pages.Reruns.DetailsModel
+@{
+    ViewData["Title"] = "Rerun batch";
+}
+
+@if (Model.Batch is null)
+{
+    <section class="card"><h1>Rerun batch not found</h1></section>
+}
+else
+{
+    var batch = Model.Batch;
+    var blockers = batch.Slices.Where(s => s.BlockerReason is not null).ToList();
+    <div class="page-heading">
+        <div>
+            <h1>Rerun batch</h1>
+            <p class="muted">@batch.RootJobId: @AppFormatting.Iso(batch.RootStartUtc) - @AppFormatting.Iso(batch.RootEndUtc)</p>
+        </div>
+        <a class="btn" href="/jobs/@Uri.EscapeDataString(batch.RootJobId)">Back to job</a>
+    </div>
+
+    <section class="summary-grid">
+        <div class="stat-card"><span class="stat-label">Status</span><strong>@batch.Status</strong></div>
+        <div class="stat-card"><span class="stat-label">Affected slices</span><strong>@batch.Slices.Count</strong></div>
+        <div class="stat-card"><span class="stat-label">Cleanup acknowledged</span><strong>@(batch.KustoCleanupAcknowledged ? "Yes" : "No")</strong></div>
+        <div class="stat-card"><span class="stat-label">Requested</span><strong>@AppFormatting.Local(batch.RequestedAtUtc)</strong></div>
+    </section>
+
+    <section class="card">
+        <div class="card-header"><h2>Reason</h2></div>
+        <p>@batch.Reason</p>
+    </section>
+
+    @if (blockers.Count > 0)
+    {
+        <section class="card">
+            <div class="card-header"><h2>Execution blockers</h2></div>
+            <div class="alert warning">Rerun cannot execute while affected slices are queued, leased, or running.</div>
+            <ul class="plain-list">
+                @foreach (var slice in blockers)
+                {
+                    <li><strong>@slice.JobId</strong> @AppFormatting.Iso(slice.Slice.StartUtc) - @AppFormatting.Iso(slice.Slice.EndUtc): @slice.BlockerReason</li>
+                }
+            </ul>
+        </section>
+    }
+
+    <section class="card">
+        <div class="card-header"><h2>Suggested Kusto cleanup</h2></div>
+        <p class="muted">Run or adapt these commands before executing the rerun. KO Lite records your acknowledgement but does not run Kusto cleanup.</p>
+        <pre class="code-block">@batch.KustoCleanupCommands</pre>
+    </section>
+
+    @if (batch.Status != RerunBatchStatus.Completed)
+    {
+        <section class="card">
+            <div class="card-header"><h2>Execute rerun</h2></div>
+            @if (blockers.Count == 0)
+            {
+                <form method="post" action="/reruns/@Uri.EscapeDataString(batch.RerunBatchId)/execute">
+                    @Html.AntiForgeryToken()
+                    <label class="checkbox-row">
+                        <input type="checkbox" name="kustoCleanupAcknowledged" value="true" />
+                        I acknowledge that Kusto cleanup has been handled or intentionally skipped.
+                    </label>
+                    <button class="btn primary" type="submit">Reset local state for rerun</button>
+                </form>
+            }
+            else
+            {
+                <p class="empty">Resolve blockers before executing this rerun.</p>
+            }
+        </section>
+    }
+
+    <section class="card">
+        <div class="card-header"><h2>Affected slices</h2></div>
+        <div class="table-wrap">
+            <table class="ko-table compact">
+                <thead><tr><th>Role</th><th>Job</th><th>Slice</th><th>Previous</th><th>Status</th><th>Old local rows</th></tr></thead>
+                <tbody>
+                @foreach (var slice in batch.Slices)
+                {
+                    <tr>
+                        <td>@slice.Role</td>
+                        <td>@slice.JobId</td>
+                        <td>@AppFormatting.Iso(slice.Slice.StartUtc) - @AppFormatting.Iso(slice.Slice.EndUtc)</td>
+                        <td>@(slice.PreviousState ?? "Missing") attempt @(slice.PreviousAttempt ?? 0)</td>
+                        <td>@slice.Status</td>
+                        <td>queue @slice.QueueRows, attempts @slice.AttemptRows, events @slice.EventRows, logs @slice.LogRows</td>
+                    </tr>
+                    @if (slice.Status == RerunSliceStatus.Reset)
+                    {
+                        <tr>
+                            <td colspan="6">
+                                <details>
+                                    <summary>Archived previous local details</summary>
+                                    <pre class="code-block">@slice.SnapshotJson</pre>
+                                </details>
+                            </td>
+                        </tr>
+                    }
+                }
+                </tbody>
+            </table>
+        </div>
+    </section>
+}

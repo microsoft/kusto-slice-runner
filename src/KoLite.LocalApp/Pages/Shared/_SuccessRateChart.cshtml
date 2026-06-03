@@ -1,0 +1,44 @@
+@using System.Text.Json
+@model SuccessRateChart
+
+@{
+    var chartId = Model.Title.Contains("After Retries", StringComparison.OrdinalIgnoreCase)
+        ? "success-rate-after-retries-chart"
+        : "success-rate-by-function-chart";
+    var seriesWithData = Model.Series.Where(s => s.Points.Any(p => p.Denominator > 0)).ToArray();
+    var payload = new
+    {
+        title = Model.Title,
+        rangeStartUtc = AppFormatting.Iso(Model.RangeStartUtc),
+        rangeEndUtc = AppFormatting.Iso(Model.RangeEndUtc),
+        bucketMs = (long)Model.BucketSize.TotalMilliseconds,
+        series = seriesWithData.Select(series => new
+        {
+            name = series.Name,
+            points = series.Points.Select(point => new
+            {
+                x = point.BucketStartUtc.ToUnixTimeMilliseconds(),
+                y = point.Denominator > 0 ? point.Percent : (double?)null,
+                numerator = point.Numerator,
+                denominator = point.Denominator,
+                bucket = AppFormatting.Iso(point.BucketStartUtc),
+                label = point.BucketLabel,
+                percentText = point.PercentText
+            })
+        })
+    };
+}
+
+@if (!Model.HasData)
+{
+    <p class="empty">No completed or failed executions in the selected period.</p>
+}
+else
+{
+    <figure class="success-chart" data-chartjs-success="@chartId">
+        <div class="success-chart-canvas-wrap">
+            <canvas id="@chartId" class="success-chart-canvas" aria-label="@Model.Title" role="img"></canvas>
+        </div>
+        <script type="application/json" id="@chartId-data" class="success-chart-payload">@Html.Raw(JsonSerializer.Serialize(payload))</script>
+    </figure>
+}

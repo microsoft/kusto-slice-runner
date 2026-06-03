@@ -1,0 +1,20 @@
+@page "/catalog/{jobId}/update"
+@model KoLite.LocalApp.Pages.Catalog.UpdateModel
+@{
+    ViewData["Title"] = "Update job";
+}
+
+<div class="page-heading">
+    <div>
+        <h1>Edit @Model.JobId</h1>
+        <p class="muted">Fix validation errors and submit again.</p>
+    </div>
+    <a class="btn" href="/">Back to jobs</a>
+</div>
+
+@if (!string.IsNullOrWhiteSpace(Model.ErrorMessage))
+{
+    <div class="alert danger">@Model.ErrorMessage</div>
+}
+
+<partial name="_ScheduleEditor" model="Model.Editor" />

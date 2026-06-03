@@ -1,0 +1,75 @@
+@page "/catalog/import"
+@model KoLite.LocalApp.Pages.Catalog.ImportModel
+@{
+    ViewData["Title"] = "Import job";
+}
+
+<div class="page-heading">
+    <div>
+        <h1>Import schedule JSON</h1>
+        <p class="muted">Create missing jobs or update existing jobs with matching activity ids. Jobs omitted from the import are not deleted.</p>
+    </div>
+    <a class="btn" href="/">Back to jobs</a>
+</div>
+
+@if (!string.IsNullOrWhiteSpace(Model.Message))
+{
+    <div class="alert success">@Model.Message</div>
+}
+@if (!string.IsNullOrWhiteSpace(Model.ErrorMessage))
+{
+    <div class="alert danger">@Model.ErrorMessage</div>
+}
+@if (Model.ImportResult is not null)
+{
+    <div class="card">
+        <div class="card-header">
+            <h2>Import summary</h2>
+            <span class="muted">@Model.ImportResult.Created created, @Model.ImportResult.Updated updated, 0 deleted</span>
+        </div>
+        <table>
+            <thead>
+                <tr>
+                    <th>Job</th>
+                    <th>Action</th>
+                    <th>Catalog version</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var item in Model.ImportResult.Items)
+                {
+                    <tr>
+                        <td><a href="/jobs/@Uri.EscapeDataString(item.JobId)">@item.JobId</a></td>
+                        <td>@item.Action</td>
+                        <td>@item.CatalogVersion</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+
+<div class="grid-two">
+    <form method="post" action="/catalog/import" class="card form-card">
+        @Html.AntiForgeryToken()
+        <input type="hidden" name="importSource" value="paste" />
+        <div class="card-header">
+            <h2>Paste JSON</h2>
+            <span class="muted">Single schedule object or array of schedule objects</span>
+        </div>
+        <label>Schedule JSON<textarea name="scheduleJson" rows="28" spellcheck="false">@Model.ScheduleJson</textarea></label>
+        <button class="btn primary" type="submit">Import pasted JSON</button>
+    </form>
+
+    <form method="post" action="/catalog/import" enctype="multipart/form-data" class="card form-card">
+        @Html.AntiForgeryToken()
+        <input type="hidden" name="importSource" value="file" />
+        <div class="card-header">
+            <h2>Import file</h2>
+            <span class="muted">Upload a .json file containing one schedule or an array</span>
+        </div>
+        <label>JSON file<input name="scheduleFile" type="file" accept=".json,application/json" /></label>
+        <p class="muted">The file is read by this local web app and applied additively. Existing jobs not present in the file are left untouched.</p>
+        <button class="btn primary" type="submit">Import JSON file</button>
+    </form>
+</div>

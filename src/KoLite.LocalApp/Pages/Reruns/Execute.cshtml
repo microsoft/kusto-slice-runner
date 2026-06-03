@@ -1,0 +1,11 @@
+@page "/reruns/{rerunBatchId}/execute"
+@model KoLite.LocalApp.Pages.Reruns.ExecuteModel
+@{
+    ViewData["Title"] = "Execute rerun";
+}
+
+<section class="card">
+    <h1>Rerun could not execute</h1>
+    <p class="alert danger">@Model.ErrorMessage</p>
+    <a class="btn" href="/reruns/@Uri.EscapeDataString(Model.RerunBatchId)">Back to rerun batch</a>
+</section>

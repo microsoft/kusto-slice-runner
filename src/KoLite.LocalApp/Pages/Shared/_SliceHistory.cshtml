@@ -1,0 +1,45 @@
+@model IReadOnlyList<SliceHistoryRow>
+
+@if (Model.Count == 0)
+{
+    <p class="empty">No slice history is available for this job yet.</p>
+}
+else
+{
+    <div class="slice-history-grid">
+        @foreach (var row in Model)
+        {
+            <div class="slice-history-row">
+                <span class="slice-hour">@row.HourLabel</span>
+                @foreach (var cell in row.Cells)
+                {
+                    <a class="cell @cell.CssClass"
+                       href="@cell.Url"
+                       aria-label="@cell.AccessibleLabel"
+                       title="@cell.TooltipText"
+                       data-slice-tooltip="true"
+                       data-slice-tooltip-title="Slice"
+                       data-slice-start="@AppFormatting.Iso(cell.SliceStartUtc)"
+                       data-slice-end="@AppFormatting.Iso(cell.SliceEndUtc)"
+                       data-slice-status="@cell.StatusLabel"
+                       data-slice-attempt="@cell.Attempt">
+                       @foreach (var line in cell.TooltipLines)
+                       {
+                           <span hidden data-slice-tooltip-line="true" data-tooltip-label="@line.Label" data-tooltip-value="@line.Value"></span>
+                       }
+                    </a>
+                }
+            </div>
+        }
+    </div>
+    <div class="legend">
+        <span><span class="legend-color completed AllRunsSucceeded"></span>Completed</span>
+        <span><span class="legend-color completed-after-retry"></span>Completed after retry</span>
+        <span><span class="legend-color queued"></span>Queued</span>
+        <span><span class="legend-color running"></span>Running</span>
+        <span><span class="legend-color blocked"></span>Dependency blocked</span>
+        <span><span class="legend-color paused"></span>Paused</span>
+        <span><span class="legend-color failed Failed"></span>Failed/dead-lettered</span>
+        <span><span class="legend-color missing Missing"></span>Missing/not eligible</span>
+    </div>
+}

@@ -1,0 +1,15 @@
+@page "/catalog/new"
+@model KoLite.LocalApp.Pages.Catalog.NewModel
+@{
+    ViewData["Title"] = "New job";
+}
+
+<div class="page-heading">
+    <div>
+        <h1>Create job</h1>
+        <p class="muted">Create a local KO Lite job definition.</p>
+    </div>
+    <a class="btn" href="/">Back to jobs</a>
+</div>
+
+<partial name="_ScheduleEditor" model="Model.Editor" />

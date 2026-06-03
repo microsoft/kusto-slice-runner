@@ -1,0 +1,199 @@
+using KoLite.Local.Core.Orchestration;
+using KoLite.Local.Core.Rerun;
+using KoLite.Local.Core.Schedules;
+using KoLite.Local.Core.Scheduling;
+using KoLite.Local.Core.Time;
+using KoLite.Local.Sqlite.Catalog;
+using KoLite.Local.Sqlite.Connections;
+using KoLite.Local.Sqlite.Migrations;
+using KoLite.Local.Sqlite.Observability;
+using KoLite.Local.Sqlite.Orchestration;
+using KoLite.Local.Sqlite.Queue;
+using KoLite.Local.Sqlite.Rerun;
+using KoLite.Local.Sqlite.State;
+using Microsoft.Data.Sqlite;
+
+namespace KoLite.Local.Sqlite.Tests
+{
+    public sealed class SqliteRerunServiceTests : IDisposable
+    {
+        private readonly string testDirectory = Path.Combine(AppContext.BaseDirectory, "rerun-file-tests", Guid.NewGuid().ToString("N"));
+        private readonly KoLiteSqliteConnectionFactory factory;
+        private readonly SqliteJobCatalogRepository catalog;
+        private readonly SqliteSliceStateRepository state;
+        private readonly SqliteWorkQueueRepository queue;
+        private readonly SqliteOperationalReadModelRepository readModels;
+        private readonly ManualClock clock = new(At(5));
+
+        public SqliteRerunServiceTests()
+        {
+            Directory.CreateDirectory(testDirectory);
+            factory = new KoLiteSqliteConnectionFactory(new KoLiteSqliteConnectionOptions(Path.Combine(testDirectory, "rerun.db")) { BusyTimeoutMilliseconds = 10_000 });
+            new KoLiteSqliteMigrator(factory).Migrate();
+            catalog = new SqliteJobCatalogRepository(factory);
+            state = new SqliteSliceStateRepository(factory);
+            queue = new SqliteWorkQueueRepository(factory);
+            readModels = new SqliteOperationalReadModelRepository(factory);
+        }
+
+        [Fact]
+        public void Plan_expands_root_slice_to_transitive_downstream_and_generates_cleanup_commands()
+        {
+            catalog.Create(Schedule("root", "RootOutput"));
+            catalog.Create(Schedule("downstream", "DownstreamOutput", dependsOn: "root"));
+            state.Append("root-completed", "root", At(0), At(5), DurableSliceStatus.Completed, expectedVersion: 0);
+            state.Append("down-completed", "downstream", At(0), At(5), DurableSliceStatus.Completed, expectedVersion: 0);
+
+            var plan = Service().Plan(new RerunPlanRequest("root", At(0), At(5), "tester", "rerun bad data"));
+
+            Assert.Equal(RerunBatchStatus.Planned, plan.Status);
+            Assert.True(plan.CanExecute);
+            Assert.Contains(plan.Slices, s => s.JobId == "root" && s.Role == RerunSliceRole.Root && s.PreviousState == "Completed");
+            Assert.Contains(plan.Slices, s => s.JobId == "downstream" && s.Role == RerunSliceRole.Downstream && s.PreviousState == "Completed");
+            Assert.Contains(".delete table RootOutput records <|", plan.KustoCleanupCommands);
+            Assert.Contains(".delete table DownstreamOutput records <|", plan.KustoCleanupCommands);
+            Assert.Contains("StartTime < datetime(2026-01-01T00:05:00.0000000Z)", plan.KustoCleanupCommands);
+            Assert.Contains("EndTime > datetime(2026-01-01T00:00:00.0000000Z)", plan.KustoCleanupCommands);
+        }
+
+        [Fact]
+        public void Plan_blocks_active_queued_or_running_slices()
+        {
+            catalog.Create(Schedule("active", "ActiveOutput"));
+            state.Append("queued", "active", At(0), At(5), DurableSliceStatus.Queued, expectedVersion: 0);
+            queue.Enqueue("active", At(0), At(5), "active-work", At(0));
+
+            var plan = Service().Plan(new RerunPlanRequest("active", At(0), At(5), "tester", "rerun active"));
+
+            Assert.Equal(RerunBatchStatus.Blocked, plan.Status);
+            Assert.False(plan.CanExecute);
+            Assert.Contains(plan.BlockedSlices, s => s.JobId == "active" && s.BlockerReason is not null);
+        }
+
+        [Fact]
+        public void Execute_requires_cleanup_acknowledgement()
+        {
+            catalog.Create(Schedule("ack", "AckOutput"));
+            state.Append("completed", "ack", At(0), At(5), DurableSliceStatus.Completed, expectedVersion: 0);
+            var plan = Service().CreatePlan(new RerunPlanRequest("ack", At(0), At(5), "tester", "rerun with cleanup"));
+
+            var exception = Assert.Throws<InvalidOperationException>(() =>
+                Service().Execute(new RerunExecuteRequest(plan.RerunBatchId, "tester", KustoCleanupAcknowledged: false)));
+            Assert.Contains("Kusto cleanup", exception.Message);
+        }
+
+        [Fact]
+        public async Task Execute_snapshots_old_details_resets_state_and_scheduler_rebuilds_through_dependencies()
+        {
+            catalog.Create(Schedule("root", "RootOutput", maxParallelism: 10));
+            catalog.Create(Schedule("downstream", "DownstreamOutput", dependsOn: "root", maxParallelism: 10));
+            state.Append("root-completed", "root", At(0), At(5), DurableSliceStatus.Completed, expectedVersion: 0);
+            state.Append("down-completed", "downstream", At(0), At(5), DurableSliceStatus.Completed, expectedVersion: 0);
+            readModels.RecordAttempt("old-attempt-root", "root", At(0), At(5), 1, "Succeeded", "worker", At(0), At(1));
+            readModels.RecordLog("Information", "old root log", "test", "root", At(0), At(5));
+            readModels.RecordAttempt("old-attempt-down", "downstream", At(0), At(5), 1, "Succeeded", "worker", At(0), At(1));
+            var plan = Service().CreatePlan(new RerunPlanRequest("root", At(0), At(5), "tester", "bad source data"));
+
+            var result = Service().Execute(new RerunExecuteRequest(plan.RerunBatchId, "tester", KustoCleanupAcknowledged: true));
+
+            Assert.Equal(RerunBatchStatus.Completed, result.Status);
+            Assert.Equal(2, result.ResetSlices);
+            Assert.Equal(DurableSliceStatus.Missing, state.Get("root", At(0), At(5)).Status);
+            Assert.Equal(DurableSliceStatus.Missing, state.Get("downstream", At(0), At(5)).Status);
+            Assert.Empty(readModels.GetSliceStatus("root"));
+            Assert.Empty(new OperationalDetailsReadModelShim(factory).GetAttempts("root", At(0), At(5), 10));
+            Assert.Equal(2, QueryInt("SELECT COUNT(*) FROM rerun_slices WHERE rerun_batch_id=$id AND status='Reset';", ("$id", plan.RerunBatchId)));
+            Assert.Contains("old-attempt-root", QueryString("SELECT snapshot_json FROM rerun_slices WHERE rerun_batch_id=$id AND job_id='root';", ("$id", plan.RerunBatchId)));
+
+            var scheduler = new SqliteLocalScheduler(catalog, state, queue, readModels, clock, new LocalSchedulerOptions(MaxSlicesPerTick: 10));
+            var firstTick = scheduler.Tick();
+            Assert.Equal(1, firstTick.Enqueued);
+            Assert.Equal(1, firstTick.DependencyBlocked);
+
+            var executor = new RecordingExecutor();
+            var worker = new SqliteLocalWorker(catalog, state, queue, readModels, executor, clock, new LocalWorkerOptions(WorkerId: "rerun-worker"));
+            Assert.True((await worker.RunOnceAsync()).Succeeded);
+
+            var secondTick = scheduler.Tick();
+            Assert.Equal(1, secondTick.Enqueued);
+            Assert.True((await worker.RunOnceAsync()).Succeeded);
+            Assert.Equal(DurableSliceStatus.Completed, state.Get("root", At(0), At(5)).Status);
+            Assert.Equal(DurableSliceStatus.Completed, state.Get("downstream", At(0), At(5)).Status);
+        }
+
+        public void Dispose()
+        {
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(testDirectory)) Directory.Delete(testDirectory, recursive: true);
+        }
+
+        private SqliteRerunService Service() => new(factory, catalog, clock);
+        private static DateTimeOffset At(int minutes) => new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero).AddMinutes(minutes);
+
+        private int QueryInt(string sql, params (string Name, object Value)[] parameters) =>
+            Convert.ToInt32(QueryScalar(sql, parameters), System.Globalization.CultureInfo.InvariantCulture);
+
+        private string QueryString(string sql, params (string Name, object Value)[] parameters) =>
+            Convert.ToString(QueryScalar(sql, parameters), System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty;
+
+        private object? QueryScalar(string sql, params (string Name, object Value)[] parameters)
+        {
+            using var connection = factory.OpenConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = sql;
+            foreach (var (name, value) in parameters)
+            {
+                command.Parameters.AddWithValue(name, value);
+            }
+
+            return command.ExecuteScalar();
+        }
+
+        private static string Schedule(string activityId, string outputTable, string? dependsOn = null, int maxParallelism = 1) => $$"""
+        {
+          "activityId": "{{activityId}}",
+          "functionName": "RerunFunction",
+          "outputTable": "{{outputTable}}",
+          "queryWindowSize": "00:05:00",
+          "delayFromUtcNow": "00:00:00",
+          "maxParallelism": {{maxParallelism}},
+          "queryTimeout": "00:01:00",
+          "isPaused": false,
+          "startFrom": "2026-01-01T00:00:00Z",
+          "dependsOn": {{(dependsOn is null ? "[]" : $"[{{ \"activityId\": \"{dependsOn}\" }}]")}},
+          "target": { "clusterUri": "https://kolite-example.invalid", "database": "DemoDb" }
+        }
+        """;
+
+        private sealed class RecordingExecutor : ILocalSliceOutputExecutor
+        {
+            public Task<LocalSliceOutputResult> ExecuteAsync(JobDefinition job, SliceRange slice, CancellationToken cancellationToken = default) =>
+                Task.FromResult(LocalSliceOutputResult.Success($"test://{slice.ToKey().Value}"));
+        }
+
+        private sealed class OperationalDetailsReadModelShim
+        {
+            private readonly KoLiteSqliteConnectionFactory factory;
+
+            public OperationalDetailsReadModelShim(KoLiteSqliteConnectionFactory factory)
+            {
+                this.factory = factory;
+            }
+
+            public IReadOnlyList<string> GetAttempts(string jobId, DateTimeOffset start, DateTimeOffset end, int take)
+            {
+                using var connection = factory.OpenConnection();
+                using var command = connection.CreateCommand();
+                command.CommandText = "SELECT attempt_id FROM slice_attempts WHERE job_id=$job AND slice_start_utc=$start AND slice_end_utc=$end LIMIT $take;";
+                command.Parameters.AddWithValue("$job", jobId);
+                command.Parameters.AddWithValue("$start", start.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ", System.Globalization.CultureInfo.InvariantCulture));
+                command.Parameters.AddWithValue("$end", end.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ", System.Globalization.CultureInfo.InvariantCulture));
+                command.Parameters.AddWithValue("$take", take);
+                using var reader = command.ExecuteReader();
+                var attempts = new List<string>();
+                while (reader.Read()) attempts.Add(reader.GetString(0));
+                return attempts;
+            }
+        }
+    }
+}

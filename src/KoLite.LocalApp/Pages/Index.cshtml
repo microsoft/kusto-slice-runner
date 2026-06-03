@@ -1,0 +1,89 @@
+@page "/"
+@model KoLite.LocalApp.Pages.IndexModel
+@{
+    ViewData["Title"] = "Jobs";
+}
+
+<div class="page-heading">
+    <div>
+        <h1>KO Lite Local Dashboard</h1>
+    </div>
+    <div class="button-row">
+        <a class="btn primary" href="/catalog/new">New job</a>
+        <a class="btn" href="/catalog/import">Import</a>
+        <a class="btn" href="/catalog/export">Export all</a>
+        <form method="post" action="/catalog/pause-all" class="inline-form">
+            @Html.AntiForgeryToken()
+            <button class="btn" type="submit">Pause all</button>
+        </form>
+        <form method="post" action="/catalog/resume-all" class="inline-form">
+            @Html.AntiForgeryToken()
+            <button class="btn" type="submit">Resume all</button>
+        </form>
+    </div>
+</div>
+
+@{
+    var activeJobs = new JobTableViewModel("Active jobs", Model.Data.ActiveJobs, false, ShowSoftDeleteAction: false, ShowDefinitionColumns: false, ShowUpdatedColumn: false, ShowNextEligibleColumn: true, ShowRunningProgressCount: false, ShowProgressColumn: false, ShowHistoryAction: false, ShowFolderLine: false);
+    var completedJobs = new JobTableViewModel("Completed jobs", Model.Data.CompletedJobs, false, ShowSoftDeleteAction: false, SectionCssClass: "nested-card", ShowDefinitionColumns: false, ShowUpdatedColumn: false, ShowNextEligibleColumn: true, ShowRunningProgressCount: false, ShowProgressColumn: false, ShowHistoryAction: false, ShowFolderLine: false);
+    var softDeletedJobs = new JobTableViewModel("Soft-deleted jobs", Model.Data.SoftDeletedJobs, true, SectionCssClass: "nested-card", ShowDefinitionColumns: false, ShowUpdatedColumn: false, ShowNextEligibleColumn: true, ShowRunningProgressCount: false, ShowProgressColumn: false, ShowHistoryAction: false, ShowFolderLine: false);
+    var inactiveCount = Model.Data.CompletedJobs.Count + Model.Data.SoftDeletedJobs.Count;
+}
+<partial name="_JobTable" model="activeJobs" />
+<details class="card disclosure-card inactive-jobs">
+    <summary>
+        <span class="summary-title">Inactive jobs</span>
+        <span class="muted">@inactiveCount job(s): @Model.Data.CompletedJobs.Count completed, @Model.Data.SoftDeletedJobs.Count soft-deleted</span>
+    </summary>
+    <div class="inactive-job-groups">
+        <partial name="_JobTable" model="completedJobs" />
+        <partial name="_JobTable" model="softDeletedJobs" />
+    </div>
+</details>
+
+<section class="card success-statistics">
+    <div class="card-header">
+        <div>
+            <h2>Success Statistics</h2>
+            <p class="muted chart-help">The first chart counts every execution attempt, including retries. The second chart scores whether each slice eventually succeeded after retries.</p>
+        </div>
+        <div class="range-picker">
+            @foreach (var range in Model.RangeLinks)
+            {
+                <a class="btn small @(range.Key == Model.Range ? "primary" : null)" href="/?range=@range.Key">@range.Label</a>
+            }
+        </div>
+    </div>
+    <div class="chart-grid">
+        <div>
+            <h3>Success Rate By Function</h3>
+            <partial name="_SuccessRateChart" model="Model.Data.Charts.FirstAttemptSuccess" />
+        </div>
+        <div>
+            <h3>Success Rate After Retries by function</h3>
+            <partial name="_SuccessRateChart" model="Model.Data.Charts.SuccessAfterRetries" />
+        </div>
+    </div>
+</section>
+
+<section class="card">
+    <div class="card-header"><h2>Recent failures</h2></div>
+    @if (Model.Data.RecentFailures.Count == 0)
+    {
+        <p class="empty">No recent failures.</p>
+    }
+    else
+    {
+        <ul class="plain-list">
+            @foreach (var failure in Model.Data.RecentFailures)
+            {
+                <li>
+                    <a href="/jobs/@Uri.EscapeDataString(failure.JobId)/slices?start=@Uri.EscapeDataString(AppFormatting.Iso(failure.SliceStartUtc))&end=@Uri.EscapeDataString(AppFormatting.Iso(failure.SliceEndUtc))">@failure.JobId</a>
+                    <span class="badge @AppFormatting.BadgeCss(failure.Status)">@failure.Status</span>
+                    <span class="muted">@AppFormatting.Local(failure.UpdatedAtUtc)</span>
+                    <div>@failure.Reason</div>
+                </li>
+            }
+        </ul>
+    }
+</section>

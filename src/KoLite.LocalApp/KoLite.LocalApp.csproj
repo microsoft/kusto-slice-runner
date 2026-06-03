@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <ItemGroup>
+    <ProjectReference Include="..\KoLite.Local.Core\KoLite.Local.Core.csproj" />
+    <ProjectReference Include="..\KoLite.Local.Sqlite\KoLite.Local.Sqlite.csproj" />
+    <ProjectReference Include="..\KoLite.Local.Kusto\KoLite.Local.Kusto.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+</Project>

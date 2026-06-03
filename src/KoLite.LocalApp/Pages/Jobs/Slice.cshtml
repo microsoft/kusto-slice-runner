@@ -1,0 +1,89 @@
+@page "/jobs/{jobId}/slices"
+@model KoLite.LocalApp.Pages.Jobs.SliceModel
+@{
+    ViewData["Title"] = "Slice detail";
+}
+
+@if (Model.Data is null)
+{
+    <section class="card"><h1>Slice not found</h1></section>
+}
+else
+{
+    <div class="page-heading">
+        <div>
+            <h1>Slice detail: @Model.Data.Job.JobId</h1>
+            <p class="muted">@Model.Data.Job.JobId: @AppFormatting.Iso(Model.Data.SliceStartUtc) - @AppFormatting.Iso(Model.Data.SliceEndUtc)</p>
+        </div>
+        <div class="button-row">
+            <a class="btn primary" href="/jobs/@Uri.EscapeDataString(Model.Data.Job.JobId)/rerun?start=@Uri.EscapeDataString(AppFormatting.DateTimeInputUtc(Model.Data.SliceStartUtc))&end=@Uri.EscapeDataString(AppFormatting.DateTimeInputUtc(Model.Data.SliceEndUtc))">Rerun this slice</a>
+            <a class="btn" href="/jobs/@Uri.EscapeDataString(Model.Data.Job.JobId)">Back to details</a>
+        </div>
+    </div>
+    <section class="summary-grid">
+        <div class="stat-card"><span class="stat-label">Status</span><strong>@(Model.Data.Status?.Status ?? "Missing")</strong></div>
+        <div class="stat-card"><span class="stat-label">Attempt</span><strong>@(Model.Data.Status?.Attempt ?? 0)</strong></div>
+        <div class="stat-card"><span class="stat-label">Queue rows</span><strong>@Model.Data.QueueItems.Count</strong></div>
+        <div class="stat-card"><span class="stat-label">Attempts</span><strong>@Model.Data.Attempts.Count</strong></div>
+    </section>
+    <section class="grid-two">
+        <div class="card">
+            <div class="card-header"><h2>Attempts</h2></div>
+            @if (Model.Data.Attempts.Count == 0)
+            {
+                <p class="empty">No attempts recorded.</p>
+            }
+            else
+            {
+                <table class="ko-table compact">
+                    <thead><tr><th>Attempt</th><th>Status</th><th>Worker</th><th>Started</th><th>Completed</th><th>Error</th></tr></thead>
+                    <tbody>
+                    @foreach (var attempt in Model.Data.Attempts)
+                    {
+                        <tr>
+                            <td>@attempt.Attempt</td>
+                            <td><span class="badge @AppFormatting.BadgeCss(attempt.Status)">@attempt.Status</span></td>
+                            <td>@attempt.WorkerId</td>
+                            <td>@AppFormatting.Local(attempt.StartedAtUtc)</td>
+                            <td>@AppFormatting.Local(attempt.CompletedAtUtc)</td>
+                            <td>@attempt.ErrorMessage</td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+            }
+        </div>
+        <div class="card">
+            <div class="card-header"><h2>Events and logs</h2></div>
+            <ul class="plain-list">
+                @foreach (var evt in Model.Data.Events)
+                {
+                    <li><span class="badge">@evt.EventType</span> <span class="muted">@AppFormatting.Local(evt.RecordedAtUtc)</span> @evt.Reason</li>
+                }
+                @foreach (var log in Model.Data.Logs)
+                {
+                    <li><span class="badge">@log.Level</span> <span class="muted">@AppFormatting.Local(log.RecordedAtUtc)</span> @log.Message</li>
+                }
+            </ul>
+        </div>
+    </section>
+    <section class="card">
+        <div class="card-header"><h2>Queue rows</h2></div>
+        @if (Model.Data.QueueItems.Count == 0)
+        {
+            <p class="empty">No queue rows for this slice.</p>
+        }
+        else
+        {
+            <table class="ko-table compact">
+                <thead><tr><th>Queue item</th><th>Queue</th><th>State</th><th>Available</th><th>Locked by</th><th>Attempts</th></tr></thead>
+                <tbody>
+                @foreach (var item in Model.Data.QueueItems)
+                {
+                    <tr><td>@item.QueueItemId</td><td>@item.QueueName</td><td>@item.State</td><td>@AppFormatting.Local(item.AvailableAtUtc)</td><td>@item.LockedBy</td><td>@item.Attempts/@item.MaxAttempts</td></tr>
+                }
+                </tbody>
+            </table>
+        }
+    </section>
+}

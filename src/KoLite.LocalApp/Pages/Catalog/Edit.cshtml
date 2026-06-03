@@ -1,0 +1,21 @@
+@page "/catalog/{jobId}/edit"
+@model KoLite.LocalApp.Pages.Catalog.EditModel
+@{
+    ViewData["Title"] = "Edit job";
+}
+
+@if (Model.Editor is null)
+{
+    <section class="card"><h1>Job not found</h1></section>
+}
+else
+{
+    <div class="page-heading">
+        <div>
+            <h1>Edit @Model.JobId</h1>
+            <p class="muted">Catalog version @Model.ExpectedVersion</p>
+        </div>
+        <a class="btn" href="/jobs/@Uri.EscapeDataString(Model.JobId)">Open details</a>
+    </div>
+    <partial name="_ScheduleEditor" model="Model.Editor" />
+}

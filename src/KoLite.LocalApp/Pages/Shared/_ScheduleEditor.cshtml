@@ -1,0 +1,53 @@
+@model ScheduleEditorViewModel
+
+<div class="grid-two">
+    <div class="card form-card">
+    <form method="post" action="@Model.PostAction">
+        @Html.AntiForgeryToken()
+        <input type="hidden" name="formMode" value="fields" />
+        @if (Model.ExpectedVersion is { } version)
+        {
+            <input type="hidden" name="expectedVersion" value="@version" />
+        }
+        <div class="card-header">
+            <h2>Schedule fields</h2>
+            <span class="muted">Primary editor</span>
+        </div>
+        <div class="form-grid">
+            <label>Activity ID<input name="Input.ActivityId" value="@Model.Input.ActivityId" @(Model.ExistingJob ? "readonly" : null) /></label>
+            <label>Function name<input name="Input.FunctionName" value="@Model.Input.FunctionName" /></label>
+            <label>Output table<input name="Input.OutputTable" value="@Model.Input.OutputTable" /></label>
+            <label>Query window size<input name="Input.QueryWindowSize" value="@Model.Input.QueryWindowSize" placeholder="01:00:00" @(Model.StartedFieldsReadOnly ? "readonly" : null) /></label>
+            <label>Delay from UTC now<input name="Input.DelayFromUtcNow" value="@Model.Input.DelayFromUtcNow" placeholder="00:10:00" /></label>
+            <label>Max parallelism<input name="Input.MaxParallelism" type="number" min="1" value="@Model.Input.MaxParallelism" /></label>
+            <label>Query timeout<input name="Input.QueryTimeout" value="@Model.Input.QueryTimeout" placeholder="00:05:00" /></label>
+            <label>Start from<input name="Input.StartFrom" value="@Model.Input.StartFrom" placeholder="2026-01-01T00:00:00Z" @(Model.StartedFieldsReadOnly ? "readonly" : null) /></label>
+            <label>End on<input name="Input.EndOn" value="@Model.Input.EndOn" placeholder="optional" /></label>
+            <label>Folder<input name="Input.Folder" value="@Model.Input.Folder" placeholder="optional" /></label>
+            <label>Target cluster URI<input name="Input.ClusterUri" value="@Model.Input.ClusterUri" /></label>
+            <label>Target database<input name="Input.Database" value="@Model.Input.Database" /></label>
+        </div>
+        <label class="checkbox-row"><input name="Input.IsPaused" type="checkbox" value="true" @(Model.Input.IsPaused ? "checked" : null) /> Start paused</label>
+        <input type="hidden" name="Input.IsPaused" value="false" />
+        <label>Dependencies<textarea name="Input.DependsOn" rows="3" placeholder="One activity id per line">@Model.Input.DependsOn</textarea></label>
+        <label>Job settings JSON<textarea name="Input.JobSettingsJson" rows="8">@Model.Input.JobSettingsJson</textarea></label>
+        <button class="btn primary" type="submit">@Model.SubmitLabel</button>
+    </form>
+    </div>
+
+    <form method="post" action="@Model.PostAction" class="card form-card">
+        @Html.AntiForgeryToken()
+        <input type="hidden" name="formMode" value="json" />
+        @if (Model.ExpectedVersion is { } version)
+        {
+            <input type="hidden" name="expectedVersion" value="@version" />
+        }
+        <div class="card-header">
+            <h2>Raw JSON</h2>
+            <span class="muted">Advanced/import/export path</span>
+        </div>
+        <textarea name="scheduleJson" rows="28" spellcheck="false">@Model.ScheduleJson</textarea>
+        <button class="btn" type="button" data-copy-target="scheduleJson">Copy JSON</button>
+        <button class="btn primary" type="submit">@Model.SubmitLabel from JSON</button>
+    </form>
+</div>

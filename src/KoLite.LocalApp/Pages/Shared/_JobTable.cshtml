@@ -1,0 +1,175 @@
+@model JobTableViewModel
+
+@{
+    var tableCss = Model.ShowProgressColumn ? "ko-table job-table" : "ko-table job-table job-table-dashboard";
+}
+
+<section class="card @Model.SectionCssClass">
+    <div class="card-header">
+        <h2>@Model.Title</h2>
+        <span class="muted">@Model.Jobs.Count job(s)</span>
+    </div>
+    @if (Model.Jobs.Count == 0)
+    {
+        <p class="empty">No jobs in this section.</p>
+    }
+    else
+    {
+        <div class="table-wrap">
+            <table class="@tableCss">
+                <colgroup>
+                    <col class="job-col-status" />
+                    <col class="job-col-activity" />
+                    @if (Model.ShowDefinitionColumns)
+                    {
+                        <col class="job-col-function" />
+                    }
+                    <col class="job-col-schedule" />
+                    @if (Model.ShowProgressColumn)
+                    {
+                        <col class="job-col-progress" />
+                    }
+                    @if (Model.ShowNextEligibleColumn)
+                    {
+                        <col class="job-col-next" />
+                    }
+                    @if (Model.ShowUpdatedColumn)
+                    {
+                        <col class="job-col-updated" />
+                    }
+                    <col class="job-col-actions" />
+                </colgroup>
+                <thead>
+                    <tr>
+                        <th>Status</th>
+                        <th>Activity</th>
+                        @if (Model.ShowDefinitionColumns)
+                        {
+                            <th>Function / Output</th>
+                        }
+                        <th>Schedule</th>
+                        @if (Model.ShowProgressColumn)
+                        {
+                            <th>Progress</th>
+                        }
+                        @if (Model.ShowNextEligibleColumn)
+                        {
+                            <th>Next eligible</th>
+                        }
+                        @if (Model.ShowUpdatedColumn)
+                        {
+                            <th>Updated</th>
+                        }
+                        <th class="actions">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                @foreach (var job in Model.Jobs)
+                {
+                    <tr>
+                        <td class="status-cell">
+                            <span class="badge @job.StatusCss">@job.StatusText</span>
+                        </td>
+                        <td class="activity-cell">
+                            <a class="strong text-truncate" title="@job.Record.JobId" href="/jobs/@Uri.EscapeDataString(job.Record.JobId)">@job.Record.JobId</a>
+                            @if (Model.ShowFolderLine && !string.IsNullOrWhiteSpace(job.Definition.Folder))
+                            {
+                                <div class="muted text-truncate" title="@job.Definition.Folder">@job.Definition.Folder</div>
+                            }
+                        </td>
+                        @if (Model.ShowDefinitionColumns)
+                        {
+                            <td class="function-cell">
+                                <div class="text-truncate" title="@job.Definition.FunctionName">@job.Definition.FunctionName</div>
+                                <div class="muted text-truncate" title="@job.Definition.OutputTable">@job.Definition.OutputTable</div>
+                            </td>
+                        }
+                        <td class="schedule-cell">
+                            <div>@AppFormatting.Duration(job.Definition.QueryWindowSize)</div>
+                            <div class="muted">Delay @AppFormatting.Duration(job.Definition.DelayFromUtcNow)</div>
+                        </td>
+                        @if (Model.ShowProgressColumn)
+                        {
+                            <td class="progress-cell">
+                                @if (job.Summary is null)
+                                {
+                                    <span class="muted">No slices yet</span>
+                                }
+                                else
+                                {
+                                    <div>@job.Summary.CompletedCount completed / @job.TotalSlices total</div>
+                                    @if (Model.ShowRunningProgressCount)
+                                    {
+                                        <div class="muted">@job.Summary.QueuedCount queued, @job.Summary.RunningCount running, @job.FailedLikeSlices failed/blocked</div>
+                                    }
+                                    else
+                                    {
+                                        <div class="muted">@job.Summary.QueuedCount queued, @job.FailedLikeSlices failed/blocked</div>
+                                    }
+                                }
+                            </td>
+                        }
+                        @if (Model.ShowNextEligibleColumn)
+                        {
+                            <td class="next-cell" title="@job.NextSlice.Detail">@job.NextSlice.Text</td>
+                        }
+                        @if (Model.ShowUpdatedColumn)
+                        {
+                            <td class="updated-cell">@AppFormatting.Local(job.Summary?.LastUpdatedAtUtc ?? job.Record.UpdatedAtUtc)</td>
+                        }
+                        <td class="actions">
+                            <div class="action-group">
+                                <a class="btn small" href="/jobs/@Uri.EscapeDataString(job.Record.JobId)">Edit</a>
+                                @if (Model.ShowHistoryAction)
+                                {
+                                    <a class="btn small" href="/jobs/@Uri.EscapeDataString(job.Record.JobId)/history">History</a>
+                                }
+                                <a class="btn small" href="/catalog/@Uri.EscapeDataString(job.Record.JobId)/export">Export</a>
+                                <a class="btn small" href="/catalog/@Uri.EscapeDataString(job.Record.JobId)/copy">Copy</a>
+                                @if (Model.SoftDeletedSection)
+                                {
+                                    <form method="post" action="/catalog/@Uri.EscapeDataString(job.Record.JobId)/restore" class="inline-form">
+                                        @Html.AntiForgeryToken()
+                                        <input type="hidden" name="expectedVersion" value="@job.Record.CatalogVersion" />
+                                        <input type="hidden" name="reason" value="Restored from dashboard" />
+                                        <button class="btn small" type="submit">Restore</button>
+                                    </form>
+                                    <a class="btn small danger" href="/catalog/@Uri.EscapeDataString(job.Record.JobId)/hard-delete">Hard delete</a>
+                                }
+                                else
+                                {
+                                    @if (job.Record.IsEnabled)
+                                    {
+                                        <form method="post" action="/catalog/@Uri.EscapeDataString(job.Record.JobId)/disable" class="inline-form">
+                                            @Html.AntiForgeryToken()
+                                            <input type="hidden" name="expectedVersion" value="@job.Record.CatalogVersion" />
+                                            <button class="btn small" type="submit">Pause</button>
+                                        </form>
+                                    }
+                                    else
+                                    {
+                                        <form method="post" action="/catalog/@Uri.EscapeDataString(job.Record.JobId)/enable" class="inline-form">
+                                            @Html.AntiForgeryToken()
+                                            <input type="hidden" name="expectedVersion" value="@job.Record.CatalogVersion" />
+                                            <button class="btn small" type="submit">Resume</button>
+                                        </form>
+                                    }
+                                    @if (Model.ShowSoftDeleteAction)
+                                    {
+                                        <form method="post" action="/catalog/@Uri.EscapeDataString(job.Record.JobId)/soft-delete" class="inline-form">
+                                            @Html.AntiForgeryToken()
+                                            <input type="hidden" name="expectedVersion" value="@job.Record.CatalogVersion" />
+                                            <input type="hidden" name="reason" value="Soft deleted from dashboard" />
+                                            <button class="btn small danger" type="submit">Soft delete</button>
+                                        </form>
+                                    }
+                                }
+                            </div>
+                        </td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    }
+</section>

@@ -1,0 +1,25 @@
+@page "/catalog"
+@model KoLite.LocalApp.Pages.Catalog.IndexModel
+@{
+    ViewData["Title"] = "Catalog";
+}
+
+<div class="page-heading">
+    <div>
+        <h1>Job Catalog</h1>
+        <p class="muted">Catalog definitions, lifecycle state, and local execution progress.</p>
+    </div>
+    <div class="button-row">
+        <a class="btn primary" href="/catalog/new">New job</a>
+        <a class="btn" href="/catalog/import">Import</a>
+    </div>
+</div>
+
+@{
+    var activeJobs = new JobTableViewModel("Active jobs", Model.Data.ActiveJobs, false);
+    var completedJobs = new JobTableViewModel("Completed jobs", Model.Data.CompletedJobs, false);
+    var softDeletedJobs = new JobTableViewModel("Soft-deleted jobs", Model.Data.SoftDeletedJobs, true);
+}
+<partial name="_JobTable" model="activeJobs" />
+<partial name="_JobTable" model="completedJobs" />
+<partial name="_JobTable" model="softDeletedJobs" />

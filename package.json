@@ -1,0 +1,15 @@
+{
+  "name": "ko-lite",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Local-first KO Lite dashboard assets.",
+  "scripts": {
+    "copy:chartjs": "node ./scripts/copy-chartjs.mjs",
+    "postinstall": "npm run copy:chartjs"
+  },
+  "license": "UNLICENSED",
+  "type": "commonjs",
+  "dependencies": {
+    "chart.js": "^4.5.1"
+  }
+}
