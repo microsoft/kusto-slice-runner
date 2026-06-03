@@ -4,7 +4,7 @@
 
 KO Lite is a standalone local-first dashboard and worker for running scheduled Kusto output jobs from a local SQLite catalog. The local app owns catalog, queue, slice state, operational logs, rerun reports, repair state, and UI read models in SQLite. Kusto is contacted only when scheduler or worker execution is enabled and a worker executes a slice.
 
-Start with `README.md`. For architecture-sensitive work, read `docs\local-first-architecture.md` and `docs\operations-runbook.md`; for schedule JSON work, read `docs\schedule-json.md`; for validation commands, read `docs\development.md`.
+Start with `README.md`. For architecture-sensitive work, read `docs\local-first-architecture.md` and `docs\operations-runbook.md`; for schedule JSON work, read `docs\schedule-json.md`; for validation commands, read `DEVELOPMENT.md`.
 
 ## Commands
 

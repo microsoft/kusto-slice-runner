@@ -53,7 +53,7 @@ Job detail:
 | Architecture and component responsibilities | [Local-first architecture](docs/local-first-architecture.md) |
 | Schedule JSON contract and import/export behavior | [Schedule JSON](docs/schedule-json.md) |
 | Safe local runs, configuration, diagnostics, and reruns | [Operations runbook](docs/operations-runbook.md) |
-| Repository layout, restore, build, and test commands | [Development guide](docs/development.md) |
+| Repository layout, restore, build, and test commands | [Development guide](DEVELOPMENT.md) |
 | Standalone repo validation checklist | [Release readiness checklist](docs/release-readiness-checklist.md) |
 
 ## Support and security
