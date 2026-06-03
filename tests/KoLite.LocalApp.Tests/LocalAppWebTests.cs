@@ -402,6 +402,70 @@ namespace KoLite.LocalApp.Tests
         }
 
         [Fact]
+        public void Dashboard_keeps_incomplete_finite_jobs_active_after_endOn()
+        {
+            var clock = new ManualClock(At(120));
+            var catalog = new SqliteJobCatalogRepository(sqlite);
+            var state = new SqliteSliceStateRepository(sqlite);
+            var readModels = new SqliteOperationalReadModelRepository(sqlite);
+            catalog.Create(Schedule("job.blocked.finished-window", "BlockedFunction", isPaused: false, endOn: "2026-01-01T00:30:00Z"));
+            catalog.Create(Schedule("job.failed.finished-window", "FailedFunction", isPaused: false, endOn: "2026-01-01T00:30:00Z"));
+            catalog.Create(Schedule("job.missing.finished-window", "MissingFunction", isPaused: false, endOn: "2026-01-01T00:30:00Z"));
+            catalog.Create(Schedule("job.running.finished-window", "RunningFunction", isPaused: false, endOn: "2026-01-01T00:30:00Z"));
+            state.Append("blocked-completed", "job.blocked.finished-window", At(0), At(5), DurableSliceStatus.Completed, expectedVersion: 0);
+            state.Append("blocked", "job.blocked.finished-window", At(25), At(30), DurableSliceStatus.DependencyBlocked, expectedVersion: 0, reason: "upstream");
+            state.Append("failed", "job.failed.finished-window", At(25), At(30), DurableSliceStatus.Failed, expectedVersion: 0, reason: "boom");
+            state.Append("missing-completed", "job.missing.finished-window", At(25), At(30), DurableSliceStatus.Completed, expectedVersion: 0);
+            state.AcquireLease("running", "job.running.finished-window", At(25), At(30), "worker", TimeSpan.FromMinutes(5), At(120));
+            var query = new DashboardPageQuery(
+                catalog,
+                readModels,
+                new LifecycleReadModel(sqlite),
+                new JobChartQuery(sqlite, clock),
+                sqlite,
+                clock);
+
+            var data = query.Get(TimeSpan.FromDays(1));
+
+            var blocked = Assert.Single(data.ActiveJobs, job => job.Record.JobId == "job.blocked.finished-window");
+            var failed = Assert.Single(data.ActiveJobs, job => job.Record.JobId == "job.failed.finished-window");
+            var missing = Assert.Single(data.ActiveJobs, job => job.Record.JobId == "job.missing.finished-window");
+            var running = Assert.Single(data.ActiveJobs, job => job.Record.JobId == "job.running.finished-window");
+            Assert.Empty(data.CompletedJobs);
+            Assert.Equal(("DependencyBlocked", "Blocked", false), (blocked.LifecycleStatus, blocked.NextSlice.Text, blocked.IsCompleted));
+            Assert.Equal(("Failed", "Attention", false), (failed.LifecycleStatus, failed.NextSlice.Text, failed.IsCompleted));
+            Assert.Equal(("Healthy", "Incomplete", false), (missing.LifecycleStatus, missing.NextSlice.Text, missing.IsCompleted));
+            Assert.Equal(("Running", "In progress", false), (running.LifecycleStatus, running.NextSlice.Text, running.IsCompleted));
+        }
+
+        [Fact]
+        public void Dashboard_moves_finite_job_to_completed_after_all_slices_complete()
+        {
+            var clock = new ManualClock(At(120));
+            var catalog = new SqliteJobCatalogRepository(sqlite);
+            var state = new SqliteSliceStateRepository(sqlite);
+            catalog.Create(Schedule("job.complete.finished-window", "CompleteFunction", isPaused: false, endOn: "2026-01-01T00:15:00Z"));
+            state.Append("complete-0", "job.complete.finished-window", At(0), At(5), DurableSliceStatus.Completed, expectedVersion: 0);
+            state.Append("complete-1", "job.complete.finished-window", At(5), At(10), DurableSliceStatus.Completed, expectedVersion: 0);
+            state.Append("complete-2", "job.complete.finished-window", At(10), At(15), DurableSliceStatus.Completed, expectedVersion: 0);
+            var query = new DashboardPageQuery(
+                catalog,
+                new SqliteOperationalReadModelRepository(sqlite),
+                new LifecycleReadModel(sqlite),
+                new JobChartQuery(sqlite, clock),
+                sqlite,
+                clock);
+
+            var data = query.Get(TimeSpan.FromDays(1));
+
+            var completedJob = Assert.Single(data.CompletedJobs);
+            Assert.Equal("job.complete.finished-window", completedJob.Record.JobId);
+            Assert.Equal("Completed", completedJob.LifecycleStatus);
+            Assert.True(completedJob.IsCompleted);
+            Assert.Empty(data.ActiveJobs);
+        }
+
+        [Fact]
         public async Task Dashboard_and_catalog_constrain_long_job_names()
         {
             const string longJobId = "CopilotUsage.GhcpReportingUserLanguageToolUsageAndModelToolUsageExtraLongIdentifierForLayout";
@@ -1356,7 +1420,7 @@ namespace KoLite.LocalApp.Tests
                 }
             });
 
-        private static string Schedule(string activityId, string functionName, bool isPaused, string outputTable = "Output", int maxParallelism = 1, string queryWindowSize = "00:05:00", string? folder = null, IReadOnlyList<string>? tags = null)
+        private static string Schedule(string activityId, string functionName, bool isPaused, string outputTable = "Output", int maxParallelism = 1, string queryWindowSize = "00:05:00", string? folder = null, IReadOnlyList<string>? tags = null, string? endOn = null)
         {
             var schedule = $$"""
             {
@@ -1382,6 +1446,11 @@ namespace KoLite.LocalApp.Tests
             if (tags is { Count: > 0 })
             {
                 metadata.Add($"  \"tags\": {JsonSerializer.Serialize(tags)},");
+            }
+
+            if (endOn is not null)
+            {
+                metadata.Add($"  \"endOn\": {JsonSerializer.Serialize(endOn)},");
             }
 
             return metadata.Count == 0

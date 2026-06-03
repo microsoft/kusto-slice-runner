@@ -73,19 +73,19 @@ namespace KoLite.LocalApp.Ui
                 var definition = record.Definition;
                 lifecycleStates.TryGetValue(record.JobId, out var lifecycle);
                 summaries.TryGetValue(record.JobId, out var summary);
-                var completed = definition.EndOn is { } endOn && endOn <= now && (summary is null || summary.QueuedCount + summary.RunningCount == 0);
+                var completed = IsCompletedSchedule(definition, summary, now);
                 var status = lifecycle?.IsSoftDeleted == true
                     ? "SoftDeleted"
                     : !record.IsEnabled
                         ? "Paused"
-                        : completed
-                            ? "Completed"
-                            : summary is { FailedCount: > 0 } or { DeadLetteredCount: > 0 }
-                                ? "Failed"
-                                : summary is { DependencyBlockedCount: > 0 }
-                                    ? "DependencyBlocked"
-                                    : summary is { QueuedCount: > 0 } or { RunningCount: > 0 }
-                                        ? "Running"
+                        : summary is { FailedCount: > 0 } or { DeadLetteredCount: > 0 }
+                            ? "Failed"
+                            : summary is { DependencyBlockedCount: > 0 }
+                                ? "DependencyBlocked"
+                                : summary is { QueuedCount: > 0 } or { RunningCount: > 0 }
+                                    ? "Running"
+                                    : completed
+                                        ? "Completed"
                                         : "Healthy";
 
                 return new JobListItem(
@@ -101,7 +101,7 @@ namespace KoLite.LocalApp.Ui
                         _ => status
                     },
                     AppFormatting.BadgeCss(status),
-                    GetNextSliceTiming(record, definition, lifecycle, completed, queuedAvailability, latestSliceEnds, now),
+                    GetNextSliceTiming(record, definition, lifecycle, summary, completed, queuedAvailability, latestSliceEnds, now),
                     completed);
             }).ToList();
             var tagSummaries = BuildTagSummaries(jobs, normalizedSelectedTags);
@@ -141,6 +141,44 @@ namespace KoLite.LocalApp.Ui
 
         private static bool MatchesSelectedTags(JobListItem job, IReadOnlyList<string> selectedTags) =>
             selectedTags.All(tag => job.Definition.Tags.Contains(tag, StringComparer.Ordinal));
+
+        private static bool IsCompletedSchedule(JobDefinition definition, JobStatusSummary? summary, DateTimeOffset now)
+        {
+            if (definition.EndOn is not { } endOn)
+            {
+                return false;
+            }
+
+            var delayedEnd = now.ToUniversalTime() - definition.DelayFromUtcNow;
+            if (endOn.ToUniversalTime() > delayedEnd)
+            {
+                return false;
+            }
+
+            var expectedSlices = CountFiniteEligibleSlices(definition, endOn);
+            var completedSlices = summary?.CompletedCount ?? 0;
+            var incompleteKnownSlices = summary is null
+                ? 0
+                : summary.QueuedCount
+                    + summary.RunningCount
+                    + summary.FailedCount
+                    + summary.DeadLetteredCount
+                    + summary.DependencyBlockedCount;
+
+            return incompleteKnownSlices == 0 && completedSlices >= expectedSlices;
+        }
+
+        private static long CountFiniteEligibleSlices(JobDefinition definition, DateTimeOffset endOn)
+        {
+            var startFromUtc = definition.StartFrom.ToUniversalTime();
+            var endOnUtc = endOn.ToUniversalTime();
+            if (endOnUtc <= startFromUtc)
+            {
+                return 0;
+            }
+
+            return (endOnUtc - startFromUtc).Ticks / definition.QueryWindowSize.Ticks;
+        }
 
         private IReadOnlyDictionary<string, DateTimeOffset> GetQueuedAvailability()
         {
@@ -185,6 +223,7 @@ namespace KoLite.LocalApp.Ui
             JobCatalogRecord record,
             JobDefinition definition,
             JobLifecycleProjection? lifecycle,
+            JobStatusSummary? summary,
             bool completed,
             IReadOnlyDictionary<string, DateTimeOffset> queuedAvailability,
             IReadOnlyDictionary<string, DateTimeOffset> latestSliceEnds,
@@ -197,7 +236,7 @@ namespace KoLite.LocalApp.Ui
 
             if (completed)
             {
-                return new NextSliceTiming(null, "Complete", "The schedule end has passed and no queued or running slices remain.");
+                return new NextSliceTiming(null, "Complete", "The schedule end has passed and all eligible slices are complete.");
             }
 
             if (!record.IsEnabled || definition.IsPaused)
@@ -222,7 +261,7 @@ namespace KoLite.LocalApp.Ui
             var nextEndUtc = nextStartUtc.Add(definition.QueryWindowSize);
             if (definition.EndOn is { } endOn && nextEndUtc > endOn.ToUniversalTime())
             {
-                return new NextSliceTiming(null, "Complete", "No complete future query window remains before the schedule end.");
+                return ExhaustedButIncomplete(summary);
             }
 
             var eligibleAtUtc = nextEndUtc.Add(definition.DelayFromUtcNow);
@@ -233,5 +272,17 @@ namespace KoLite.LocalApp.Ui
             eligibleAtUtc <= now
                 ? new NextSliceTiming(eligibleAtUtc, "Eligible now", detail)
                 : new NextSliceTiming(eligibleAtUtc, AppFormatting.Iso(eligibleAtUtc), detail);
+
+        private static NextSliceTiming ExhaustedButIncomplete(JobStatusSummary? summary)
+        {
+            const string detail = "The schedule end has passed, but not all eligible slices are complete.";
+            return summary switch
+            {
+                { QueuedCount: > 0 } or { RunningCount: > 0 } => new NextSliceTiming(null, "In progress", detail),
+                { DependencyBlockedCount: > 0 } => new NextSliceTiming(null, "Blocked", detail),
+                { FailedCount: > 0 } or { DeadLetteredCount: > 0 } => new NextSliceTiming(null, "Attention", detail),
+                _ => new NextSliceTiming(null, "Incomplete", detail)
+            };
+        }
     }
 }
