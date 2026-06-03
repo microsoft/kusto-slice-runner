@@ -1,0 +1,39 @@
+[
+  {
+    "activityId": "YourDatabase.Minimal",
+    "functionName": "YourMinimalProducer",
+    "outputTable": "_YourMinimalProducer",
+    "queryWindowSize": "00:15:00",
+    "delayFromUtcNow": "00:00:00",
+    "maxParallelism": 1,
+    "queryTimeout": "00:01:00",
+    "isPaused": true,
+    "startFrom": "2026-01-01T00:00:00Z",
+    "target": {
+      "clusterUri": "https://your-cluster.kusto.windows.net",
+      "database": "YourDatabase"
+    }
+  },
+  {
+    "activityId": "YourDatabase.Full",
+    "functionName": "YourFullProducer",
+    "outputTable": "_YourFullProducer",
+    "queryWindowSize": "01:00:00",
+    "delayFromUtcNow": "00:15:00",
+    "maxParallelism": 4,
+    "queryTimeout": "00:30:00",
+    "isPaused": false,
+    "startFrom": "2026-01-01T00:00:00Z",
+    "folder": "YourTeam/Full",
+    "dependsOn": [
+      { "activityId": "YourDatabase.Minimal" }
+    ],
+    "jobSettings": {
+      "exampleSetting": "opaque-to-ko-lite"
+    },
+    "target": {
+      "clusterUri": "https://your-cluster.kusto.windows.net",
+      "database": "YourDatabase"
+    }
+  }
+]

@@ -1,0 +1,18 @@
+{
+  "activityId": "YourDatabase.YourActivityName",
+  "functionName": "YourKustoProducerFunction",
+  "outputTable": "_YourKustoProducerFunction",
+  "queryWindowSize": "01:00:00",
+  "delayFromUtcNow": "00:15:00",
+  "maxParallelism": 1,
+  "queryTimeout": "00:05:00",
+  "isPaused": false,
+  "startFrom": "2026-01-01T00:00:00Z",
+  "folder": "YourTeam/Examples",
+  "dependsOn": [],
+  "jobSettings": {},
+  "target": {
+    "clusterUri": "https://your-cluster.kusto.windows.net",
+    "database": "YourDatabase"
+  }
+}
