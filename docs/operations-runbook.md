@@ -1,6 +1,6 @@
 # KO Lite operations runbook
 
-This runbook covers local and service-style operation for the internal standalone KO Lite repo.
+This runbook covers safe local operation for the internal standalone KO Lite repo.
 
 ## Safe local review
 
@@ -12,6 +12,12 @@ dotnet run --project .\src\KoLite.LocalApp\KoLite.LocalApp.csproj -- --Connectio
 ```
 
 Open `http://127.0.0.1:5057/status/health` and confirm the database path, scheduler settings, Kusto auth mode, shutdown state, and worker-pool snapshot.
+
+If port `5057` is busy, add an explicit URL:
+
+```powershell
+--KoLite:Urls=http://127.0.0.1:5058
+```
 
 ## Live local execution
 
@@ -28,52 +34,53 @@ Then run with scheduler dispatch enabled:
 dotnet run --project .\src\KoLite.LocalApp\KoLite.LocalApp.csproj -- --ConnectionStrings:KoLiteSqlite="$db" --KoLite:Scheduler:Enabled=true --KoLite:Kusto:AuthMode=AzureCli
 ```
 
-## Published app workflow
+## Configuration
 
-Publish to an isolated local folder:
+| Setting | Default | Notes |
+| --- | --- | --- |
+| `ConnectionStrings:KoLiteSqlite` | Empty | Preferred explicit local SQLite path. |
+| `KoLite:DatabasePath` | `%LOCALAPPDATA%\KoLite\ko-lite.db` | Fallback database path when no connection string is supplied. |
+| `KoLite:Urls` | `http://127.0.0.1:5057` | Local bind URL. |
+| `KoLite:Scheduler:Enabled` | `true` | Disable for UI-only or safe first-run review. |
+| `KoLite:Scheduler:TickInterval` | `00:00:10` | Scheduler cadence. Must be greater than zero. |
+| `KoLite:Scheduler:LogEveryPass` | `false` | Writes durable scheduler/worker diagnostic rows when enabled. |
+| `KoLite:WorkerPool:MaxConcurrency` | `10` | Fixed local worker-pool concurrency. |
+| `KoLite:WorkerPool:IdleDelay` | `00:00:00.250` | Delay between idle dispatcher cycles. |
+| `KoLite:WorkerPool:MaxDispatchStartsPerCycle` | `100` | Per-cycle dispatch start cap. |
+| `KoLite:Kusto:AuthMode` | `AzureCli` | Supported values: `AzureCli`, `ManagedIdentity`. |
+| `KoLite:Kusto:ManagedIdentityClientId` | Empty | Optional user-assigned managed identity client ID. |
+
+Compatibility aliases `KoLite:Scheduler:WorkerConcurrency` and `KoLite:Scheduler:MaxWorkerIterations` are still accepted by the worker-pool options.
+
+## Job catalog import and export
+
+Use **Import** to add or update jobs from schedule JSON. Imports accept either one schedule object or an array of schedule objects through paste or file upload.
+
+Imports are additive and update-only: jobs with matching `activityId` values are updated, missing jobs are created, and jobs omitted from the payload are left untouched.
+
+Use **Export all** on the home dashboard to export an import-compatible JSON array for every non-soft-deleted job in the local catalog. Individual job rows and job details pages also include single-job export links.
+
+After a job has execution history, `activityId`, `queryWindowSize`, and `startFrom` are read-only. The edit page marks those fields read-only, and the backend rejects raw JSON or import payloads that try to change them for a started job.
+
+See [schedule-json.md](schedule-json.md) for the schedule contract.
+
+## Published output
+
+Publish to an isolated local folder when you want to run from compiled output instead of `dotnet run`:
 
 ```powershell
-.\scripts\Publish-KoLiteLocalApp.ps1 -Configuration Release
+$publishDir = "$env:LOCALAPPDATA\KoLite\run-app"
+dotnet publish .\src\KoLite.LocalApp\KoLite.LocalApp.csproj --configuration Release --output "$publishDir" --nologo
+dotnet "$publishDir\KoLite.LocalApp.dll" --ConnectionStrings:KoLiteSqlite="$db" --KoLite:Scheduler:Enabled=false --KoLite:Kusto:AuthMode=AzureCli
 ```
 
-Run UI-only:
+Stop the running process before publishing again because published DLLs can be locked while the app is running.
 
-```powershell
-.\scripts\Start-KoLitePublishedUi.ps1
-```
-
-Run with scheduler setting chosen explicitly:
-
-```powershell
-.\scripts\Start-KoLitePublishedApp.ps1 -SchedulerEnabled $false
-.\scripts\Start-KoLitePublishedApp.ps1 -SchedulerEnabled $true
-```
-
-Stop with graceful drain:
-
-```powershell
-.\scripts\Stop-KoLitePublishedApp.ps1
-```
-
-## Service metadata
-
-The service install script is dry-run by default and does not start or stop services:
-
-```powershell
-.\scripts\Install-KoLiteLocalService.ps1 -DryRun
-```
-
-The default `AppDllPath` is `%LOCALAPPDATA%\KoLite\run-app\KoLite.LocalApp.dll`, matching `Publish-KoLiteLocalApp.ps1`. Run publish first, or pass `-AppDllPath` explicitly if the service should use a different installation folder.
-
-Use `-Apply` only after reviewing the printed `sc.exe` commands.
+This checkout does not include service install, publish helper, or diagnostics helper scripts. If service hosting is needed, publish first, use your service manager's normal process registration, and pass the same safety flags shown above.
 
 ## Diagnostics
 
-Use:
-
-```powershell
-.\scripts\Test-KoLiteLocalDiagnostics.ps1 -DryRun
-```
+Use `/status/health` to confirm the database path, scheduler options, Kusto auth mode, worker-pool state, and shutdown state.
 
 Enable per-pass scheduler/worker diagnostics temporarily with:
 
@@ -107,10 +114,22 @@ LIMIT 30;
 
 ## Rerun and cleanup
 
-Rerun is blocked while affected slices are queued, leased, or running. The rerun planner suggests `.delete table ... records <|` commands, but the operator must review and execute Kusto cleanup manually before acknowledging the local rerun batch.
+From a slice detail page, use **Rerun this slice** to open the rerun planner. The planner also accepts a UTC start/end range and shows every root and downstream slice whose local state will be reset.
+
+Rerun execution is intentionally two-step:
+
+1. Review the affected slices and suggested Kusto cleanup commands. KO Lite suggests `.delete table ... records <|` commands that use `StartTime` and `EndTime`; edit them if a job's output table uses different columns.
+2. After manually handling Kusto cleanup, acknowledge it on the rerun batch page. KO Lite snapshots old local state, attempts, logs, queue rows, and events into the rerun report, deletes the current local rows for those slices, and lets the normal scheduler pick the missing work back up.
+
+Rerun is blocked while any affected slice is queued, leased, or running.
 
 Back up the SQLite database before service upgrades, hard deletes, repair experiments, or large reruns.
 
-## Crash recovery
+## Troubleshooting
 
-Use `scripts\Inspect-KoLiteCrashRecovery.ps1` to inspect local crash-recovery state. Long `queryTimeout` values also lengthen queue lease windows, so recovery after a hard crash can take longer for long-running jobs.
+- **Port in use:** add `--KoLite:Urls=http://127.0.0.1:5058`.
+- **Unexpected live work:** restart with `--KoLite:Scheduler:Enabled=false`, pause jobs, or stop the local process and wait for active work to drain.
+- **Kusto auth failures:** verify Azure CLI sign-in, managed identity settings, target cluster/database, and Kusto permissions.
+- **Locked publish output:** stop the published app before republishing.
+- **SQLite inspection:** use the database path shown by `/status/health`; runtime sidecar files such as `*.db-wal` and `*.db-shm` are local artifacts.
+- **Crash recovery:** long `queryTimeout` values also lengthen queue lease windows, so recovery after a hard crash can take longer for long-running jobs.

@@ -4,7 +4,7 @@ Use this checklist before copying `ko-lite` into its own internal repository or 
 
 ## Tree hygiene
 
-- Confirm only source, docs, scripts, config, solution, package, and workflow files are copied.
+- Confirm only source, docs, config, solution, package, and workflow files are copied.
 - Do not copy ignored `bin`, `obj`, `TestResults`, `.playwright-mcp`, SQLite database, log, publish, or local run artifacts.
 - Confirm legacy generated-only directories are absent from the destination tree.
 - Confirm `git status --short` is clean after restore/build/test commands.
@@ -26,10 +26,11 @@ Keep `dotnet format` at the default severity. Info-level analyzer cleanup is int
 ## Documentation validation
 
 - Confirm every README relative link points to an existing file.
+- Confirm README screenshots exist and are useful if screenshots are referenced.
 - Confirm the quickstart uses repository-relative paths, not machine-specific paths.
-- Confirm the first-run path is scheduler-disabled or UI-only.
+- Confirm the first-run path is scheduler-disabled.
 - Confirm live Kusto writes and required permissions are called out before any scheduler-enabled command.
-- Confirm service setup says to publish first or pass `-AppDllPath`.
+- Confirm docs do not reference helper scripts unless those scripts exist in the checkout.
 
 ## Dependency and notice validation
 
@@ -41,13 +42,15 @@ Keep `dotnet format` at the default severity. Info-level analyzer cleanup is int
 ## Publish smoke
 
 ```powershell
-.\scripts\Publish-KoLiteLocalApp.ps1 -Configuration Release -Clean
-.\scripts\Start-KoLitePublishedUi.ps1 -DryRun
-.\scripts\Install-KoLiteLocalService.ps1 -DryRun
+$publishDir = "$env:TEMP\ko-lite-publish"
+dotnet publish .\src\KoLite.LocalApp\KoLite.LocalApp.csproj --configuration Release --output "$publishDir" --nologo
 ```
 
 For a live smoke test, use a disposable SQLite database and start with scheduler disabled:
 
 ```powershell
-.\scripts\Start-KoLitePublishedApp.ps1 -DatabasePath "$env:LOCALAPPDATA\KoLite\ko-lite-smoke.db" -SchedulerEnabled $false
+$db = "$env:LOCALAPPDATA\KoLite\ko-lite-smoke.db"
+dotnet "$publishDir\KoLite.LocalApp.dll" --ConnectionStrings:KoLiteSqlite="$db" --KoLite:Scheduler:Enabled=false --KoLite:Kusto:AuthMode=AzureCli
 ```
+
+Open `http://127.0.0.1:5057/status/health`, confirm the database path and scheduler-disabled state, then stop the process before deleting the disposable database.
