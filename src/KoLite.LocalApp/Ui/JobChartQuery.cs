@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.Json;
 using KoLite.Local.Core.Time;
 using KoLite.Local.Sqlite.Connections;
 
@@ -28,8 +29,102 @@ namespace KoLite.LocalApp.Ui
 
     public sealed record DashboardCharts(SuccessRateChart FirstAttemptSuccess, SuccessRateChart SuccessAfterRetries);
 
+    public enum JobAttemptResultBucket
+    {
+        Ignore,
+        Success,
+        Retry,
+        Error
+    }
+
+    public static class JobAttemptStatusTaxonomy
+    {
+        public static IReadOnlyList<string> ChartedStatuses { get; } =
+        [
+            "Succeeded",
+            "FailedRetryable",
+            "Failed",
+            "DeadLettered",
+            "LeaseLost"
+        ];
+
+        public static JobAttemptResultBucket BucketFor(string status) => status switch
+        {
+            "Succeeded" => JobAttemptResultBucket.Success,
+            "FailedRetryable" => JobAttemptResultBucket.Retry,
+            "Failed" or "DeadLettered" or "LeaseLost" => JobAttemptResultBucket.Error,
+            _ => JobAttemptResultBucket.Ignore
+        };
+    }
+
+    public sealed record JobAttemptResultPoint(DateTimeOffset BucketStartUtc, int SuccessCount, int RetryCount, int ErrorCount)
+    {
+        public int TotalCount => SuccessCount + RetryCount + ErrorCount;
+        public string BucketLabel => BucketStartUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
+    }
+
+    public sealed record JobAttemptResultChart(
+        string Title,
+        IReadOnlyList<JobAttemptResultPoint> Points,
+        DateTimeOffset RangeStartUtc,
+        DateTimeOffset RangeEndUtc,
+        TimeSpan BucketSize)
+    {
+        public bool HasData => Points.Any(p => p.TotalCount > 0);
+    }
+
+    public sealed record JobSuccessfulDurationPoint(DateTimeOffset BucketStartUtc, int Count, int MissingDurationCount, double? AverageDurationMilliseconds)
+    {
+        public string BucketLabel => BucketStartUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
+        public string AverageDurationText => AverageDurationMilliseconds is { } duration
+            ? TimeSpan.FromMilliseconds(duration).ToString("c", CultureInfo.InvariantCulture)
+            : "n/a";
+    }
+
+    public sealed record JobSuccessfulDurationChart(
+        string Title,
+        IReadOnlyList<JobSuccessfulDurationPoint> Points,
+        DateTimeOffset RangeStartUtc,
+        DateTimeOffset RangeEndUtc,
+        TimeSpan BucketSize,
+        int MetricsDurationCount,
+        int AttemptDurationFallbackCount,
+        int RecoveredDurationCount,
+        int MissingDurationCount)
+    {
+        public bool HasData => Points.Any(p => p.Count > 0);
+        public int SampleCount => MetricsDurationCount + AttemptDurationFallbackCount + RecoveredDurationCount;
+        public int TotalSuccessfulCount => SampleCount + MissingDurationCount;
+    }
+
+    public sealed record JobDetailsCharts(
+        string JobId,
+        TimeSpan SelectedRange,
+        JobAttemptResultChart AttemptResults,
+        JobSuccessfulDurationChart SuccessfulDurations);
+
     public sealed class JobChartQuery
     {
+        private static readonly string[] DurationMillisecondsMetricKeys =
+        [
+            "queryDurationMs",
+            "queryDurationMilliseconds",
+            "kustoDurationMs",
+            "kustoDurationMilliseconds",
+            "executionDurationMs",
+            "executionDurationMilliseconds",
+            "durationMs",
+            "durationMilliseconds"
+        ];
+
+        private static readonly string[] DurationTimeSpanMetricKeys =
+        [
+            "queryDuration",
+            "kustoDuration",
+            "executionDuration",
+            "duration"
+        ];
+
         private readonly IKoLiteSqliteConnectionFactory connectionFactory;
         private readonly IClock clock;
 
@@ -64,6 +159,25 @@ namespace KoLite.LocalApp.Ui
                 BuildChart("Success Rate After Retries by function", jobIds, buckets, finalCounts, since, until, bucketSize));
         }
 
+        public JobDetailsCharts GetJobDetailsCharts(string jobId, TimeSpan range)
+        {
+            if (string.IsNullOrWhiteSpace(jobId))
+            {
+                throw new ArgumentException("Job id is required.", nameof(jobId));
+            }
+
+            var bucketSize = BucketSizeFor(range);
+            var until = AlignUp(clock.UtcNow, bucketSize);
+            var since = AlignDown(clock.UtcNow.Subtract(range), bucketSize);
+            var buckets = EnumerateBuckets(since, until, bucketSize);
+
+            return new JobDetailsCharts(
+                jobId,
+                range,
+                BuildJobAttemptResultChart(jobId, buckets, since, until, bucketSize),
+                BuildJobSuccessfulDurationChart(jobId, buckets, since, until, bucketSize));
+        }
+
         private IReadOnlyList<string> GetJobIds()
         {
             using var connection = connectionFactory.OpenConnection();
@@ -78,6 +192,192 @@ namespace KoLite.LocalApp.Ui
             while (reader.Read())
             {
                 results.Add(reader.GetString(0));
+            }
+
+            return results;
+        }
+
+        private JobAttemptResultChart BuildJobAttemptResultChart(string jobId, IReadOnlyList<DateTimeOffset> buckets, DateTimeOffset since, DateTimeOffset until, TimeSpan bucketSize)
+        {
+            var counts = Enumerable.Range(0, buckets.Count).Select(_ => new JobAttemptResultCounts()).ToArray();
+            foreach (var row in ReadJobAttemptResultCounts(jobId, since, until, bucketSize))
+            {
+                if (row.BucketIndex < 0 || row.BucketIndex >= counts.Length)
+                {
+                    continue;
+                }
+
+                switch (JobAttemptStatusTaxonomy.BucketFor(row.Status))
+                {
+                    case JobAttemptResultBucket.Success:
+                        counts[row.BucketIndex].SuccessCount += row.Count;
+                        break;
+                    case JobAttemptResultBucket.Retry:
+                        counts[row.BucketIndex].RetryCount += row.Count;
+                        break;
+                    case JobAttemptResultBucket.Error:
+                        counts[row.BucketIndex].ErrorCount += row.Count;
+                        break;
+                }
+            }
+
+            return new JobAttemptResultChart(
+                "Query Results by Time of Execution",
+                buckets.Select((bucket, index) => new JobAttemptResultPoint(bucket, counts[index].SuccessCount, counts[index].RetryCount, counts[index].ErrorCount)).ToArray(),
+                since,
+                until,
+                bucketSize);
+        }
+
+        private JobSuccessfulDurationChart BuildJobSuccessfulDurationChart(string jobId, IReadOnlyList<DateTimeOffset> buckets, DateTimeOffset since, DateTimeOffset until, TimeSpan bucketSize)
+        {
+            var durations = Enumerable.Range(0, buckets.Count).Select(_ => new DurationBucket()).ToArray();
+            var metricsCount = 0;
+            var fallbackCount = 0;
+            var recoveredCount = 0;
+            var missingCount = 0;
+            foreach (var sample in ReadSuccessfulDurationSamples(jobId, since, until))
+            {
+                var index = (int)((sample.CompletedAtUtc.ToUniversalTime() - since).Ticks / bucketSize.Ticks);
+                if (index < 0 || index >= durations.Length)
+                {
+                    continue;
+                }
+
+                var duration = TryReadDurationFromMetricsJson(sample.MetricsJson);
+                var usedMetric = duration is not null;
+                if (duration is null && sample.StartedAtUtc is { } startedAtUtc)
+                {
+                    duration = sample.CompletedAtUtc - startedAtUtc;
+                }
+
+                if (duration is null || duration.Value < TimeSpan.Zero)
+                {
+                    durations[index].MissingDurationCount++;
+                    missingCount++;
+                    continue;
+                }
+
+                durations[index].Count++;
+                durations[index].TotalMilliseconds += duration.Value.TotalMilliseconds;
+                if (usedMetric)
+                {
+                    metricsCount++;
+                }
+                else if (sample.RecoveredStartedAtUtc)
+                {
+                    recoveredCount++;
+                }
+                else
+                {
+                    fallbackCount++;
+                }
+            }
+
+            return new JobSuccessfulDurationChart(
+                "Successful Query Duration by Time of Execution",
+                buckets.Select((bucket, index) => new JobSuccessfulDurationPoint(
+                    bucket,
+                    durations[index].Count,
+                    durations[index].MissingDurationCount,
+                    durations[index].Count == 0 ? null : durations[index].TotalMilliseconds / durations[index].Count)).ToArray(),
+                since,
+                until,
+                bucketSize,
+                metricsCount,
+                fallbackCount,
+                recoveredCount,
+                missingCount);
+        }
+
+        private IReadOnlyList<JobAttemptResultCount> ReadJobAttemptResultCounts(string jobId, DateTimeOffset since, DateTimeOffset until, TimeSpan bucketSize)
+        {
+            using var connection = connectionFactory.OpenConnection();
+            using var command = connection.CreateCommand();
+            var statusParameters = string.Join(", ", JobAttemptStatusTaxonomy.ChartedStatuses.Select((_, index) => "$status" + index.ToString(CultureInfo.InvariantCulture)));
+            command.CommandText = $"""
+                SELECT CAST((unixepoch(sa.completed_at_utc) - unixepoch($since)) / $bucket_seconds AS INTEGER) bucket_index,
+                       sa.status,
+                       COUNT(*) attempt_count
+                FROM slice_attempts sa
+                WHERE sa.job_id = $job
+                  AND sa.completed_at_utc IS NOT NULL
+                  AND sa.completed_at_utc >= $since
+                  AND sa.completed_at_utc < $until
+                  AND sa.status IN ({statusParameters})
+                GROUP BY bucket_index, sa.status
+                ORDER BY bucket_index, sa.status;
+                """;
+            command.Add("$job", jobId);
+            command.Add("$since", SqliteUi.FormatUtc(since));
+            command.Add("$until", SqliteUi.FormatUtc(until));
+            command.Add("$bucket_seconds", Math.Max(1L, (long)bucketSize.TotalSeconds));
+            for (var i = 0; i < JobAttemptStatusTaxonomy.ChartedStatuses.Count; i++)
+            {
+                command.Add("$status" + i.ToString(CultureInfo.InvariantCulture), JobAttemptStatusTaxonomy.ChartedStatuses[i]);
+            }
+
+            using var reader = command.ExecuteReader();
+            var results = new List<JobAttemptResultCount>();
+            while (reader.Read())
+            {
+                results.Add(new JobAttemptResultCount(
+                    reader.GetInt32(0),
+                    reader.GetString(1),
+                    Convert.ToInt32(reader.GetInt64(2), CultureInfo.InvariantCulture)));
+            }
+
+            return results;
+        }
+
+        private IReadOnlyList<SuccessfulDurationSample> ReadSuccessfulDurationSamples(string jobId, DateTimeOffset since, DateTimeOffset until)
+        {
+            using var connection = connectionFactory.OpenConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT sa.completed_at_utc,
+                       sa.started_at_utc,
+                       (
+                           SELECT MAX(running.recorded_at_utc)
+                           FROM slice_state_events running
+                           WHERE running.job_id = sa.job_id
+                             AND running.slice_start_utc = sa.slice_start_utc
+                             AND running.slice_end_utc = sa.slice_end_utc
+                             AND running.attempt = sa.attempt
+                             AND running.state = 'Running'
+                             AND running.recorded_at_utc <= sa.completed_at_utc
+                       ) recovered_started_at_utc,
+                       sa.metrics_json
+                FROM slice_attempts sa
+                WHERE sa.job_id = $job
+                  AND sa.status = 'Succeeded'
+                  AND sa.completed_at_utc IS NOT NULL
+                  AND sa.completed_at_utc >= $since
+                  AND sa.completed_at_utc < $until
+                ORDER BY sa.completed_at_utc;
+                """;
+            command.Add("$job", jobId);
+            command.Add("$since", SqliteUi.FormatUtc(since));
+            command.Add("$until", SqliteUi.FormatUtc(until));
+            using var reader = command.ExecuteReader();
+            var results = new List<SuccessfulDurationSample>();
+            while (reader.Read())
+            {
+                DateTimeOffset? startedAtUtc = null;
+                if (!reader.IsDBNull(1))
+                {
+                    startedAtUtc = SqliteUi.ParseUtc(reader.GetString(1));
+                }
+                else if (!reader.IsDBNull(2))
+                {
+                    startedAtUtc = SqliteUi.ParseUtc(reader.GetString(2));
+                }
+
+                results.Add(new SuccessfulDurationSample(
+                    SqliteUi.ParseUtc(reader.GetString(0)),
+                    startedAtUtc,
+                    reader.IsDBNull(1) && !reader.IsDBNull(2),
+                    reader.GetString(3)));
             }
 
             return results;
@@ -148,6 +448,68 @@ namespace KoLite.LocalApp.Ui
             }
 
             return results;
+        }
+
+        private static TimeSpan? TryReadDurationFromMetricsJson(string metricsJson)
+        {
+            if (string.IsNullOrWhiteSpace(metricsJson) || metricsJson.Trim() == "{}")
+            {
+                return null;
+            }
+
+            using var document = JsonDocument.Parse(metricsJson);
+            if (document.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                return null;
+            }
+
+            foreach (var key in DurationMillisecondsMetricKeys)
+            {
+                if (document.RootElement.TryGetProperty(key, out var value) && TryReadMilliseconds(value, out var milliseconds))
+                {
+                    return TimeSpan.FromMilliseconds(milliseconds);
+                }
+            }
+
+            foreach (var key in DurationTimeSpanMetricKeys)
+            {
+                if (document.RootElement.TryGetProperty(key, out var value) && TryReadTimeSpan(value, out var duration))
+                {
+                    return duration;
+                }
+            }
+
+            return null;
+        }
+
+        private static bool TryReadMilliseconds(JsonElement value, out double milliseconds)
+        {
+            if (value.ValueKind == JsonValueKind.Number && value.TryGetDouble(out milliseconds))
+            {
+                return milliseconds >= 0;
+            }
+
+            if (value.ValueKind == JsonValueKind.String &&
+                double.TryParse(value.GetString(), NumberStyles.Float, CultureInfo.InvariantCulture, out milliseconds))
+            {
+                return milliseconds >= 0;
+            }
+
+            milliseconds = 0;
+            return false;
+        }
+
+        private static bool TryReadTimeSpan(JsonElement value, out TimeSpan duration)
+        {
+            if (value.ValueKind == JsonValueKind.String &&
+                TimeSpan.TryParse(value.GetString(), CultureInfo.InvariantCulture, out duration) &&
+                duration >= TimeSpan.Zero)
+            {
+                return true;
+            }
+
+            duration = TimeSpan.Zero;
+            return false;
         }
 
         private static Dictionary<string, BucketCounts[]> InitializeCounts(IReadOnlyList<string> jobIds, int bucketCount) =>
@@ -230,10 +592,28 @@ namespace KoLite.LocalApp.Ui
 
         private sealed record AttemptOutcome(string JobId, DateTimeOffset CompletedAtUtc, bool Succeeded);
 
+        private sealed record JobAttemptResultCount(int BucketIndex, string Status, int Count);
+
+        private sealed record SuccessfulDurationSample(DateTimeOffset CompletedAtUtc, DateTimeOffset? StartedAtUtc, bool RecoveredStartedAtUtc, string MetricsJson);
+
         private sealed class BucketCounts
         {
             public int Numerator { get; set; }
             public int Denominator { get; set; }
+        }
+
+        private sealed class JobAttemptResultCounts
+        {
+            public int SuccessCount { get; set; }
+            public int RetryCount { get; set; }
+            public int ErrorCount { get; set; }
+        }
+
+        private sealed class DurationBucket
+        {
+            public int Count { get; set; }
+            public int MissingDurationCount { get; set; }
+            public double TotalMilliseconds { get; set; }
         }
     }
 }

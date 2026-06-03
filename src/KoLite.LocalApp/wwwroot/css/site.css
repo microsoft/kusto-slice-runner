@@ -80,6 +80,57 @@ h3 { font-size: 16px; margin-bottom: 10px; }
 .section-block { margin-bottom: 18px; }
 .section-title { margin-bottom: 10px; }
 .section-title h2 { margin-bottom: 2px; }
+.job-tabs {
+  background: var(--surface);
+  margin-bottom: 18px;
+}
+.tab-list {
+  background: #f6f8fa;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0;
+  padding: 0 16px;
+}
+.tab-link {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-bottom-color: transparent;
+  border-radius: 8px 8px 0 0;
+  color: var(--text);
+  margin-bottom: -1px;
+  padding: 8px 12px;
+}
+.tab-link:hover {
+  background: #eef1f4;
+  text-decoration: none;
+}
+.tab-link.active,
+.tab-link[aria-selected="true"] {
+  background: var(--surface);
+  border-bottom-color: var(--surface);
+  color: var(--primary);
+  font-weight: 600;
+}
+.tab-link:focus {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+.tab-panel {
+  border: 1px solid var(--border);
+  border-radius: 0 0 10px 10px;
+  border-top: 0;
+  box-shadow: 0 1px 2px rgba(27, 31, 36, 0.04);
+  margin-bottom: 0;
+  padding: 16px;
+}
+.tab-panel > .card:last-child,
+.tab-panel > .grid-two:last-child,
+.tab-panel .card:last-child {
+  margin-bottom: 0;
+}
+.tabs-enhanced .tab-panel[hidden] { display: none; }
 .disclosure-card > summary {
   align-items: center;
   cursor: pointer;
@@ -308,13 +359,15 @@ h3 { font-size: 16px; margin-bottom: 10px; }
 }
 .chart-value { color: var(--muted); font-size: 12px; white-space: nowrap; }
 
-.success-chart {
+.success-chart,
+.job-chart {
   display: flex;
   flex-direction: column;
   gap: 10px;
   margin: 0;
 }
-.success-chart-canvas-wrap {
+.success-chart-canvas-wrap,
+.job-chart-canvas-wrap {
   background: linear-gradient(180deg, rgba(246, 248, 250, 0.55), rgba(255, 255, 255, 0.95));
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -324,12 +377,14 @@ h3 { font-size: 16px; margin-bottom: 10px; }
   position: relative;
   width: 100%;
 }
-.success-chart-canvas {
+.success-chart-canvas,
+.job-chart-canvas {
   display: block;
   height: 100% !important;
   width: 100% !important;
 }
-.chart-error .success-chart-canvas-wrap {
+.chart-error .success-chart-canvas-wrap,
+.chart-error .job-chart-canvas-wrap {
   border-color: rgba(207, 34, 46, 0.35);
 }
 
@@ -467,5 +522,6 @@ h3 { font-size: 16px; margin-bottom: 10px; }
   .chart-track {
     grid-column: 1 / -1;
   }
-  .success-chart-canvas-wrap { height: 300px; }
+  .success-chart-canvas-wrap,
+  .job-chart-canvas-wrap { height: 300px; }
 }

@@ -1,0 +1,64 @@
+@using System.Text.Json
+@model JobSuccessfulDurationChart
+
+@{
+    const string chartId = "job-successful-duration-chart";
+    var payload = new
+    {
+        kind = "duration",
+        title = Model.Title,
+        rangeStartUtc = AppFormatting.Iso(Model.RangeStartUtc),
+        rangeEndUtc = AppFormatting.Iso(Model.RangeEndUtc),
+        bucketMs = (long)Model.BucketSize.TotalMilliseconds,
+        yAxisTitle = "Duration",
+        series = new[]
+        {
+            new
+            {
+                name = "Successful attempt duration",
+                color = "#0969da",
+                points = Model.Points.Select(point => new
+                {
+                    x = point.BucketStartUtc.ToUnixTimeMilliseconds(),
+                    y = point.AverageDurationMilliseconds,
+                    count = point.Count,
+                    missingCount = point.MissingDurationCount,
+                    durationText = point.AverageDurationText,
+                    bucket = AppFormatting.Iso(point.BucketStartUtc),
+                    label = point.BucketLabel
+                })
+            }
+        }
+    };
+}
+
+@if (!Model.HasData)
+{
+    <p class="empty">
+        No successful executions with duration data in the selected period.
+        @if (Model.MissingDurationCount > 0)
+        {
+            <span>@Model.MissingDurationCount successful execution(s) were missing duration data.</span>
+        }
+    </p>
+}
+else
+{
+    <p class="muted chart-help">
+        Averages include @Model.SampleCount successful execution(s)
+        @if (Model.MissingDurationCount > 0)
+        {
+            <span>; @Model.MissingDurationCount successful execution(s) were missing duration data.</span>
+        }
+        else
+        {
+            <span>; no successful executions were missing duration data.</span>
+        }
+    </p>
+    <figure class="job-chart" data-chartjs-job="@chartId">
+        <div class="job-chart-canvas-wrap">
+            <canvas id="@chartId" class="job-chart-canvas" aria-label="@Model.Title" role="img"></canvas>
+        </div>
+        <script type="application/json" id="@chartId-data" class="job-chart-payload">@Html.Raw(JsonSerializer.Serialize(payload))</script>
+    </figure>
+}

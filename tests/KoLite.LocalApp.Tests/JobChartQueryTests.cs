@@ -52,6 +52,113 @@ namespace KoLite.LocalApp.Tests
             Assert.Equal(100.0, finalPoint.Percent);
         }
 
+        [Theory]
+        [InlineData("Succeeded", JobAttemptResultBucket.Success)]
+        [InlineData("FailedRetryable", JobAttemptResultBucket.Retry)]
+        [InlineData("Failed", JobAttemptResultBucket.Error)]
+        [InlineData("DeadLettered", JobAttemptResultBucket.Error)]
+        [InlineData("LeaseLost", JobAttemptResultBucket.Error)]
+        [InlineData("Started", JobAttemptResultBucket.Ignore)]
+        [InlineData("Unexpected", JobAttemptResultBucket.Ignore)]
+        public void Attempt_status_taxonomy_maps_chart_buckets(string status, JobAttemptResultBucket expected)
+        {
+            Assert.Equal(expected, JobAttemptStatusTaxonomy.BucketFor(status));
+        }
+
+        [Fact]
+        public void Per_job_result_chart_counts_status_buckets_and_ignores_non_terminal_rows()
+        {
+            catalog.Create(Schedule("job.chart"));
+            catalog.Create(Schedule("job.other"));
+            state.Append("result-slice", "job.chart", At(60), At(65), DurableSliceStatus.Completed, expectedVersion: 0);
+            state.Append("other-result-slice", "job.other", At(60), At(65), DurableSliceStatus.Completed, expectedVersion: 0);
+            readModels.RecordAttempt("result-success", "job.chart", At(60), At(65), 1, "Succeeded", "worker", At(60), At(61));
+            readModels.RecordAttempt("result-retry", "job.chart", At(60), At(65), 2, "FailedRetryable", "worker", At(61), At(62));
+            readModels.RecordAttempt("result-failed", "job.chart", At(60), At(65), 3, "Failed", "worker", At(62), At(63));
+            readModels.RecordAttempt("result-deadletter", "job.chart", At(60), At(65), 4, "DeadLettered", "worker", At(63), At(64));
+            readModels.RecordAttempt("result-lease-lost", "job.chart", At(60), At(65), 5, "LeaseLost", "worker", At(64), At(65));
+            readModels.RecordAttempt("result-started", "job.chart", At(60), At(65), 6, "Started", "worker", At(65), null);
+            readModels.RecordAttempt("result-unknown", "job.chart", At(60), At(65), 7, "Unexpected", "worker", At(65), At(66));
+            readModels.RecordAttempt("other-success", "job.other", At(60), At(65), 1, "Succeeded", "worker", At(60), At(61));
+            var query = new JobChartQuery(factory, new ManualClock(At(120)));
+
+            var charts = query.GetJobDetailsCharts("job.chart", TimeSpan.FromDays(1));
+            var point = charts.AttemptResults.Points.Single(p => p.TotalCount > 0);
+
+            Assert.Equal("Query Results by Time of Execution", charts.AttemptResults.Title);
+            Assert.True(charts.AttemptResults.HasData);
+            Assert.Equal(1, point.SuccessCount);
+            Assert.Equal(1, point.RetryCount);
+            Assert.Equal(3, point.ErrorCount);
+            Assert.Equal(5, point.TotalCount);
+        }
+
+        [Fact]
+        public void Per_job_duration_chart_uses_metrics_then_started_completed_fallback()
+        {
+            catalog.Create(Schedule("job.chart"));
+            state.Append("duration-slice", "job.chart", At(60), At(65), DurableSliceStatus.Completed, expectedVersion: 0);
+            readModels.RecordAttempt("duration-metric", "job.chart", At(60), At(65), 1, "Succeeded", "worker", At(60), At(65), metricsJson: "{\"queryDurationMs\":120000}");
+            readModels.RecordAttempt("duration-fallback", "job.chart", At(60), At(65), 2, "Started", "worker", At(70), null);
+            readModels.RecordAttempt("duration-fallback", "job.chart", At(60), At(65), 2, "Succeeded", "worker", null, At(75));
+            readModels.RecordAttempt("duration-retry", "job.chart", At(60), At(65), 3, "FailedRetryable", "worker", At(75), At(76));
+            var query = new JobChartQuery(factory, new ManualClock(At(120)));
+
+            var charts = query.GetJobDetailsCharts("job.chart", TimeSpan.FromDays(1));
+            var point = charts.SuccessfulDurations.Points.Single(p => p.Count > 0);
+
+            Assert.Equal("Successful Query Duration by Time of Execution", charts.SuccessfulDurations.Title);
+            Assert.True(charts.SuccessfulDurations.HasData);
+            Assert.Equal(1, charts.SuccessfulDurations.MetricsDurationCount);
+            Assert.Equal(1, charts.SuccessfulDurations.AttemptDurationFallbackCount);
+            Assert.Equal(0, charts.SuccessfulDurations.RecoveredDurationCount);
+            Assert.Equal(0, charts.SuccessfulDurations.MissingDurationCount);
+            Assert.Equal(2, point.Count);
+            Assert.Equal(0, point.MissingDurationCount);
+            Assert.Equal(210000, point.AverageDurationMilliseconds);
+            Assert.Equal("00:03:30", point.AverageDurationText);
+        }
+
+        [Fact]
+        public void Per_job_duration_chart_recovers_started_time_from_running_state_events_and_counts_missing_samples()
+        {
+            catalog.Create(Schedule("job.chart"));
+            var recoveredLease = state.AcquireLease("recover-running", "job.chart", At(60), At(65), "worker", TimeSpan.FromMinutes(10), At(70));
+            Assert.NotNull(recoveredLease);
+            Assert.True(state.CompleteLease("recover-complete", "job.chart", At(60), At(65), "worker", recoveredLease.LeaseToken!, At(75)));
+            readModels.RecordAttempt("duration-recovered", "job.chart", At(60), At(65), 1, "Succeeded", "worker", null, At(75));
+            state.Append("missing-duration-complete", "job.chart", At(80), At(85), DurableSliceStatus.Completed, expectedVersion: 0);
+            readModels.RecordAttempt("duration-missing", "job.chart", At(80), At(85), 1, "Succeeded", "worker", null, At(85));
+            var query = new JobChartQuery(factory, new ManualClock(At(120)));
+
+            var charts = query.GetJobDetailsCharts("job.chart", TimeSpan.FromDays(1));
+            var point = charts.SuccessfulDurations.Points.Single(p => p.Count > 0 || p.MissingDurationCount > 0);
+
+            Assert.True(charts.SuccessfulDurations.HasData);
+            Assert.Equal(0, charts.SuccessfulDurations.MetricsDurationCount);
+            Assert.Equal(0, charts.SuccessfulDurations.AttemptDurationFallbackCount);
+            Assert.Equal(1, charts.SuccessfulDurations.RecoveredDurationCount);
+            Assert.Equal(1, charts.SuccessfulDurations.MissingDurationCount);
+            Assert.Equal(2, charts.SuccessfulDurations.TotalSuccessfulCount);
+            Assert.Equal(1, point.Count);
+            Assert.Equal(1, point.MissingDurationCount);
+            Assert.Equal(300000, point.AverageDurationMilliseconds);
+        }
+
+        [Fact]
+        public void Per_job_charts_return_empty_points_for_empty_ranges()
+        {
+            catalog.Create(Schedule("job.chart"));
+            var query = new JobChartQuery(factory, new ManualClock(At(120)));
+
+            var charts = query.GetJobDetailsCharts("job.chart", TimeSpan.FromHours(1));
+
+            Assert.False(charts.AttemptResults.HasData);
+            Assert.False(charts.SuccessfulDurations.HasData);
+            Assert.All(charts.AttemptResults.Points, point => Assert.Equal(0, point.TotalCount));
+            Assert.All(charts.SuccessfulDurations.Points, point => Assert.Equal(0, point.Count));
+        }
+
         public void Dispose()
         {
             SqliteConnection.ClearAllPools();

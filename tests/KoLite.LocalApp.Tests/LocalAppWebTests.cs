@@ -229,9 +229,17 @@ namespace KoLite.LocalApp.Tests
         public async Task Dashboard_history_and_slice_routes_render_seeded_sqlite_data()
         {
             SeedOperationalData();
+            var detailChartSliceStart = DateTimeOffset.UtcNow.AddMinutes(-10);
+            var detailChartSliceEnd = DateTimeOffset.UtcNow.AddMinutes(-5);
+            var detailChartState = new SqliteSliceStateRepository(sqlite);
+            var detailChartReadModels = new SqliteOperationalReadModelRepository(sqlite);
+            detailChartState.Append("detail-chart-slice", "job.web", detailChartSliceStart, detailChartSliceEnd, DurableSliceStatus.Completed, expectedVersion: 0);
+            detailChartReadModels.RecordAttempt("detail-chart-attempt", "job.web", detailChartSliceStart, detailChartSliceEnd, 1, "Started", "worker", detailChartSliceStart, null);
+            detailChartReadModels.RecordAttempt("detail-chart-attempt", "job.web", detailChartSliceStart, detailChartSliceEnd, 1, "Succeeded", "worker", null, detailChartSliceEnd);
             using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
 
             var dashboard = await client.GetStringAsync("/");
+            var details = await client.GetStringAsync("/jobs/job.web?range=1d");
             var history = await client.GetStringAsync("/jobs/job.web/history?from=2026-01-01T00%3A00%3A00Z&to=2026-01-01T00%3A15%3A00Z");
             var boundaryHistory = await client.GetStringAsync("/jobs/job.web/history?from=2026-01-01T00%3A05&to=2026-01-01T00%3A15");
             var wideHistory = await client.GetStringAsync("/jobs/job.web/history?from=2025-12-31T00%3A00&to=2026-01-02T00%3A00");
@@ -265,6 +273,25 @@ namespace KoLite.LocalApp.Tests
             Assert.DoesNotContain(" running,", dashboard);
             Assert.DoesNotContain("KO.Web-style local dashboard backed by SQLite.", dashboard);
             Assert.DoesNotContain("Background scheduler:", dashboard);
+            Assert.Contains("role=\"tablist\" aria-label=\"Job details sections\"", details);
+            Assert.Contains("href=\"#slice-history\" role=\"tab\" aria-controls=\"slice-history\"", details);
+            Assert.Contains("href=\"#definition\" role=\"tab\" aria-controls=\"definition\"", details);
+            Assert.Contains("href=\"#operations\" role=\"tab\" aria-controls=\"operations\"", details);
+            Assert.Contains("href=\"#change-history\" role=\"tab\" aria-controls=\"change-history\"", details);
+            Assert.Contains("id=\"slice-history\" class=\"tab-panel active\" role=\"tabpanel\"", details);
+            Assert.Contains("Open full history", details);
+            Assert.Contains("/jobs/job.web/history", details);
+            Assert.Contains("Query Results by Time of Execution", details);
+            Assert.Contains("Successful Query Duration by Time of Execution", details);
+            Assert.Contains("LeaseLost is shown in the Error bucket", details);
+            Assert.Contains("data-chartjs-job=\"job-attempt-result-chart\"", details);
+            Assert.Contains("data-chartjs-job=\"job-successful-duration-chart\"", details);
+            Assert.Contains("\"kind\":\"result-counts\"", details);
+            Assert.Contains("\"kind\":\"duration\"", details);
+            Assert.Contains("Averages include 1 successful execution(s)", details);
+            Assert.Contains("no successful executions were missing duration data", details);
+            Assert.Contains("\"missingCount\":0", details);
+            Assert.Contains("/jobs/job.web?range=7d#slice-history", details);
             Assert.Contains("Slice History: job.web", history);
             Assert.Contains("class=\"cell completed\"", history);
             Assert.Contains("class=\"cell completed-after-retry\"", history);
@@ -323,8 +350,18 @@ namespace KoLite.LocalApp.Tests
             Assert.Contains("data-slice-tooltip-line", script);
             Assert.Contains("data-slice-tooltip-title", script);
             Assert.Contains("BuildSuccessRateChart", script);
+            Assert.Contains("BuildJobDetailChart", script);
+            Assert.Contains("initJobDetailTabs", script);
+            Assert.Contains("data-chartjs-job", script);
             Assert.Contains("toggleSuccessRateSeries", script);
             Assert.Contains(".slice-history-tooltip", css);
+            Assert.Contains(".job-tabs", css);
+            Assert.Contains("border: 1px solid var(--border);", css);
+            Assert.Contains("box-shadow: 0 1px 2px rgba(27, 31, 36, 0.04);", css);
+            Assert.Contains(".tab-panel", css);
+            Assert.Contains(".tab-list", css);
+            Assert.Contains("border-bottom: 1px solid var(--border);", css);
+            Assert.Contains(".job-chart-canvas-wrap", css);
             Assert.Contains("--slice-stat-paused: #6e7781;", css);
             Assert.Contains("--slice-stat-blocked: #afb8c1;", css);
             Assert.Contains(".completed-after-retry", css);
@@ -461,6 +498,7 @@ namespace KoLite.LocalApp.Tests
             Assert.Contains("Raw JSON", details);
             Assert.Contains("Slice history", details);
             Assert.Contains("Job definition", details);
+            Assert.Contains("Operations", details);
             Assert.Contains("Change history", details);
             Assert.Contains("Catalog definition history", details);
             Assert.Contains("catalog-diff-table", details);

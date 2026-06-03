@@ -11,6 +11,7 @@
 else
 {
     var data = Model.Data;
+    var charts = Model.Charts;
     var showPausedIndicator = data.Lifecycle?.IsSoftDeleted != true && (!data.Job.IsEnabled || data.Definition.IsPaused);
     <div class="page-heading">
         <div>
@@ -66,156 +67,196 @@ else
         </div>
     </div>
 
-    <section class="card">
-        <div class="card-header">
-            <div>
-                <h2>Slice history</h2>
-                <p class="muted">Each cell is one scheduled slice. Colors distinguish completed, completed after retry, queued, running, paused, failed, and missing work.</p>
-            </div>
-            <a class="btn small" href="/jobs/@Uri.EscapeDataString(data.Job.JobId)/history">Open full history</a>
-        </div>
-        <partial name="_SliceHistory" model="data.SliceHistory" />
-    </section>
+    <div class="job-tabs" data-tabs>
+        <nav class="tab-list" role="tablist" aria-label="Job details sections">
+            <a id="slice-history-tab" class="tab-link active" href="#slice-history" role="tab" aria-controls="slice-history" aria-selected="true">Slice history</a>
+            <a id="definition-tab" class="tab-link" href="#definition" role="tab" aria-controls="definition" aria-selected="false">Job definition</a>
+            <a id="operations-tab" class="tab-link" href="#operations" role="tab" aria-controls="operations" aria-selected="false">Operations</a>
+            <a id="change-history-tab" class="tab-link" href="#change-history" role="tab" aria-controls="change-history" aria-selected="false">Change history</a>
+        </nav>
 
-    <section class="section-block">
-        <div class="section-title">
-            <h2>Job definition</h2>
-            <p class="muted">Edit the schedule fields or the raw schedule JSON for this job.</p>
-        </div>
-        <partial name="_ScheduleEditor" model="Model.Editor" />
-    </section>
-
-    <section class="section-block">
-        <div class="section-title">
-            <h2>Operations</h2>
-            <p class="muted">Recent execution attempts, state events, and logs for this job.</p>
-        </div>
-        <div class="grid-two">
-        <div class="card">
-            <div class="card-header">
-                <h3>Recent attempts</h3>
-                <span class="muted">@data.RecentAttempts.Count row(s)</span>
-            </div>
-            @if (data.RecentAttempts.Count == 0)
-            {
-                <p class="empty">No attempts recorded.</p>
-            }
-            else
-            {
-                <div class="table-wrap scroll-panel">
-                    <table class="ko-table compact">
-                        <thead><tr><th>Slice</th><th>Attempt</th><th>Status</th><th>Completed</th><th>Error</th></tr></thead>
-                        <tbody>
-                        @foreach (var attempt in data.RecentAttempts)
-                        {
-                            <tr>
-                                <td><a href="/jobs/@Uri.EscapeDataString(data.Job.JobId)/slices?start=@Uri.EscapeDataString(AppFormatting.Iso(attempt.SliceStartUtc))&end=@Uri.EscapeDataString(AppFormatting.Iso(attempt.SliceEndUtc))">@AppFormatting.Iso(attempt.SliceStartUtc)</a></td>
-                                <td>@attempt.Attempt</td>
-                                <td><span class="badge @AppFormatting.BadgeCss(attempt.Status)">@attempt.Status</span></td>
-                                <td>@AppFormatting.Local(attempt.CompletedAtUtc)</td>
-                                <td><span class="text-truncate" title="@attempt.ErrorMessage">@attempt.ErrorMessage</span></td>
-                            </tr>
-                        }
-                        </tbody>
-                    </table>
+        <section id="slice-history" class="tab-panel active" role="tabpanel" aria-labelledby="slice-history-tab">
+            <section class="card">
+                <div class="card-header">
+                    <div>
+                        <h2>Slice history</h2>
+                        <p class="muted">Each cell is one scheduled slice. Colors distinguish completed, completed after retry, queued, running, paused, failed, and missing work.</p>
+                    </div>
+                    <a class="btn small" href="/jobs/@Uri.EscapeDataString(data.Job.JobId)/history">Open full history</a>
                 </div>
+                <partial name="_SliceHistory" model="data.SliceHistory" />
+            </section>
+
+            @if (charts is not null)
+            {
+                <section class="card job-execution-charts">
+                    <div class="card-header">
+                        <div>
+                            <h2>Execution charts</h2>
+                            <p class="muted chart-help">Per-job execution results are grouped by completion time. LeaseLost is shown in the Error bucket because it is an operational failure that should remain visible.</p>
+                        </div>
+                        <div class="range-picker" aria-label="Chart range">
+                            @foreach (var range in Model.RangeLinks)
+                            {
+                                <a class="btn small @(range.Key == Model.Range ? "primary" : null)" aria-current="@(range.Key == Model.Range ? "true" : null)" href="/jobs/@Uri.EscapeDataString(data.Job.JobId)?range=@range.Key#slice-history">@range.Label</a>
+                            }
+                        </div>
+                    </div>
+                    <div class="chart-grid">
+                        <div>
+                            <h3>Query Results by Time of Execution</h3>
+                            <partial name="_JobAttemptResultChart" model="charts.AttemptResults" />
+                        </div>
+                        <div>
+                            <h3>Successful Query Duration by Time of Execution</h3>
+                            <p class="muted chart-help">Uses query duration from attempt metrics when present; otherwise uses successful attempt duration from started_at_utc to completed_at_utc.</p>
+                            <partial name="_JobSuccessfulDurationChart" model="charts.SuccessfulDurations" />
+                        </div>
+                    </div>
+                </section>
             }
-        </div>
-        <div class="card">
-            <div class="card-header">
-                <h3>Recent logs and events</h3>
-                <span class="muted">Latest activity</span>
+        </section>
+
+        <section id="definition" class="tab-panel" role="tabpanel" aria-labelledby="definition-tab">
+            <div class="section-title">
+                <h2>Job definition</h2>
+                <p class="muted">Edit the schedule fields or the raw schedule JSON for this job.</p>
             </div>
-            @if (data.RecentLogs.Count == 0 && data.RecentEvents.Count == 0)
-            {
-                <p class="empty">No logs or events recorded.</p>
-            }
-            else
-            {
-                <div class="scroll-panel">
-                    <ul class="plain-list dense-list">
-                        @foreach (var evt in data.RecentEvents)
+            <partial name="_ScheduleEditor" model="Model.Editor" />
+        </section>
+
+        <section id="operations" class="tab-panel" role="tabpanel" aria-labelledby="operations-tab">
+            <div class="section-title">
+                <h2>Operations</h2>
+                <p class="muted">Recent execution attempts, state events, and logs for this job.</p>
+            </div>
+            <div class="grid-two">
+            <div class="card">
+                <div class="card-header">
+                    <h3>Recent attempts</h3>
+                    <span class="muted">@data.RecentAttempts.Count row(s)</span>
+                </div>
+                @if (data.RecentAttempts.Count == 0)
+                {
+                    <p class="empty">No attempts recorded.</p>
+                }
+                else
+                {
+                    <div class="table-wrap scroll-panel">
+                        <table class="ko-table compact">
+                            <thead><tr><th>Slice</th><th>Attempt</th><th>Status</th><th>Completed</th><th>Error</th></tr></thead>
+                            <tbody>
+                            @foreach (var attempt in data.RecentAttempts)
+                            {
+                                <tr>
+                                    <td><a href="/jobs/@Uri.EscapeDataString(data.Job.JobId)/slices?start=@Uri.EscapeDataString(AppFormatting.Iso(attempt.SliceStartUtc))&end=@Uri.EscapeDataString(AppFormatting.Iso(attempt.SliceEndUtc))">@AppFormatting.Iso(attempt.SliceStartUtc)</a></td>
+                                    <td>@attempt.Attempt</td>
+                                    <td><span class="badge @AppFormatting.BadgeCss(attempt.Status)">@attempt.Status</span></td>
+                                    <td>@AppFormatting.Local(attempt.CompletedAtUtc)</td>
+                                    <td><span class="text-truncate" title="@attempt.ErrorMessage">@attempt.ErrorMessage</span></td>
+                                </tr>
+                            }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </div>
+            <div class="card">
+                <div class="card-header">
+                    <h3>Recent logs and events</h3>
+                    <span class="muted">Latest activity</span>
+                </div>
+                @if (data.RecentLogs.Count == 0 && data.RecentEvents.Count == 0)
+                {
+                    <p class="empty">No logs or events recorded.</p>
+                }
+                else
+                {
+                    <div class="scroll-panel">
+                        <ul class="plain-list dense-list">
+                            @foreach (var evt in data.RecentEvents)
+                            {
+                                <li><span class="badge">@evt.EventType</span> @AppFormatting.Iso(evt.SliceStartUtc) <span class="muted">@AppFormatting.Local(evt.RecordedAtUtc)</span> @evt.Reason</li>
+                            }
+                            @foreach (var log in data.RecentLogs)
+                            {
+                                <li><span class="badge">@log.Level</span> @log.Message <span class="muted">@AppFormatting.Local(log.RecordedAtUtc)</span></li>
+                            }
+                        </ul>
+                    </div>
+                }
+            </div>
+            </div>
+        </section>
+
+        <section id="change-history" class="tab-panel" role="tabpanel" aria-labelledby="change-history-tab">
+            <div class="section-title">
+                <h2>Change history</h2>
+                <p class="muted">Catalog history tracks schedule definition versions and highlights JSON changes between versions.</p>
+            </div>
+            <div class="card">
+                <div class="card-header">
+                    <h3>Catalog definition history</h3>
+                    <span class="muted">@data.CatalogHistory.Count version(s)</span>
+                </div>
+                @if (data.CatalogHistory.Count == 0)
+                {
+                    <p class="empty">No catalog history recorded.</p>
+                }
+                else
+                {
+                    <ul class="plain-list catalog-history-list">
+                        @foreach (var history in data.CatalogHistory)
                         {
-                            <li><span class="badge">@evt.EventType</span> @AppFormatting.Iso(evt.SliceStartUtc) <span class="muted">@AppFormatting.Local(evt.RecordedAtUtc)</span> @evt.Reason</li>
-                        }
-                        @foreach (var log in data.RecentLogs)
-                        {
-                            <li><span class="badge">@log.Level</span> @log.Message <span class="muted">@AppFormatting.Local(log.RecordedAtUtc)</span></li>
+                            <li>
+                                <div class="catalog-history-entry-header">
+                                    <strong>Catalog version @(history.CatalogVersion)</strong>
+                                    <span class="badge">@history.EventType</span>
+                                    <span class="muted">@AppFormatting.Local(history.RecordedAtUtc)</span>
+                                    @if (!string.IsNullOrWhiteSpace(history.Actor))
+                                    {
+                                        <span class="muted">by @history.Actor</span>
+                                    }
+                                </div>
+                                @if (history.IsInitialDefinition)
+                                {
+                                    <p class="muted catalog-history-note">Initial schedule definition.</p>
+                                }
+                                else if (!history.HasScheduleChanges)
+                                {
+                                    <p class="muted catalog-history-note">No schedule JSON changes.</p>
+                                }
+                                else
+                                {
+                                    <div class="table-wrap">
+                                        <table class="ko-table compact catalog-diff-table">
+                                            <thead>
+                                                <tr>
+                                                    <th>Path</th>
+                                                    <th>Change</th>
+                                                    <th>Previous</th>
+                                                    <th>Current</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                            @foreach (var diff in history.DiffRows)
+                                            {
+                                                <tr>
+                                                    <td class="catalog-diff-path"><code>@diff.Path</code></td>
+                                                    <td><span class="badge">@diff.ChangeType</span></td>
+                                                    <td class="catalog-diff-value">@(diff.PreviousValue ?? "-")</td>
+                                                    <td class="catalog-diff-value">@(diff.CurrentValue ?? "-")</td>
+                                                </tr>
+                                            }
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                }
+                            </li>
                         }
                     </ul>
-                </div>
-            }
-        </div>
-        </div>
-    </section>
-
-    <section class="section-block">
-        <div class="section-title">
-            <h2>Change history</h2>
-            <p class="muted">Catalog history tracks schedule definition versions and highlights JSON changes between versions.</p>
-        </div>
-        <div class="card">
-            <div class="card-header">
-                <h3>Catalog definition history</h3>
-                <span class="muted">@data.CatalogHistory.Count version(s)</span>
+                }
             </div>
-            @if (data.CatalogHistory.Count == 0)
-            {
-                <p class="empty">No catalog history recorded.</p>
-            }
-            else
-            {
-                <ul class="plain-list catalog-history-list">
-                    @foreach (var history in data.CatalogHistory)
-                    {
-                        <li>
-                            <div class="catalog-history-entry-header">
-                                <strong>Catalog version @(history.CatalogVersion)</strong>
-                                <span class="badge">@history.EventType</span>
-                                <span class="muted">@AppFormatting.Local(history.RecordedAtUtc)</span>
-                                @if (!string.IsNullOrWhiteSpace(history.Actor))
-                                {
-                                    <span class="muted">by @history.Actor</span>
-                                }
-                            </div>
-                            @if (history.IsInitialDefinition)
-                            {
-                                <p class="muted catalog-history-note">Initial schedule definition.</p>
-                            }
-                            else if (!history.HasScheduleChanges)
-                            {
-                                <p class="muted catalog-history-note">No schedule JSON changes.</p>
-                            }
-                            else
-                            {
-                                <div class="table-wrap">
-                                    <table class="ko-table compact catalog-diff-table">
-                                        <thead>
-                                            <tr>
-                                                <th>Path</th>
-                                                <th>Change</th>
-                                                <th>Previous</th>
-                                                <th>Current</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                        @foreach (var diff in history.DiffRows)
-                                        {
-                                            <tr>
-                                                <td class="catalog-diff-path"><code>@diff.Path</code></td>
-                                                <td><span class="badge">@diff.ChangeType</span></td>
-                                                <td class="catalog-diff-value">@(diff.PreviousValue ?? "-")</td>
-                                                <td class="catalog-diff-value">@(diff.CurrentValue ?? "-")</td>
-                                            </tr>
-                                        }
-                                        </tbody>
-                                    </table>
-                                </div>
-                            }
-                        </li>
-                    }
-                </ul>
-            }
-        </div>
-    </section>
+        </section>
+    </div>
 }

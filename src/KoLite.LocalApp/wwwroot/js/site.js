@@ -12,6 +12,7 @@
     "#d4a72c",
     "#57606a"
   ];
+  var jobChartPalette = ["#1a7f37", "#d4a72c", "#cf222e", "#0969da", "#8250df"];
 
   function tooltipRow(label, value) {
     var row = document.createElement("div");
@@ -104,6 +105,18 @@
     if (rangeMs <= 60 * 60 * 1000) return hour + ":" + minute;
     if (rangeMs <= 24 * 60 * 60 * 1000) return month + "/" + day + " " + hour + ":" + minute;
     return month + "/" + day;
+  }
+
+  function formatDurationTick(value) {
+    var ms = Number(value);
+    if (!Number.isFinite(ms)) return "";
+    if (ms < 1000) return Math.round(ms) + " ms";
+    var seconds = ms / 1000;
+    if (seconds < 60) return seconds.toFixed(seconds < 10 ? 1 : 0) + " s";
+    var minutes = seconds / 60;
+    if (minutes < 60) return minutes.toFixed(minutes < 10 ? 1 : 0) + " m";
+    var hours = minutes / 60;
+    return hours.toFixed(hours < 10 ? 1 : 0) + " h";
   }
 
   function toggleSuccessRateSeries(event, legendItem, legend) {
@@ -264,6 +277,215 @@
     });
   }
 
+  function buildJobDetailChart(canvas, payload) {
+    if (!window.Chart || !canvas || !payload || !payload.series || payload.series.length === 0) return null;
+
+    var rangeStart = Date.parse(payload.rangeStartUtc);
+    var rangeEnd = Date.parse(payload.rangeEndUtc);
+    var rangeMs = Math.max(0, rangeEnd - rangeStart);
+    var isDurationChart = payload.kind === "duration";
+    var datasets = payload.series.map(function (series, index) {
+      var color = series.color || jobChartPalette[index % jobChartPalette.length];
+      return {
+        label: series.name,
+        data: (series.points || []).map(function (point) {
+          return {
+            x: point.x,
+            y: point.y,
+            count: point.count,
+            missingCount: point.missingCount,
+            bucket: point.bucket,
+            label: point.label,
+            durationText: point.durationText
+          };
+        }),
+        borderColor: color,
+        backgroundColor: color,
+        borderWidth: 2,
+        pointBorderColor: "#fff",
+        pointBorderWidth: 1.25,
+        pointHitRadius: 10,
+        pointHoverRadius: 5,
+        pointRadius: function (context) {
+          var raw = context.raw || {};
+          return raw.y !== null && typeof raw.y !== "undefined" && raw.y !== 0 ? 2.75 : 0;
+        },
+        tension: isDurationChart ? 0.18 : 0,
+        spanGaps: false
+      };
+    });
+
+    return new Chart(canvas, {
+      type: "line",
+      data: { datasets: datasets },
+      options: {
+        animation: false,
+        maintainAspectRatio: false,
+        normalized: true,
+        parsing: false,
+        interaction: {
+          intersect: false,
+          mode: "nearest"
+        },
+        plugins: {
+          legend: {
+            display: true,
+            position: "bottom",
+            labels: {
+              boxWidth: 28,
+              color: "#24292f",
+              font: { size: 12 },
+              usePointStyle: true
+            },
+            onClick: toggleSuccessRateSeries
+          },
+          tooltip: {
+            callbacks: {
+              title: function (items) {
+                var raw = items.length ? items[0].raw : null;
+                return raw ? raw.bucket : "";
+              },
+              label: function (context) {
+                var raw = context.raw || {};
+                if (isDurationChart) {
+                  var included = typeof raw.count === "number" ? raw.count : 0;
+                  var missing = typeof raw.missingCount === "number" ? raw.missingCount : 0;
+                  var coverage = " (" + included + " included";
+                  if (missing > 0) coverage += ", " + missing + " missing duration";
+                  coverage += ")";
+                  return context.dataset.label + ": " + (raw.durationText || "n/a") + coverage;
+                }
+
+                return context.dataset.label + ": " + (raw.count || 0) + " execution(s)";
+              }
+            }
+          }
+        },
+        scales: {
+          x: {
+            type: "linear",
+            min: rangeStart,
+            max: rangeEnd,
+            grid: { color: "rgba(208, 215, 222, 0.55)" },
+            ticks: {
+              color: "#57606a",
+              maxRotation: 0,
+              callback: function (value) { return formatUtcTick(value, rangeMs); }
+            }
+          },
+          y: {
+            beginAtZero: true,
+            grid: { color: "rgba(208, 215, 222, 0.75)" },
+            ticks: {
+              color: "#57606a",
+              precision: isDurationChart ? undefined : 0,
+              callback: function (value) {
+                return isDurationChart ? formatDurationTick(value) : value;
+              }
+            },
+            title: {
+              display: true,
+              text: payload.yAxisTitle || (isDurationChart ? "Duration" : "Executions"),
+              color: "#57606a"
+            }
+          }
+        }
+      }
+    });
+  }
+
+  function initJobDetailCharts() {
+    document.querySelectorAll("[data-chartjs-job]").forEach(function (container) {
+      var chartId = container.getAttribute("data-chartjs-job");
+      var canvas = document.getElementById(chartId);
+      var payloadNode = document.getElementById(chartId + "-data");
+      if (!canvas || !payloadNode) return;
+
+      try {
+        var payload = JSON.parse(payloadNode.textContent || "{}");
+        buildJobDetailChart(canvas, payload);
+      } catch (error) {
+        container.classList.add("chart-error");
+        var message = document.createElement("p");
+        message.className = "empty";
+        message.textContent = "Chart data could not be rendered.";
+        container.prepend(message);
+        throw error;
+      }
+    });
+  }
+
+  function tabId(tab) {
+    var href = tab.getAttribute("href") || "";
+    return href.charAt(0) === "#" ? href.slice(1) : "";
+  }
+
+  function activateTab(root, selectedTab, focusTab) {
+    var tabs = Array.prototype.slice.call(root.querySelectorAll("[role='tab'][href^='#']"));
+    tabs.forEach(function (tab) {
+      var selected = tab === selectedTab;
+      var id = tabId(tab);
+      var panel = id ? document.getElementById(id) : null;
+      tab.classList.toggle("active", selected);
+      tab.setAttribute("aria-selected", selected ? "true" : "false");
+      tab.tabIndex = selected ? 0 : -1;
+      if (panel && root.contains(panel)) {
+        panel.classList.toggle("active", selected);
+        panel.hidden = !selected;
+      }
+    });
+
+    if (focusTab) selectedTab.focus();
+  }
+
+  function tabForHash(root, hash) {
+    var tabs = Array.prototype.slice.call(root.querySelectorAll("[role='tab'][href^='#']"));
+    if (!tabs.length) return null;
+    return tabs.find(function (tab) { return "#" + tabId(tab) === hash; }) || tabs[0];
+  }
+
+  function initJobDetailTabs() {
+    document.querySelectorAll("[data-tabs]").forEach(function (root) {
+      var tabs = Array.prototype.slice.call(root.querySelectorAll("[role='tab'][href^='#']"));
+      if (!tabs.length) return;
+
+      root.classList.add("tabs-enhanced");
+      activateTab(root, tabForHash(root, window.location.hash) || tabs[0], false);
+
+      tabs.forEach(function (tab) {
+        tab.addEventListener("click", function (event) {
+          event.preventDefault();
+          activateTab(root, tab, false);
+          if (history.pushState) {
+            history.pushState(null, "", tab.getAttribute("href"));
+          } else {
+            window.location.hash = tabId(tab);
+          }
+        });
+
+        tab.addEventListener("keydown", function (event) {
+          var index = tabs.indexOf(tab);
+          var nextIndex = index;
+          if (event.key === "ArrowRight" || event.key === "ArrowDown") nextIndex = (index + 1) % tabs.length;
+          else if (event.key === "ArrowLeft" || event.key === "ArrowUp") nextIndex = (index + tabs.length - 1) % tabs.length;
+          else if (event.key === "Home") nextIndex = 0;
+          else if (event.key === "End") nextIndex = tabs.length - 1;
+          else return;
+
+          event.preventDefault();
+          activateTab(root, tabs[nextIndex], true);
+        });
+      });
+    });
+  }
+
+  window.addEventListener("hashchange", function () {
+    document.querySelectorAll("[data-tabs]").forEach(function (root) {
+      var tab = tabForHash(root, window.location.hash);
+      if (tab) activateTab(root, tab, false);
+    });
+  });
+
   document.addEventListener("mouseover", function (event) {
     var target = event.target;
     if (!(target instanceof HTMLElement)) return;
@@ -320,6 +542,10 @@
   });
 
   window.BuildSuccessRateChart = buildSuccessRateChart;
+  window.BuildJobDetailChart = buildJobDetailChart;
+  window.initJobDetailTabs = initJobDetailTabs;
   window.toggleSuccessRateSeries = toggleSuccessRateSeries;
   initSuccessRateCharts();
+  initJobDetailCharts();
+  initJobDetailTabs();
 })();

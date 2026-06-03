@@ -76,6 +76,9 @@ namespace KoLite.Local.Sqlite.Migrations
             new(4, "drop-activity-cursors", """
                 DROP TABLE IF EXISTS activity_cursors;
                 """),
+            new(5, "slice-attempts-job-completed-index", """
+                CREATE INDEX IF NOT EXISTS ix_slice_attempts_job_completed ON slice_attempts(job_id, completed_at_utc);
+                """),
         ];
 
         private readonly IKoLiteSqliteConnectionFactory connectionFactory;

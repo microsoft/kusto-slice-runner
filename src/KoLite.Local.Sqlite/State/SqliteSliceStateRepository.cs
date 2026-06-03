@@ -33,8 +33,9 @@ namespace KoLite.Local.Sqlite.State
             var current = Get(c, tx, jobId, sliceStartUtc, sliceEndUtc); var version = current?.Version ?? 0;
             if (version != expectedVersion) throw new InvalidOperationException($"Slice state version conflict for '{jobId}'. Expected {expectedVersion}, found {version}.");
             var attempt = status == DurableSliceStatus.Running ? (current?.Attempt ?? 0) + 1 : current?.Attempt ?? 0;
-            InsertEvent(c, tx, operationId, jobId, sliceStartUtc, sliceEndUtc, generationId ?? current?.GenerationId, status, reason, attempt, payloadJson, actor);
-            Upsert(c, tx, jobId, sliceStartUtc, sliceEndUtc, generationId ?? current?.GenerationId, status, attempt, null, null, operationId, reason, DateTimeOffset.UtcNow);
+            var now = DateTimeOffset.UtcNow;
+            InsertEvent(c, tx, operationId, jobId, sliceStartUtc, sliceEndUtc, generationId ?? current?.GenerationId, status, reason, attempt, payloadJson, actor, now);
+            Upsert(c, tx, jobId, sliceStartUtc, sliceEndUtc, generationId ?? current?.GenerationId, status, attempt, null, null, operationId, reason, now);
             tx.Commit(); return new SliceStateAppendResult(Get(jobId, sliceStartUtc, sliceEndUtc), false);
         }
 
@@ -44,7 +45,7 @@ namespace KoLite.Local.Sqlite.State
             var current = Get(c, tx, jobId, sliceStartUtc, sliceEndUtc) ?? Missing(jobId, sliceStartUtc, sliceEndUtc);
             if (current.Status is DurableSliceStatus.Completed or DurableSliceStatus.DeadLettered || current.LeaseExpiresAtUtc > nowUtc.ToUniversalTime()) { tx.Commit(); return null; }
             var attempt = current.Attempt + 1; var expires = nowUtc.ToUniversalTime() + leaseDuration;
-            InsertEvent(c, tx, operationId, jobId, sliceStartUtc, sliceEndUtc, current.GenerationId, DurableSliceStatus.Running, null, attempt, "{}", leaseOwner);
+            InsertEvent(c, tx, operationId, jobId, sliceStartUtc, sliceEndUtc, current.GenerationId, DurableSliceStatus.Running, null, attempt, "{}", leaseOwner, nowUtc);
             Upsert(c, tx, jobId, sliceStartUtc, sliceEndUtc, current.GenerationId, DurableSliceStatus.Running, attempt, leaseOwner, expires, operationId, null, nowUtc);
             tx.Commit(); return Get(jobId, sliceStartUtc, sliceEndUtc);
         }
@@ -66,7 +67,7 @@ namespace KoLite.Local.Sqlite.State
             if (string.IsNullOrWhiteSpace(leaseToken)) throw new ArgumentException("A lease token is required for terminal slice transitions.", nameof(leaseToken));
             using var c = connectionFactory.OpenConnection(); using var tx = c.BeginTransaction(System.Data.IsolationLevel.Serializable); var cur = Get(c, tx, jobId, start, end);
             if (cur is null || cur.Status != DurableSliceStatus.Running || cur.LeaseOwner != owner || cur.LastEventId != leaseToken || cur.LeaseExpiresAtUtc <= now.ToUniversalTime()) { tx.Commit(); return false; }
-            InsertEvent(c, tx, op, jobId, start, end, cur.GenerationId, status, reason, cur.Attempt, payload, owner); Upsert(c, tx, jobId, start, end, cur.GenerationId, status, cur.Attempt, null, null, op, reason, now);
+            InsertEvent(c, tx, op, jobId, start, end, cur.GenerationId, status, reason, cur.Attempt, payload, owner, now); Upsert(c, tx, jobId, start, end, cur.GenerationId, status, cur.Attempt, null, null, op, reason, now);
             tx.Commit(); return true;
         }
 
@@ -77,10 +78,10 @@ namespace KoLite.Local.Sqlite.State
             cmd.Add("$j", jobId); cmd.Add("$s", SqliteStorage.Utc(start)); cmd.Add("$e", SqliteStorage.Utc(end)); using var r = cmd.ExecuteReader(); if (!r.Read()) return null;
             return new DurableSliceState(r.GetString(r.GetOrdinal("job_id")), SqliteStorage.ReadUtc(r, "slice_start_utc"), SqliteStorage.ReadUtc(r, "slice_end_utc"), r.IsDBNull(r.GetOrdinal("generation_id")) ? null : r.GetString(r.GetOrdinal("generation_id")), Enum.Parse<DurableSliceStatus>(r.GetString(r.GetOrdinal("state"))), r.GetInt32(r.GetOrdinal("attempt")), r.IsDBNull(r.GetOrdinal("lease_owner")) ? null : r.GetString(r.GetOrdinal("lease_owner")), SqliteStorage.ReadNullableUtc(r, "lease_expires_at_utc"), r.IsDBNull(r.GetOrdinal("last_event_id")) ? null : r.GetString(r.GetOrdinal("last_event_id")), r.IsDBNull(r.GetOrdinal("last_error_code")) ? null : r.GetString(r.GetOrdinal("last_error_code")), r.IsDBNull(r.GetOrdinal("last_error_message")) ? null : r.GetString(r.GetOrdinal("last_error_message")), r.GetInt64(r.GetOrdinal("version")), SqliteStorage.ReadUtc(r, "updated_at_utc"));
         }
-        private static void InsertEvent(SqliteConnection c, SqliteTransaction tx, string id, string jobId, DateTimeOffset start, DateTimeOffset end, string? gen, DurableSliceStatus state, string? reason, int attempt, string payload, string? actor)
+        private static void InsertEvent(SqliteConnection c, SqliteTransaction tx, string id, string jobId, DateTimeOffset start, DateTimeOffset end, string? gen, DurableSliceStatus state, string? reason, int attempt, string payload, string? actor, DateTimeOffset recordedAtUtc)
         {
-            using var cmd = SqliteStorage.Command(c, tx, "INSERT INTO slice_state_events (event_id, job_id, slice_start_utc, slice_end_utc, generation_id, event_type, state, reason, attempt, payload_json, actor) VALUES ($id,$j,$s,$e,$g,$t,$st,$r,$a,$p,$actor);");
-            cmd.Add("$id", id); cmd.Add("$j", jobId); cmd.Add("$s", SqliteStorage.Utc(start)); cmd.Add("$e", SqliteStorage.Utc(end)); cmd.Add("$g", gen); cmd.Add("$t", state.ToString()); cmd.Add("$st", state.ToString()); cmd.Add("$r", reason); cmd.Add("$a", attempt); cmd.Add("$p", payload); cmd.Add("$actor", actor); cmd.ExecuteNonQuery();
+            using var cmd = SqliteStorage.Command(c, tx, "INSERT INTO slice_state_events (event_id, job_id, slice_start_utc, slice_end_utc, generation_id, event_type, state, reason, attempt, payload_json, actor, recorded_at_utc) VALUES ($id,$j,$s,$e,$g,$t,$st,$r,$a,$p,$actor,$recorded);");
+            cmd.Add("$id", id); cmd.Add("$j", jobId); cmd.Add("$s", SqliteStorage.Utc(start)); cmd.Add("$e", SqliteStorage.Utc(end)); cmd.Add("$g", gen); cmd.Add("$t", state.ToString()); cmd.Add("$st", state.ToString()); cmd.Add("$r", reason); cmd.Add("$a", attempt); cmd.Add("$p", payload); cmd.Add("$actor", actor); cmd.Add("$recorded", SqliteStorage.Utc(recordedAtUtc)); cmd.ExecuteNonQuery();
         }
         private static void Upsert(SqliteConnection c, SqliteTransaction tx, string jobId, DateTimeOffset start, DateTimeOffset end, string? gen, DurableSliceStatus state, int attempt, string? owner, DateTimeOffset? expires, string eventId, string? error, DateTimeOffset now)
         {

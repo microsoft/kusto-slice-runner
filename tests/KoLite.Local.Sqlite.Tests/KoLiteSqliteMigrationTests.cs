@@ -137,6 +137,7 @@ namespace KoLite.Local.Sqlite.Tests
                 "ix_failure_summary_runs_job_updated",
                 "ix_operational_logs_job_recorded",
                 "ix_scheduled_slices_due",
+                "ix_slice_attempts_job_completed",
                 "ix_slice_attempts_slice_attempt",
                 "ix_repair_slices_batch_status",
                 "ix_repair_slices_job_slice",

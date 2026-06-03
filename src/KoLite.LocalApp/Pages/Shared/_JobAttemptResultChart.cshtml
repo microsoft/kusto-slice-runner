@@ -1,0 +1,71 @@
+@using System.Text.Json
+@model JobAttemptResultChart
+
+@{
+    const string chartId = "job-attempt-result-chart";
+    var payload = new
+    {
+        kind = "result-counts",
+        title = Model.Title,
+        rangeStartUtc = AppFormatting.Iso(Model.RangeStartUtc),
+        rangeEndUtc = AppFormatting.Iso(Model.RangeEndUtc),
+        bucketMs = (long)Model.BucketSize.TotalMilliseconds,
+        yAxisTitle = "Executions",
+        series = new[]
+        {
+            new
+            {
+                name = "Success",
+                color = "#1a7f37",
+                points = Model.Points.Select(point => new
+                {
+                    x = point.BucketStartUtc.ToUnixTimeMilliseconds(),
+                    y = point.SuccessCount,
+                    count = point.SuccessCount,
+                    bucket = AppFormatting.Iso(point.BucketStartUtc),
+                    label = point.BucketLabel
+                })
+            },
+            new
+            {
+                name = "Retry",
+                color = "#d4a72c",
+                points = Model.Points.Select(point => new
+                {
+                    x = point.BucketStartUtc.ToUnixTimeMilliseconds(),
+                    y = point.RetryCount,
+                    count = point.RetryCount,
+                    bucket = AppFormatting.Iso(point.BucketStartUtc),
+                    label = point.BucketLabel
+                })
+            },
+            new
+            {
+                name = "Error",
+                color = "#cf222e",
+                points = Model.Points.Select(point => new
+                {
+                    x = point.BucketStartUtc.ToUnixTimeMilliseconds(),
+                    y = point.ErrorCount,
+                    count = point.ErrorCount,
+                    bucket = AppFormatting.Iso(point.BucketStartUtc),
+                    label = point.BucketLabel
+                })
+            }
+        }
+    };
+}
+
+@if (!Model.HasData)
+{
+    <p class="empty">No successful, retryable, or terminal failed executions in the selected period.</p>
+}
+else
+{
+    <figure class="job-chart" data-chartjs-job="@chartId">
+        <div class="job-chart-canvas-wrap">
+            <canvas id="@chartId" class="job-chart-canvas" aria-label="@Model.Title" role="img"></canvas>
+        </div>
+        <script type="application/json" id="@chartId-data" class="job-chart-payload">@Html.Raw(JsonSerializer.Serialize(payload))</script>
+    </figure>
+}
