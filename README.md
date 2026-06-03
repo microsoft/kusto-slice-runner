@@ -1,15 +1,20 @@
 # KO Lite
 
-KO Lite is a local-first dashboard and worker for running scheduled Kusto output jobs from a local SQLite catalog. It is designed for an authenticated user or service identity that already has permission to execute the configured Kusto functions and append to the configured output tables.
+KO Lite is a local, develop-desktop system for scheduled Kusto set-or-append jobs. It is designed for an authenticated user or service identity that already has permission to execute the configured Kusto functions and append to the configured output tables.
 
 The local app owns the job catalog, queue, slice history, operational logs, rerun reports, and repair state in SQLite. Kusto is contacted only when scheduler/worker execution is enabled and a worker executes a slice.
 
+This is intended for non-production scenarios. For example, maybe you have a private dashboard that you want to schedule jobs for or you are working on a prototype that requires a bunch of backfilling to build up sample datasets. Those are great use cases for this tool. Down the road, it's plausible that the arch could be adjusted to be deployed to an Azure subscription. Feel free to contact me (23546948+benmartens@users.noreply.github.com) if you want to chat about that.
+
+## Comparison with scheduled Kusto jobs
+
 If you're familiar with [scheduled Kusto jobs](https://learn.microsoft.com/kusto/) here's a quick diff:
 - The set of job features is simplified.
-- Everything runs locally against a sqllite database. This is not meant for production scenarios.
+- Everything runs locally against a SQLite database. This is not meant for production scenarios.
 - You can now add tags to your jobs and then filter them in the UI. This helps you handle multiple workstreams in a single instance.
 - You can rerun slices! Click on any slice in the colorful window history view and then click "Rerun this slice" to get into that experience. This will properly handle dependent jobs too, but you'll need to make sure the Kusto tables are ready to accept the new data. KO Lite only reruns the jobs, it doesn't delete old data.
-- You can both soft delete a job (keep the history to be resurrected in teh future) or hard delete a job (permanently remove it and its history). Hard-delete avoids any problems around re-creating a job with the same id as a previous one.
+- You can both soft delete a job (keep the history to be resurrected in the future) or hard delete a job (permanently remove it and its history). Hard-delete avoids any problems around re-creating a job with the same id as a previous one.
+- Pause immediately blocks any future scheduling from happening. This includes retry loops! So when you pause a job, it will continue any in-flight set-or-append command but if that fails, it won't retry. After you unpause, it will pick up where it left off in the retry logic.
 
 ## What it does
 
@@ -20,14 +25,6 @@ If you're familiar with [scheduled Kusto jobs](https://learn.microsoft.com/kusto
 - Tracks queue state, slice history, attempts, logs, failures, and success-rate charts.
 - Plans historical reruns and local state repair while leaving destructive Kusto cleanup to the operator.
 
-## Safety first
-
-- KO Lite can write to Kusto through `.set-or-append`; review every target cluster, database, function, output table, and permission before enabling scheduling.
-- Start with `--KoLite:Scheduler:Enabled=false` for UI review or first-run setup.
-- Keep imported or sample jobs paused until they have been reviewed.
-- Rerun cleanup is manual: KO Lite suggests Kusto cleanup commands but does not execute them.
-- SQLite files are local runtime state. Back them up before destructive operations and do not commit `*.db`, `*.db-wal`, or `*.db-shm` files.
-
 ## Quick start
 
 From the repository root:
@@ -35,13 +32,11 @@ From the repository root:
 ```powershell
 npm ci
 
-$db = "$env:LOCALAPPDATA\KoLite\ko-lite-review.db"
-dotnet run --project .\src\KoLite.LocalApp\KoLite.LocalApp.csproj -- --ConnectionStrings:KoLiteSqlite="$db" --KoLite:Scheduler:Enabled=false --KoLite:Kusto:AuthMode=AzureCli
-```
+dotnet run --project .\src\KoLite.LocalApp\KoLite.LocalApp.csproj```
 
-Open `http://127.0.0.1:5057` and check `http://127.0.0.1:5057/status/health`. If port `5057` is busy, add `--KoLite:Urls=http://127.0.0.1:5058` and use that URL instead.
+Open `http://127.0.0.1:5057` and check `http://127.0.0.1:5057/status/health`
 
-When you are ready for live scheduling, review the jobs and Kusto permissions, keep only intentional jobs enabled, and restart with `--KoLite:Scheduler:Enabled=true`.
+You should be able to kill it at any point and it will restart without duplicating data (thanks to ingest-by tags) but to avoid any chance of issues, execute scripts\Stop-KoLiteApp.ps1. It will wait for the workers to drain and then shut down gracefully.
 
 ## Screenshots
 
