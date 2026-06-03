@@ -3,7 +3,7 @@ name: ko-lite-schedule-json
 description: "Use when the user wants to create, edit, or validate a KO Lite job-schedule JSON file (single object or an array of objects). Produces JSON-only output and validates it locally against the strict KO Lite schedule contract. Does NOT upload to KO Lite, write to Kusto, change schema, or run import tooling - uploading is the user's responsibility."
 metadata:
   author: Azure Core Team
-  version: "1.0.0"
+  version: "1.0.1"
 ---
 
 # KO Lite schedule JSON
@@ -59,6 +59,7 @@ Anything else is rejected by the validator.
 | `target` | Yes | object | `target.clusterUri` (absolute `https` URI, non-empty) and `target.database` (non-empty string). No other fields. |
 | `isPaused` | No | boolean | Default `false`. When `true`, the scheduler emits no work. |
 | `folder` | No | string | Informational only. KO Lite does not interpret. |
+| `tags` | No | array of strings | Optional local job organization tags. When present, must be an array of non-empty strings. KO Lite trims tags, normalizes them to lowercase, deduplicates after normalization, and uses them for dashboard/catalog filters. Tags are separate from Kusto ingestion tags and from `folder`. |
 | `dependsOn` | No | array of objects | Each entry is `{ "activityId": "<id>" }`. No bare-string shorthand. No self-dependency. |
 | `jobSettings` | No | any JSON | Opaque pass-through for downstream code. KO Lite stores it but does not interpret it. |
 
@@ -123,6 +124,9 @@ to or later than the upstream's) when the bound is intentional.
    Use the activity id convention `<databaseName>.<activityName>`; for example,
    jobs in the `CopilotUsage` namespace should be named `CopilotUsage.*`, not
    `CopilotUsage_*`.
+   If the user mentions workstreams, environments, teams, features, or other
+   local grouping labels, include them as optional `tags`; do not require tags
+   when the user does not mention them.
 3. **Pick a starting point.**
    - New single job: copy `templates\single-job.template.json`.
    - New batch: copy `templates\jobs-array.template.json`.

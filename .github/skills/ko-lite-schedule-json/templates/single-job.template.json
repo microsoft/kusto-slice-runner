@@ -9,6 +9,7 @@
   "isPaused": false,
   "startFrom": "2026-01-01T00:00:00Z",
   "folder": "YourTeam/Examples",
+  "tags": ["example", "daily"],
   "dependsOn": [],
   "jobSettings": {},
   "target": {

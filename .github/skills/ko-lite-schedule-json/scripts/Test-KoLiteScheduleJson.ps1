@@ -67,7 +67,7 @@ $AllowedTopLevel = [System.Collections.Generic.HashSet[string]]::new([System.Str
 @(
     'activityId','functionName','outputTable','queryWindowSize',
     'delayFromUtcNow','maxParallelism','queryTimeout','isPaused',
-    'startFrom','endOn','folder','dependsOn','jobSettings','target'
+    'startFrom','endOn','folder','tags','dependsOn','jobSettings','target'
 ) | ForEach-Object { [void]$AllowedTopLevel.Add($_) }
 
 $AllowedTargetFields = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
@@ -305,6 +305,26 @@ function Test-Definition {
     $folderProp = Get-Property -Element $Root -Name 'folder'
     if ($null -ne $folderProp -and $folderProp.ValueKind -ne [System.Text.Json.JsonValueKind]::String -and $folderProp.ValueKind -ne [System.Text.Json.JsonValueKind]::Null) {
         Add-Error $errors 'folder' "folder must be a string when present (got $($folderProp.ValueKind))."
+    }
+
+    $tagsProp = Get-Property -Element $Root -Name 'tags'
+    if ($null -ne $tagsProp) {
+        if ($tagsProp.ValueKind -ne [System.Text.Json.JsonValueKind]::Array) {
+            Add-Error $errors 'tags' 'tags must be an array of strings.'
+        }
+        else {
+            $i = 0
+            foreach ($entry in $tagsProp.EnumerateArray()) {
+                $path = "tags[$i]"
+                if ($entry.ValueKind -ne [System.Text.Json.JsonValueKind]::String) {
+                    Add-Error $errors $path "$path must be a string."
+                }
+                elseif ([string]::IsNullOrWhiteSpace($entry.GetString())) {
+                    Add-Error $errors $path "$path must be a non-empty string."
+                }
+                $i++
+            }
+        }
     }
 
     $targetProp = Get-Property -Element $Root -Name 'target'
