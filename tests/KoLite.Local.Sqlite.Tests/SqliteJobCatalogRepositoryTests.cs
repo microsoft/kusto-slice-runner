@@ -116,6 +116,46 @@ namespace KoLite.Local.Sqlite.Tests
         }
 
         [Fact]
+        public void Update_allows_tag_changes_after_job_has_started()
+        {
+            var created = repository.Create(Schedule("job.catalog", paused: false));
+            MarkStarted(created.JobId);
+
+            var updated = repository.Update(
+                created.JobId,
+                Schedule("job.catalog", paused: false, tags: ["Prod", " daily ", "PROD"]),
+                expectedVersion: created.CatalogVersion);
+
+            Assert.Equal(2, updated.CatalogVersion);
+            Assert.Equal(["prod", "daily"], updated.Definition.Tags);
+            Assert.Contains("\"tags\":[\"prod\",\"daily\"]", updated.ScheduleJson, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void Create_import_and_export_normalize_schedule_tags()
+        {
+            var created = repository.Create(Schedule("job.tags", paused: false, tags: [" Prod ", "daily", "PROD"]));
+
+            Assert.Equal(["prod", "daily"], created.Definition.Tags);
+            Assert.Contains("\"tags\":[\"prod\",\"daily\"]", created.ScheduleJson, StringComparison.Ordinal);
+            Assert.DoesNotContain(" Prod ", created.ScheduleJson, StringComparison.Ordinal);
+
+            var result = repository.Import("[" + Schedule("job.tags", paused: false, tags: ["Security", "prod", "security"]) + "," + Schedule("job.tags.new", paused: false, tags: ["Daily"]) + "]", actor: "test-import");
+            var updated = repository.Get("job.tags")!;
+            var imported = repository.Get("job.tags.new")!;
+            var exportAll = ScheduleImportParser.Parse(repository.ExportAll());
+
+            Assert.Equal(1, result.Created);
+            Assert.Equal(1, result.Updated);
+            Assert.Equal(["security", "prod"], updated.Definition.Tags);
+            Assert.Equal(["daily"], imported.Definition.Tags);
+            Assert.Contains("\"tags\":[\"security\",\"prod\"]", repository.Export("job.tags"), StringComparison.Ordinal);
+            Assert.True(exportAll.IsValid, string.Join(Environment.NewLine, exportAll.Errors.Select(e => $"{e.Field}: {e.Message}")));
+            Assert.Equal(["security", "prod"], exportAll.Items.Single(item => item.Definition.ActivityId == "job.tags").Definition.Tags);
+            Assert.Equal(["daily"], exportAll.Items.Single(item => item.Definition.ActivityId == "job.tags.new").Definition.Tags);
+        }
+
+        [Fact]
         public void Create_rejects_invalid_schedule_before_persistence()
         {
             Assert.Throws<InvalidOperationException>(() => repository.Create("{ \"activityId\": \"missing.required\" }"));
@@ -205,20 +245,30 @@ namespace KoLite.Local.Sqlite.Tests
                 .ToArray();
         }
 
-        private static string Schedule(string activityId, bool paused, int maxParallelism = 1, string queryWindowSize = "00:05:00", string startFrom = "2026-01-01T00:00:00Z") => $$"""
+        private static string Schedule(string activityId, bool paused, int maxParallelism = 1, string queryWindowSize = "00:05:00", string startFrom = "2026-01-01T00:00:00Z", IReadOnlyList<string>? tags = null)
         {
-          "activityId": "{{activityId}}",
-          "functionName": "CatalogFunction",
-          "outputTable": "CatalogOutput",
-          "queryWindowSize": "{{queryWindowSize}}",
-          "delayFromUtcNow": "00:00:00",
-          "maxParallelism": {{maxParallelism}},
-          "queryTimeout": "00:01:00",
-          "isPaused": {{paused.ToString().ToLowerInvariant()}},
-          "startFrom": "{{startFrom}}",
-          "target": { "clusterUri": "https://kolite-example.invalid", "database": "DemoDb" }
+            var schedule = $$"""
+            {
+              "activityId": "{{activityId}}",
+              "functionName": "CatalogFunction",
+              "outputTable": "CatalogOutput",
+              "queryWindowSize": "{{queryWindowSize}}",
+              "delayFromUtcNow": "00:00:00",
+              "maxParallelism": {{maxParallelism}},
+              "queryTimeout": "00:01:00",
+              "isPaused": {{paused.ToString().ToLowerInvariant()}},
+              "startFrom": "{{startFrom}}",
+              "target": { "clusterUri": "https://kolite-example.invalid", "database": "DemoDb" }
+            }
+            """;
+
+            if (tags is not { Count: > 0 })
+            {
+                return schedule;
+            }
+
+            return schedule.Replace("  \"target\":", $"  \"tags\": {JsonSerializer.Serialize(tags)},\n  \"target\":", StringComparison.Ordinal);
         }
-        """;
 
         private static string InvalidSchedule(string activityId) => $$"""
         {

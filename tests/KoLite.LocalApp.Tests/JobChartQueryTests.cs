@@ -52,6 +52,24 @@ namespace KoLite.LocalApp.Tests
             Assert.Equal(100.0, finalPoint.Percent);
         }
 
+        [Fact]
+        public void Dashboard_charts_can_be_limited_to_selected_jobs()
+        {
+            catalog.Create(Schedule("job.chart.selected"));
+            catalog.Create(Schedule("job.chart.other"));
+            state.Append("slice-selected", "job.chart.selected", At(60), At(65), DurableSliceStatus.Completed, expectedVersion: 0);
+            state.Append("slice-other", "job.chart.other", At(60), At(65), DurableSliceStatus.Completed, expectedVersion: 0);
+            readModels.RecordAttempt("attempt-selected", "job.chart.selected", At(60), At(65), 1, "Succeeded", "worker", At(60), At(61));
+            readModels.RecordAttempt("attempt-other", "job.chart.other", At(60), At(65), 1, "Succeeded", "worker", At(60), At(61));
+            var query = new JobChartQuery(factory, new ManualClock(At(120)));
+
+            var charts = query.GetDashboardCharts(TimeSpan.FromDays(1), ["job.chart.selected"]);
+
+            Assert.Equal(["job.chart.selected"], charts.FirstAttemptSuccess.Series.Select(series => series.Name).ToArray());
+            Assert.Equal(["job.chart.selected"], charts.SuccessAfterRetries.Series.Select(series => series.Name).ToArray());
+            Assert.True(charts.FirstAttemptSuccess.HasData);
+        }
+
         [Theory]
         [InlineData("Succeeded", JobAttemptResultBucket.Success)]
         [InlineData("FailedRetryable", JobAttemptResultBucket.Retry)]

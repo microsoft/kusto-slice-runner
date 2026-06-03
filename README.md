@@ -4,9 +4,16 @@ KO Lite is a local-first dashboard and worker for running scheduled Kusto output
 
 The local app owns the job catalog, queue, slice history, operational logs, rerun reports, and repair state in SQLite. Kusto is contacted only when scheduler/worker execution is enabled and a worker executes a slice.
 
+If you're familiar with [scheduled Kusto jobs](https://learn.microsoft.com/kusto/) here's a quick diff:
+- The set of job features is simplified.
+- Everything runs locally against a sqllite database. This is not meant for production scenarios.
+- You can now add tags to your jobs and then filter them in the UI. This helps you handle multiple workstreams in a single instance.
+- You can rerun slices! Click on any slice in the colorful window history view and then click "Rerun this slice" to get into that experience. This will properly handle dependent jobs too, but you'll need to make sure the Kusto tables are ready to accept the new data. KO Lite only reruns the jobs, it doesn't delete old data.
+- You can both soft delete a job (keep the history to be resurrected in teh future) or hard delete a job (permanently remove it and its history). Hard-delete avoids any problems around re-creating a job with the same id as a previous one.
+
 ## What it does
 
-- Imports and exports strict schedule JSON for Kusto output jobs.
+- Imports and exports strict schedule JSON for Kusto output jobs, including optional job organization tags.
 - Shows active, completed, and soft-deleted jobs in a local dashboard.
 - Schedules due time slices from enabled jobs into a local SQLite queue.
 - Executes live Kusto `.set-or-append` commands for each claimed slice.

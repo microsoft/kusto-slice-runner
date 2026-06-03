@@ -101,6 +101,39 @@ namespace KoLite.Local.Core.Tests
             Assert.Contains(result.Errors, e => e.Field == "[0].outputTable");
         }
 
+        [Fact]
+        public void Parser_treats_omitted_and_empty_tags_as_no_tags()
+        {
+            var omitted = ScheduleParser.Parse(MinimalSample);
+            var empty = ScheduleParser.Parse(WithTopLevel(MinimalSample, "\"tags\": []"));
+
+            Assert.True(omitted.IsValid, string.Join(Environment.NewLine, omitted.Errors.Select(e => $"{e.Field}: {e.Message}")));
+            Assert.True(empty.IsValid, string.Join(Environment.NewLine, empty.Errors.Select(e => $"{e.Field}: {e.Message}")));
+            Assert.Empty(omitted.Definition!.Tags);
+            Assert.Empty(empty.Definition!.Tags);
+        }
+
+        [Fact]
+        public void Parser_normalizes_and_deduplicates_tags()
+        {
+            var result = ScheduleParser.Parse(WithTopLevel(MinimalSample, "\"tags\": [\" Prod \", \"daily\", \"PROD\", \"security\"]"));
+
+            Assert.True(result.IsValid, string.Join(Environment.NewLine, result.Errors.Select(e => $"{e.Field}: {e.Message}")));
+            Assert.Equal(["prod", "daily", "security"], result.Definition!.Tags);
+        }
+
+        [Theory]
+        [InlineData("\"prod\"", "tags")]
+        [InlineData("[\"prod\", 42]", "tags[1]")]
+        [InlineData("[\"prod\", \"   \"]", "tags[1]")]
+        public void Parser_rejects_invalid_tags(string tagsJson, string expectedField)
+        {
+            var result = ScheduleParser.Parse(WithTopLevel(MinimalSample, $"\"tags\": {tagsJson}"));
+
+            Assert.False(result.IsValid);
+            Assert.Contains(result.Errors, e => e.Field == expectedField);
+        }
+
         public static TheoryData<string, string, int> ValidSamples() => new()
         {
             { MinimalSample, "demo.minimal", 0 },
@@ -173,5 +206,8 @@ namespace KoLite.Local.Core.Tests
           }
         }
         """;
+
+        private static string WithTopLevel(string json, string propertyJson) =>
+            json.Replace("  \"target\":", $"  {propertyJson},\n  \"target\":", StringComparison.Ordinal);
     }
 }

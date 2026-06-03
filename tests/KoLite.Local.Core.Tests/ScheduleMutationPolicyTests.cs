@@ -53,6 +53,7 @@ namespace KoLite.Local.Core.Tests
                 IsPaused = true,
                 EndOn = Utc("2026-01-02T00:00:00Z"),
                 Folder = "Other/Folder",
+                Tags = ["prod", "daily"],
                 DependsOn = [new DependentJob { ActivityId = "upstream" }],
                 Target = new JobTarget { ClusterUri = "https://other-cluster.invalid", Database = "OtherDb" }
             };

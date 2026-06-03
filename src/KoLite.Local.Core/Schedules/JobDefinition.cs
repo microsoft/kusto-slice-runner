@@ -16,6 +16,7 @@ namespace KoLite.Local.Core.Schedules
         public bool IsPaused { get; init; }
         public DateTimeOffset? EndOn { get; init; }
         public string? Folder { get; init; }
+        public IReadOnlyList<string> Tags { get; init; } = Array.Empty<string>();
         public IReadOnlyList<DependentJob> DependsOn { get; init; } = Array.Empty<DependentJob>();
         public JsonElement? JobSettings { get; init; }
     }

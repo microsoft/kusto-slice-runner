@@ -134,29 +134,30 @@ namespace KoLite.LocalApp.Ui
             this.clock = clock;
         }
 
-        public DashboardCharts GetDashboardCharts(TimeSpan range)
+        public DashboardCharts GetDashboardCharts(TimeSpan range, IEnumerable<string>? jobIds = null)
         {
             var bucketSize = BucketSizeFor(range);
             var until = AlignUp(clock.UtcNow, bucketSize);
             var since = AlignDown(clock.UtcNow.Subtract(range), bucketSize);
-            var jobIds = GetJobIds();
+            var includedJobIds = jobIds?.ToHashSet(StringComparer.Ordinal);
+            var chartJobIds = GetJobIds(includedJobIds);
             var buckets = EnumerateBuckets(since, until, bucketSize);
 
-            var attemptCounts = InitializeCounts(jobIds, buckets.Count);
+            var attemptCounts = InitializeCounts(chartJobIds, buckets.Count);
             foreach (var row in ReadAttemptOutcomes(since, until))
             {
                 AddOutcome(attemptCounts, buckets, since, bucketSize, row.JobId, row.CompletedAtUtc, row.Succeeded);
             }
 
-            var finalCounts = InitializeCounts(jobIds, buckets.Count);
+            var finalCounts = InitializeCounts(chartJobIds, buckets.Count);
             foreach (var row in ReadFinalOutcomes(since, until))
             {
                 AddOutcome(finalCounts, buckets, since, bucketSize, row.JobId, row.CompletedAtUtc, row.Succeeded);
             }
 
             return new DashboardCharts(
-                BuildChart("Success Rate By Function", jobIds, buckets, attemptCounts, since, until, bucketSize),
-                BuildChart("Success Rate After Retries by function", jobIds, buckets, finalCounts, since, until, bucketSize));
+                BuildChart("Success Rate By Function", chartJobIds, buckets, attemptCounts, since, until, bucketSize),
+                BuildChart("Success Rate After Retries by function", chartJobIds, buckets, finalCounts, since, until, bucketSize));
         }
 
         public JobDetailsCharts GetJobDetailsCharts(string jobId, TimeSpan range)
@@ -178,7 +179,7 @@ namespace KoLite.LocalApp.Ui
                 BuildJobSuccessfulDurationChart(jobId, buckets, since, until, bucketSize));
         }
 
-        private IReadOnlyList<string> GetJobIds()
+        private IReadOnlyList<string> GetJobIds(IReadOnlySet<string>? includedJobIds = null)
         {
             using var connection = connectionFactory.OpenConnection();
             using var command = connection.CreateCommand();
@@ -191,7 +192,11 @@ namespace KoLite.LocalApp.Ui
             var results = new List<string>();
             while (reader.Read())
             {
-                results.Add(reader.GetString(0));
+                var jobId = reader.GetString(0);
+                if (includedJobIds is null || includedJobIds.Contains(jobId))
+                {
+                    results.Add(jobId);
+                }
             }
 
             return results;

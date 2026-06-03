@@ -1,4 +1,5 @@
 using KoLite.LocalApp.Ui;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 
 namespace KoLite.LocalApp.Pages.Catalog
@@ -14,6 +15,6 @@ namespace KoLite.LocalApp.Pages.Catalog
 
         public DashboardPageData Data { get; private set; } = null!;
 
-        public void OnGet() => Data = query.Get(TimeSpan.FromDays(1));
+        public void OnGet([FromQuery(Name = "tag")] string[]? tags) => Data = query.Get(TimeSpan.FromDays(1), tags);
     }
 }

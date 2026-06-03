@@ -54,7 +54,7 @@ Compatibility aliases `KoLite:Scheduler:WorkerConcurrency` and `KoLite:Scheduler
 
 ## Job catalog import and export
 
-Use **Import** to add or update jobs from schedule JSON. Imports accept either one schedule object or an array of schedule objects through paste or file upload.
+Use **Import** to add or update jobs from schedule JSON. Imports accept either one schedule object or an array of schedule objects through paste or file upload. Optional schedule `tags` are preserved as local job organization metadata and can be used to filter the dashboard and catalog.
 
 Imports are additive and update-only: jobs with matching `activityId` values are updated, missing jobs are created, and jobs omitted from the payload are left untouched.
 

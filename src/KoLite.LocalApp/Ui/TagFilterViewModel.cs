@@ -1,0 +1,38 @@
+using KoLite.Local.Core.Schedules;
+
+namespace KoLite.LocalApp.Ui
+{
+    public sealed record TagFilterViewModel(
+        string BasePath,
+        string? Range,
+        IReadOnlyList<JobTagSummary> Tags,
+        IReadOnlyList<string> SelectedTags)
+    {
+        public bool HasTags => Tags.Count > 0 || SelectedTags.Count > 0;
+
+        public string SelectedHref => BuildHref(SelectedTags);
+
+        public string ClearHref => BuildHref(Array.Empty<string>());
+
+        public string ToggleHref(string tag)
+        {
+            var nextTags = SelectedTags.Contains(tag, StringComparer.Ordinal)
+                ? SelectedTags.Where(selected => !StringComparer.Ordinal.Equals(selected, tag))
+                : SelectedTags.Concat([tag]);
+
+            return BuildHref(nextTags);
+        }
+
+        private string BuildHref(IEnumerable<string> tags)
+        {
+            var query = new List<string>();
+            if (!string.IsNullOrWhiteSpace(Range))
+            {
+                query.Add("range=" + Uri.EscapeDataString(Range));
+            }
+
+            query.AddRange(ScheduleTags.NormalizeDistinct(tags).Select(tag => "tag=" + Uri.EscapeDataString(tag)));
+            return query.Count == 0 ? BasePath : BasePath + "?" + string.Join("&", query);
+        }
+    }
+}

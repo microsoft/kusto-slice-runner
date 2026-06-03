@@ -1,0 +1,31 @@
+@model TagFilterViewModel
+
+@if (Model.HasTags)
+{
+    <section class="card tag-filter">
+        <div class="tag-filter-header">
+            <div>
+                <h2>Tags</h2>
+                <p class="muted">Filter jobs by schedule tags. Multiple selected tags use AND matching.</p>
+            </div>
+            @if (Model.SelectedTags.Count > 0)
+            {
+                <a class="btn small" href="@Model.ClearHref">Clear tags</a>
+            }
+        </div>
+        <div class="tag-list" aria-label="Schedule tag filters">
+            @foreach (var tag in Model.Tags)
+            {
+                var selected = tag.IsSelected;
+                <a class="tag-chip filter-chip @(selected ? "selected" : null)" href="@Model.ToggleHref(tag.Name)" aria-pressed="@(selected ? "true" : "false")">
+                    <span>#@tag.Name</span>
+                    <span class="tag-count">@tag.JobCount</span>
+                </a>
+            }
+        </div>
+        @if (Model.SelectedTags.Count > 0)
+        {
+            <p class="muted tag-filter-help">Showing jobs tagged with all selected tags: @string.Join(", ", Model.SelectedTags).</p>
+        }
+    </section>
+}

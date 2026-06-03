@@ -11,7 +11,7 @@ namespace KoLite.Local.Core.Schedules
         {
             "activityId", "functionName", "outputTable", "queryWindowSize", "delayFromUtcNow",
             "maxParallelism", "queryTimeout", "isPaused", "startFrom", "endOn", "folder",
-            "dependsOn", "jobSettings", "target"
+            "tags", "dependsOn", "jobSettings", "target"
         };
 
         private static readonly HashSet<string> AllowedTargetFields = new(StringComparer.Ordinal) { "clusterUri", "database" };
@@ -74,6 +74,7 @@ namespace KoLite.Local.Core.Schedules
                     return ScheduleValidationResult.Failed(errors);
                 }
 
+                var tags = ParseTags(doc.RootElement, activityId, errors);
                 var dependencies = ParseDependencies(doc.RootElement, dto, activityId, errors);
                 var startFrom = ParseUtcIso8601(dto.StartFrom, "startFrom", activityId, errors);
                 var endOn = ParseUtcIso8601(dto.EndOn, "endOn", activityId, errors, required: false);
@@ -85,7 +86,7 @@ namespace KoLite.Local.Core.Schedules
                 }
 
                 return errors.Count == 0
-                    ? ScheduleValidationResult.Success(Map(dto, dependencies, startFrom!.Value, endOn))
+                    ? ScheduleValidationResult.Success(Map(dto, tags, dependencies, startFrom!.Value, endOn))
                     : ScheduleValidationResult.Failed(errors);
             }
         }
@@ -110,6 +111,47 @@ namespace KoLite.Local.Core.Schedules
                     }
                 }
             }
+        }
+
+        private static IReadOnlyList<string> ParseTags(JsonElement root, string? activityId, List<ScheduleValidationError> errors)
+        {
+            var result = new List<string>();
+            if (!root.TryGetProperty("tags", out var tags))
+            {
+                return result;
+            }
+
+            if (tags.ValueKind != JsonValueKind.Array)
+            {
+                errors.Add(new ScheduleValidationError(activityId, "tags", "tags must be an array of strings."));
+                return result;
+            }
+
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            var index = 0;
+            foreach (var entry in tags.EnumerateArray())
+            {
+                var path = $"tags[{index}]";
+                if (entry.ValueKind != JsonValueKind.String)
+                {
+                    errors.Add(new ScheduleValidationError(activityId, path, $"{path} must be a string."));
+                    index++;
+                    continue;
+                }
+
+                if (!ScheduleTags.TryNormalize(entry.GetString(), out var normalized))
+                {
+                    errors.Add(new ScheduleValidationError(activityId, path, $"{path} must be a non-empty string."));
+                }
+                else if (seen.Add(normalized))
+                {
+                    result.Add(normalized);
+                }
+
+                index++;
+            }
+
+            return result;
         }
 
         private static List<DependentJob> ParseDependencies(JsonElement root, ScheduleJsonDto dto, string? activityId, List<ScheduleValidationError> errors)
@@ -231,7 +273,7 @@ namespace KoLite.Local.Core.Schedules
             if (Blank(target.Database)) errors.Add(new ScheduleValidationError(activityId, "target.database", "target.database is required and must be a non-empty string."));
         }
 
-        private static JobDefinition Map(ScheduleJsonDto dto, IReadOnlyList<DependentJob> dependencies, DateTimeOffset startFrom, DateTimeOffset? endOn) => new()
+        private static JobDefinition Map(ScheduleJsonDto dto, IReadOnlyList<string> tags, IReadOnlyList<DependentJob> dependencies, DateTimeOffset startFrom, DateTimeOffset? endOn) => new()
         {
             ActivityId = dto.ActivityId!,
             FunctionName = dto.FunctionName!,
@@ -244,6 +286,7 @@ namespace KoLite.Local.Core.Schedules
             EndOn = endOn,
             IsPaused = dto.IsPaused ?? false,
             Folder = dto.Folder,
+            Tags = tags,
             DependsOn = dependencies,
             JobSettings = dto.JobSettings,
             Target = new JobTarget { ClusterUri = dto.Target!.ClusterUri!, Database = dto.Target.Database! }

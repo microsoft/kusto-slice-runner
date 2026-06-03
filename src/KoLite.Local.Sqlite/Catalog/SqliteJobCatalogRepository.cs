@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using KoLite.Local.Core.Schedules;
 using KoLite.Local.Sqlite.Connections;
 using KoLite.Local.Sqlite.Infrastructure;
@@ -211,7 +212,34 @@ namespace KoLite.Local.Sqlite.Catalog
                 throw new InvalidOperationException("Schedule JSON is invalid: " + FormatErrors(parsed.Errors));
             }
 
+            canonical = NormalizeTagsInCanonicalJson(canonical, parsed.Definition.Tags);
             return (parsed.Definition, canonical);
+        }
+
+        private static string NormalizeTagsInCanonicalJson(string canonicalJson, IReadOnlyList<string> tags)
+        {
+            var root = JsonNode.Parse(canonicalJson)?.AsObject() ?? throw new InvalidOperationException("Schedule JSON is invalid: root must be an object.");
+            if (!root.ContainsKey("tags"))
+            {
+                return canonicalJson;
+            }
+
+            if (tags.Count == 0)
+            {
+                root.Remove("tags");
+            }
+            else
+            {
+                var array = new JsonArray();
+                foreach (var tag in tags)
+                {
+                    array.Add(tag);
+                }
+
+                root["tags"] = array;
+            }
+
+            return root.ToJsonString(SqliteStorage.JsonOptions);
         }
 
         private static string FormatErrors(IEnumerable<ScheduleValidationError> errors) => string.Join("; ", errors.Select(e => $"{e.Field}: {e.Message}"));

@@ -20,6 +20,7 @@ namespace KoLite.LocalApp.Ui
         public string StartFrom { get; set; } = DateTimeOffset.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture);
         public string? EndOn { get; set; }
         public string? Folder { get; set; }
+        public string? Tags { get; set; }
         public string ClusterUri { get; set; } = "https://example.kusto.windows.net";
         public string Database { get; set; } = "Samples";
         public string? DependsOn { get; set; }
@@ -53,6 +54,7 @@ namespace KoLite.LocalApp.Ui
                 StartFrom = AppFormatting.Iso(definition.StartFrom),
                 EndOn = definition.EndOn is null ? null : AppFormatting.Iso(definition.EndOn.Value),
                 Folder = definition.Folder,
+                Tags = string.Join(Environment.NewLine, definition.Tags),
                 ClusterUri = definition.Target.ClusterUri,
                 Database = definition.Target.Database,
                 DependsOn = string.Join(Environment.NewLine, definition.DependsOn.Select(d => d.ActivityId)),
@@ -90,6 +92,18 @@ namespace KoLite.LocalApp.Ui
                 root["folder"] = Folder.Trim();
             }
 
+            var tags = SplitTags().ToArray();
+            if (tags.Length > 0)
+            {
+                var array = new JsonArray();
+                foreach (var tag in tags)
+                {
+                    array.Add(tag);
+                }
+
+                root["tags"] = array;
+            }
+
             var dependencies = SplitDependencyIds().Select(id => new JsonObject { ["activityId"] = id }).ToArray();
             if (dependencies.Length > 0)
             {
@@ -110,6 +124,11 @@ namespace KoLite.LocalApp.Ui
             (DependsOn ?? string.Empty)
                 .Split(['\r', '\n', ',', ';'], StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
                 .Distinct(StringComparer.Ordinal);
+
+        private IEnumerable<string> SplitTags() =>
+            ScheduleTags.NormalizeDistinct(
+                (Tags ?? string.Empty)
+                    .Split(['\r', '\n', ',', ';'], StringSplitOptions.RemoveEmptyEntries));
 
         private static ScheduleFormInput DefaultWithoutParsing() => new()
         {

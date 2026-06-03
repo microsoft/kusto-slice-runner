@@ -1,4 +1,5 @@
 using KoLite.LocalApp.Ui;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 
 namespace KoLite.LocalApp.Pages
@@ -16,10 +17,10 @@ namespace KoLite.LocalApp.Pages
         public string Range { get; private set; } = "1d";
         public IReadOnlyList<ChartRangeLink> RangeLinks => ChartRangeOptions.Links;
 
-        public void OnGet(string? range)
+        public void OnGet(string? range, [FromQuery(Name = "tag")] string[]? tags)
         {
             Range = ChartRangeOptions.Normalize(range);
-            Data = query.Get(ChartRangeOptions.Parse(Range));
+            Data = query.Get(ChartRangeOptions.Parse(Range), tags);
         }
     }
 }

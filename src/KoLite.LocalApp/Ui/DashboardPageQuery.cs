@@ -10,9 +10,13 @@ namespace KoLite.LocalApp.Ui
         IReadOnlyList<JobListItem> ActiveJobs,
         IReadOnlyList<JobListItem> CompletedJobs,
         IReadOnlyList<JobListItem> SoftDeletedJobs,
+        IReadOnlyList<JobTagSummary> AvailableTags,
+        IReadOnlyList<string> SelectedTags,
         DashboardCharts Charts,
         IReadOnlyList<RecentFailure> RecentFailures,
         TimeSpan SelectedRange);
+
+    public sealed record JobTagSummary(string Name, int JobCount, bool IsSelected);
 
     public sealed record JobTableViewModel(
         string Title,
@@ -56,9 +60,10 @@ namespace KoLite.LocalApp.Ui
         IKoLiteSqliteConnectionFactory connectionFactory,
         IClock clock)
     {
-        public DashboardPageData Get(TimeSpan selectedRange)
+        public DashboardPageData Get(TimeSpan selectedRange, IEnumerable<string>? selectedTags = null)
         {
             var now = clock.UtcNow;
+            var normalizedSelectedTags = ScheduleTags.NormalizeDistinct(selectedTags ?? Array.Empty<string>());
             var lifecycleStates = lifecycleReadModel.GetLatestStates();
             var summaries = readModels.GetJobStatusSummaries().ToDictionary(s => s.JobId, StringComparer.Ordinal);
             var queuedAvailability = GetQueuedAvailability();
@@ -99,15 +104,43 @@ namespace KoLite.LocalApp.Ui
                     GetNextSliceTiming(record, definition, lifecycle, completed, queuedAvailability, latestSliceEnds, now),
                     completed);
             }).ToList();
+            var tagSummaries = BuildTagSummaries(jobs, normalizedSelectedTags);
+            var filteredJobs = normalizedSelectedTags.Count == 0
+                ? jobs
+                : jobs.Where(job => MatchesSelectedTags(job, normalizedSelectedTags)).ToList();
+            var chartJobIds = normalizedSelectedTags.Count == 0
+                ? null
+                : filteredJobs.Select(job => job.Record.JobId).ToArray();
 
             return new DashboardPageData(
-                jobs.Where(j => j.LifecycleStatus != "SoftDeleted" && !j.IsCompleted).OrderBy(j => j.Record.JobId, StringComparer.Ordinal).ToList(),
-                jobs.Where(j => j.LifecycleStatus != "SoftDeleted" && j.IsCompleted).OrderBy(j => j.Record.JobId, StringComparer.Ordinal).ToList(),
-                jobs.Where(j => j.LifecycleStatus == "SoftDeleted").OrderBy(j => j.Record.JobId, StringComparer.Ordinal).ToList(),
-                chartQuery.GetDashboardCharts(selectedRange),
+                filteredJobs.Where(j => j.LifecycleStatus != "SoftDeleted" && !j.IsCompleted).OrderBy(j => j.Record.JobId, StringComparer.Ordinal).ToList(),
+                filteredJobs.Where(j => j.LifecycleStatus != "SoftDeleted" && j.IsCompleted).OrderBy(j => j.Record.JobId, StringComparer.Ordinal).ToList(),
+                filteredJobs.Where(j => j.LifecycleStatus == "SoftDeleted").OrderBy(j => j.Record.JobId, StringComparer.Ordinal).ToList(),
+                tagSummaries,
+                normalizedSelectedTags,
+                chartQuery.GetDashboardCharts(selectedRange, chartJobIds),
                 readModels.GetRecentFailures(10),
                 selectedRange);
         }
+
+        private static IReadOnlyList<JobTagSummary> BuildTagSummaries(IReadOnlyList<JobListItem> jobs, IReadOnlyList<string> selectedTags)
+        {
+            var tagCounts = jobs
+                .Where(job => job.LifecycleStatus != "SoftDeleted")
+                .SelectMany(job => job.Definition.Tags)
+                .GroupBy(tag => tag, StringComparer.Ordinal)
+                .ToDictionary(group => group.Key, group => group.Count(), StringComparer.Ordinal);
+
+            return tagCounts.Keys
+                .Concat(selectedTags)
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(tag => tag, StringComparer.Ordinal)
+                .Select(tag => new JobTagSummary(tag, tagCounts.GetValueOrDefault(tag), selectedTags.Contains(tag, StringComparer.Ordinal)))
+                .ToList();
+        }
+
+        private static bool MatchesSelectedTags(JobListItem job, IReadOnlyList<string> selectedTags) =>
+            selectedTags.All(tag => job.Definition.Tags.Contains(tag, StringComparer.Ordinal));
 
         private IReadOnlyDictionary<string, DateTimeOffset> GetQueuedAvailability()
         {

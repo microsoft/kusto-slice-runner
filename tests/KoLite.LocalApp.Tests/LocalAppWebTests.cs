@@ -371,6 +371,13 @@ namespace KoLite.LocalApp.Tests
             Assert.Contains(".job-table-dashboard", css);
             Assert.Contains(".paused-job-indicator", css);
             Assert.Contains(".catalog-diff-table", css);
+            Assert.Contains(".tag-chip", css);
+            Assert.Contains(".jobs-with-tags", css);
+            Assert.Contains("align-items: stretch;", css);
+            Assert.Contains("margin-bottom: 18px;", css);
+            Assert.Contains(".jobs-main > .card:last-child", css);
+            Assert.Contains(".tag-filter-pane", css);
+            Assert.Contains("flex: 1;", css);
         }
 
         [Fact]
@@ -441,6 +448,65 @@ namespace KoLite.LocalApp.Tests
             Assert.Contains(".disclosure-card > summary::before", css);
             Assert.Contains("list-style: none;", css);
             Assert.DoesNotContain(".status-dot", css);
+        }
+
+        [Fact]
+        public void Schedule_form_input_round_trips_normalized_tags()
+        {
+            var input = ScheduleFormInput.FromJson(Schedule("job.tags", "TagFunction", isPaused: false, tags: ["Prod", " daily ", "PROD"]));
+
+            Assert.Equal("prod" + Environment.NewLine + "daily", input.Tags);
+
+            input.Tags = "Security; PROD\nsecurity";
+            var outputJson = input.ToScheduleJson();
+            var parsed = ScheduleParser.Parse(outputJson);
+
+            Assert.True(parsed.IsValid, string.Join(Environment.NewLine, parsed.Errors.Select(e => $"{e.Field}: {e.Message}")));
+            Assert.Equal(["security", "prod"], parsed.Definition!.Tags);
+            using var document = JsonDocument.Parse(outputJson);
+            Assert.Equal(["security", "prod"], document.RootElement.GetProperty("tags").EnumerateArray().Select(tag => tag.GetString() ?? string.Empty).ToArray());
+        }
+
+        [Fact]
+        public async Task Dashboard_and_catalog_render_and_filter_schedule_tags()
+        {
+            var catalog = new SqliteJobCatalogRepository(sqlite);
+            catalog.Create(Schedule("job.prod.daily", "DailyFunction", isPaused: false, tags: ["Prod", "daily"]));
+            catalog.Create(Schedule("job.prod.weekly", "WeeklyFunction", isPaused: false, tags: ["prod", "weekly"]));
+            catalog.Create(Schedule("job.security", "SecurityFunction", isPaused: false, tags: ["security"]));
+            var state = new SqliteSliceStateRepository(sqlite);
+            var readModels = new SqliteOperationalReadModelRepository(sqlite);
+            var chartStart = DateTimeOffset.UtcNow.AddMinutes(-30);
+            var chartEnd = DateTimeOffset.UtcNow.AddMinutes(-25);
+            foreach (var jobId in new[] { "job.prod.daily", "job.prod.weekly", "job.security" })
+            {
+                state.Append("chart-" + jobId, jobId, chartStart, chartEnd, DurableSliceStatus.Completed, expectedVersion: 0);
+                readModels.RecordAttempt("attempt-" + jobId, jobId, chartStart, chartEnd, 1, "Succeeded", "worker", chartStart, chartEnd);
+            }
+
+            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+
+            var dashboard = await client.GetStringAsync("/");
+            var filteredDashboard = await client.GetStringAsync("/?tag=PROD&tag=daily");
+            var catalogPage = await client.GetStringAsync("/catalog?tag=prod&tag=weekly");
+            var filteredChartSeries = DashboardSuccessChartSeries(filteredDashboard);
+
+            Assert.Contains("Schedule tag filters", dashboard);
+            Assert.Contains("href=\"/?range=1d&amp;tag=prod\"", dashboard);
+            Assert.Contains("class=\"jobs-with-tags\"", dashboard);
+            Assert.Contains("class=\"tag-filter-pane\"", dashboard);
+            Assert.DoesNotContain("<th>Tags</th>", dashboard);
+            Assert.DoesNotContain("tag-chip compact", dashboard);
+            Assert.Contains("Showing jobs tagged with all selected tags: prod, daily", filteredDashboard);
+            Assert.Contains("href=\"/?range=7d&amp;tag=prod&amp;tag=daily\"", filteredDashboard);
+            Assert.Contains("job.prod.daily", filteredDashboard);
+            Assert.DoesNotContain("job.prod.weekly", filteredDashboard);
+            Assert.DoesNotContain("job.security", filteredDashboard);
+            Assert.Equal(["job.prod.daily"], filteredChartSeries);
+            Assert.Contains("job.prod.weekly", catalogPage);
+            Assert.DoesNotContain("job.prod.daily", catalogPage);
+            Assert.DoesNotContain("job.security", catalogPage);
+            Assert.Contains("href=\"/catalog?tag=prod\"", catalogPage);
         }
 
         [Fact]
@@ -1242,6 +1308,20 @@ namespace KoLite.LocalApp.Tests
 
         private static DateTimeOffset At(int minutes) => new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero).AddMinutes(minutes);
 
+        private static string[] DashboardSuccessChartSeries(string html)
+        {
+            var match = Regex.Match(
+                html,
+                "<script type=\"application/json\" id=\"success-rate-by-function-chart-data\" class=\"success-chart-payload\">(?<json>.*?)</script>",
+                RegexOptions.Singleline | RegexOptions.CultureInvariant);
+            Assert.True(match.Success, "Expected dashboard success-rate chart payload.");
+            using var document = JsonDocument.Parse(match.Groups["json"].Value);
+            return document.RootElement.GetProperty("series")
+                .EnumerateArray()
+                .Select(series => series.GetProperty("name").GetString() ?? string.Empty)
+                .ToArray();
+        }
+
         private WebApplicationFactory<Program> CreateFactory(
             bool enableScheduler,
             string? tickInterval = null,
@@ -1276,7 +1356,7 @@ namespace KoLite.LocalApp.Tests
                 }
             });
 
-        private static string Schedule(string activityId, string functionName, bool isPaused, string outputTable = "Output", int maxParallelism = 1, string queryWindowSize = "00:05:00", string? folder = null)
+        private static string Schedule(string activityId, string functionName, bool isPaused, string outputTable = "Output", int maxParallelism = 1, string queryWindowSize = "00:05:00", string? folder = null, IReadOnlyList<string>? tags = null)
         {
             var schedule = $$"""
             {
@@ -1293,9 +1373,20 @@ namespace KoLite.LocalApp.Tests
             }
             """;
 
-            return folder is null
+            var metadata = new List<string>();
+            if (folder is not null)
+            {
+                metadata.Add($"  \"folder\": {JsonSerializer.Serialize(folder)},");
+            }
+
+            if (tags is { Count: > 0 })
+            {
+                metadata.Add($"  \"tags\": {JsonSerializer.Serialize(tags)},");
+            }
+
+            return metadata.Count == 0
                 ? schedule
-                : schedule.Replace("  \"target\":", $"  \"folder\": \"{folder}\",\n  \"target\":", StringComparison.Ordinal);
+                : schedule.Replace("  \"target\":", string.Join(Environment.NewLine, metadata) + "\n  \"target\":", StringComparison.Ordinal);
         }
 
         private sealed class TestSliceOutputExecutor : ILocalSliceOutputExecutor

@@ -2,6 +2,7 @@
 @model KoLite.LocalApp.Pages.IndexModel
 @{
     ViewData["Title"] = "Jobs";
+    var tagFilter = new TagFilterViewModel("/", Model.Range, Model.Data.AvailableTags, Model.Data.SelectedTags);
 }
 
 <div class="page-heading">
@@ -29,17 +30,28 @@
     var softDeletedJobs = new JobTableViewModel("Soft-deleted jobs", Model.Data.SoftDeletedJobs, true, SectionCssClass: "nested-card", ShowDefinitionColumns: false, ShowUpdatedColumn: false, ShowNextEligibleColumn: true, ShowRunningProgressCount: false, ShowProgressColumn: false, ShowHistoryAction: false, ShowFolderLine: false);
     var inactiveCount = Model.Data.CompletedJobs.Count + Model.Data.SoftDeletedJobs.Count;
 }
-<partial name="_JobTable" model="activeJobs" />
-<details class="card disclosure-card inactive-jobs">
-    <summary>
-        <span class="summary-title">Inactive jobs</span>
-        <span class="muted">@inactiveCount job(s): @Model.Data.CompletedJobs.Count completed, @Model.Data.SoftDeletedJobs.Count soft-deleted</span>
-    </summary>
-    <div class="inactive-job-groups">
-        <partial name="_JobTable" model="completedJobs" />
-        <partial name="_JobTable" model="softDeletedJobs" />
+
+<div class="jobs-with-tags">
+    <div class="jobs-main">
+        <partial name="_JobTable" model="activeJobs" />
+        <details class="card disclosure-card inactive-jobs">
+            <summary>
+                <span class="summary-title">Inactive jobs</span>
+                <span class="muted">@inactiveCount job(s): @Model.Data.CompletedJobs.Count completed, @Model.Data.SoftDeletedJobs.Count soft-deleted</span>
+            </summary>
+            <div class="inactive-job-groups">
+                <partial name="_JobTable" model="completedJobs" />
+                <partial name="_JobTable" model="softDeletedJobs" />
+            </div>
+        </details>
     </div>
-</details>
+    @if (tagFilter.HasTags)
+    {
+        <aside class="tag-filter-pane">
+            <partial name="_TagFilter" model="tagFilter" />
+        </aside>
+    }
+</div>
 
 <section class="card success-statistics">
     <div class="card-header">
@@ -50,7 +62,8 @@
         <div class="range-picker">
             @foreach (var range in Model.RangeLinks)
             {
-                <a class="btn small @(range.Key == Model.Range ? "primary" : null)" href="/?range=@range.Key">@range.Label</a>
+                var rangeTagFilter = new TagFilterViewModel("/", range.Key, Model.Data.AvailableTags, Model.Data.SelectedTags);
+                <a class="btn small @(range.Key == Model.Range ? "primary" : null)" href="@rangeTagFilter.SelectedHref">@range.Label</a>
             }
         </div>
     </div>

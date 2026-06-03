@@ -14,6 +14,7 @@ The schedule contract is intentionally strict. Unknown top-level fields, unknown
   "maxParallelism": 2,
   "queryTimeout": "00:05:00",
   "isPaused": true,
+  "tags": ["prod", "daily"],
   "startFrom": "2026-01-01T00:00:00Z",
   "target": {
     "clusterUri": "https://cluster.kusto.windows.net",
@@ -37,6 +38,7 @@ The schedule contract is intentionally strict. Unknown top-level fields, unknown
 | `startFrom` | Yes | UTC ISO-8601 timestamp. After execution history exists, this field is read-only. |
 | `endOn` | No | Optional UTC ISO-8601 timestamp. Must be greater than `startFrom` when present. |
 | `folder` | No | Existing output/Kusto-oriented metadata. It is not a UI grouping tag. |
+| `tags` | No | Optional array of job organization tags. Tags are trimmed, normalized to lowercase, deduplicated, and used by dashboard/catalog filters. |
 | `dependsOn` | No | Array of dependency objects with `activityId`. Self-dependencies are rejected. |
 | `jobSettings` | No | Optional JSON value passed as the third function argument when non-empty. |
 | `target.clusterUri` | Yes | Absolute HTTPS Kusto cluster URI. |
@@ -56,12 +58,16 @@ The schedule contract is intentionally strict. Unknown top-level fields, unknown
 
 Dependencies block downstream slice readiness until the corresponding upstream slice is complete. Dependency objects only support `activityId`.
 
+## Tags
+
+```json
+"tags": ["prod", "daily", "security"]
+```
+
+Tags are local UI/catalog metadata for organizing jobs. They are separate from Kusto ingestion tags and separate from the `folder` field. When present, `tags` must be an array of non-empty strings. KO Lite trims each tag, normalizes it to lowercase, and removes duplicates after normalization. Dashboard and catalog tag filters use AND semantics when multiple tags are selected.
+
 ## Import/export behavior
 
 The import page accepts a single schedule object or an array of schedule objects. Imports are additive and update-only: matching `activityId` values are updated, missing jobs are created, and omitted jobs are left untouched.
 
 Exports are import-compatible. Export all emits every non-soft-deleted job; row/detail export emits one job.
-
-## Current non-fields
-
-Top-level `tags` are not part of the current schedule contract. See `schedule-tags-implementation-plan.md` for the backlog proposal.
