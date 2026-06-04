@@ -18,6 +18,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 
 namespace KoLite.LocalApp.Tests
 {
@@ -1445,6 +1446,7 @@ namespace KoLite.LocalApp.Tests
                     if (workerPoolMaxDispatchStartsPerCycle is not null) values["KoLite:WorkerPool:MaxDispatchStartsPerCycle"] = workerPoolMaxDispatchStartsPerCycle.Value.ToString();
                     config.AddInMemoryCollection(values);
                 });
+                builder.ConfigureServices(services => services.AddLogging(logging => logging.ClearProviders()));
                 if (configureServices is not null)
                 {
                     builder.ConfigureServices(configureServices);

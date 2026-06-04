@@ -19,6 +19,8 @@ using KoLite.Local.Sqlite.State;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace KoLite.LocalApp.Tests
 {
@@ -54,6 +56,7 @@ namespace KoLite.LocalApp.Tests
                         ["KoLite:Scheduler:Enabled"] = "false"
                     });
                 });
+                builder.ConfigureServices(services => services.AddLogging(logging => logging.ClearProviders()));
             });
         }
 
