@@ -260,6 +260,12 @@ namespace KoLite.LocalApp.Tests
             Assert.Contains("Success Rate After Retries by function", dashboard);
             Assert.Contains("src=\"/lib/chartjs/chart.umd.min.js\"", dashboard);
             Assert.Contains("class=\"ko-table job-table job-table-dashboard\"", dashboard);
+            Assert.Contains("data-dashboard-filter-input=\"true\"", dashboard);
+            Assert.Contains("data-dashboard-job-table=\"true\"", dashboard);
+            Assert.Contains("data-dashboard-job-id=\"job.web\"", dashboard);
+            Assert.Contains("data-dashboard-search=\"job.web ", dashboard);
+            Assert.Contains("data-dashboard-resizable=\"true\"", dashboard);
+            Assert.Contains("class=\"column-resize-handle\"", dashboard);
             Assert.DoesNotContain("class=\"success-chart-svg\"", dashboard);
             Assert.DoesNotContain("class=\"success-chart-marker\"", dashboard);
             Assert.DoesNotContain("View point details", dashboard);
@@ -352,6 +358,15 @@ namespace KoLite.LocalApp.Tests
             Assert.Contains("BuildSuccessRateChart", script);
             Assert.Contains("BuildJobDetailChart", script);
             Assert.Contains("initJobDetailTabs", script);
+            Assert.Contains("initDashboardJobFilter", script);
+            Assert.Contains("initDashboardColumnResize", script);
+            Assert.Contains("applyDashboardChartFilter", script);
+            Assert.Contains("dashboardVisibleActiveJobIds", script);
+            Assert.Contains("successRateChartEntries", script);
+            Assert.Contains("localStorage", script);
+            Assert.Contains("dashboardAvailableTableWidth", script);
+            Assert.Contains("table.style.width = \"100%\"", script);
+            Assert.Contains("table.style.minWidth = \"0\"", script);
             Assert.Contains("data-chartjs-job", script);
             Assert.Contains("toggleSuccessRateSeries", script);
             Assert.Contains(".slice-history-tooltip", css);
@@ -378,6 +393,11 @@ namespace KoLite.LocalApp.Tests
             Assert.Contains(".jobs-main > .card:last-child", css);
             Assert.Contains(".tag-filter-pane", css);
             Assert.Contains("flex: 1;", css);
+            Assert.Contains(".dashboard-text-filter", css);
+            Assert.Contains(".dashboard-filter-input", css);
+            Assert.Contains(".column-resize-handle", css);
+            Assert.Contains("cursor: col-resize;", css);
+            Assert.Contains("right: 0;", css);
         }
 
         [Fact]
@@ -538,11 +558,13 @@ namespace KoLite.LocalApp.Tests
             catalog.Create(Schedule("job.prod.daily", "DailyFunction", isPaused: false, tags: ["Prod", "daily"]));
             catalog.Create(Schedule("job.prod.weekly", "WeeklyFunction", isPaused: false, tags: ["prod", "weekly"]));
             catalog.Create(Schedule("job.security", "SecurityFunction", isPaused: false, tags: ["security"]));
+            var softDeleted = catalog.Create(Schedule("job.prod.soft", "SoftFunction", isPaused: false, tags: ["prod", "daily"]));
+            new SqliteJobLifecycleService(sqlite, catalog).SoftDelete("job.prod.soft", softDeleted.CatalogVersion, "web-test", "exclude from active charts");
             var state = new SqliteSliceStateRepository(sqlite);
             var readModels = new SqliteOperationalReadModelRepository(sqlite);
             var chartStart = DateTimeOffset.UtcNow.AddMinutes(-30);
             var chartEnd = DateTimeOffset.UtcNow.AddMinutes(-25);
-            foreach (var jobId in new[] { "job.prod.daily", "job.prod.weekly", "job.security" })
+            foreach (var jobId in new[] { "job.prod.daily", "job.prod.weekly", "job.security", "job.prod.soft" })
             {
                 state.Append("chart-" + jobId, jobId, chartStart, chartEnd, DurableSliceStatus.Completed, expectedVersion: 0);
                 readModels.RecordAttempt("attempt-" + jobId, jobId, chartStart, chartEnd, 1, "Succeeded", "worker", chartStart, chartEnd);
@@ -553,24 +575,33 @@ namespace KoLite.LocalApp.Tests
             var dashboard = await client.GetStringAsync("/");
             var filteredDashboard = await client.GetStringAsync("/?tag=PROD&tag=daily");
             var catalogPage = await client.GetStringAsync("/catalog?tag=prod&tag=weekly");
+            var dashboardChartSeries = DashboardSuccessChartSeries(dashboard);
             var filteredChartSeries = DashboardSuccessChartSeries(filteredDashboard);
 
             Assert.Contains("Schedule tag filters", dashboard);
+            Assert.Contains("Text filter", dashboard);
+            Assert.DoesNotContain("Matches activity ID, status, schedule, and next eligible text. Charts keep using the selected tags.", dashboard);
+            Assert.DoesNotContain("dashboard-job-filter-help", dashboard);
             Assert.Contains("href=\"/?range=1d&amp;tag=prod\"", dashboard);
             Assert.Contains("class=\"jobs-with-tags\"", dashboard);
             Assert.Contains("class=\"tag-filter-pane\"", dashboard);
+            Assert.Contains("data-dashboard-filter-pane=\"true\"", dashboard);
             Assert.DoesNotContain("<th>Tags</th>", dashboard);
             Assert.DoesNotContain("tag-chip compact", dashboard);
             Assert.Contains("Showing jobs tagged with all selected tags: prod, daily", filteredDashboard);
             Assert.Contains("href=\"/?range=7d&amp;tag=prod&amp;tag=daily\"", filteredDashboard);
             Assert.Contains("job.prod.daily", filteredDashboard);
+            Assert.Contains("job.prod.soft", filteredDashboard);
             Assert.DoesNotContain("job.prod.weekly", filteredDashboard);
             Assert.DoesNotContain("job.security", filteredDashboard);
+            Assert.DoesNotContain("job.prod.soft", dashboardChartSeries);
             Assert.Equal(["job.prod.daily"], filteredChartSeries);
             Assert.Contains("job.prod.weekly", catalogPage);
             Assert.DoesNotContain("job.prod.daily", catalogPage);
             Assert.DoesNotContain("job.security", catalogPage);
             Assert.Contains("href=\"/catalog?tag=prod\"", catalogPage);
+            Assert.DoesNotContain("data-dashboard-filter-input=\"true\"", catalogPage);
+            Assert.DoesNotContain("data-dashboard-resizable=\"true\"", catalogPage);
         }
 
         [Fact]

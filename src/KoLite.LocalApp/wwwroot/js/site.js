@@ -13,6 +13,7 @@
     "#57606a"
   ];
   var jobChartPalette = ["#1a7f37", "#d4a72c", "#cf222e", "#0969da", "#8250df"];
+  var successRateChartEntries = [];
 
   function tooltipRow(label, value) {
     var row = document.createElement("div");
@@ -157,6 +158,7 @@
       var color = successChartPalette[index % successChartPalette.length];
       return {
         label: series.name,
+        jobId: series.name,
         data: series.points.map(function (point) {
           return {
             x: point.x,
@@ -265,7 +267,13 @@
 
       try {
         var payload = JSON.parse(payloadNode.textContent || "{}");
-        buildSuccessRateChart(canvas, payload);
+        var chart = buildSuccessRateChart(canvas, payload);
+        if (chart) {
+          successRateChartEntries.push({
+            chart: chart,
+            datasets: chart.data.datasets.slice()
+          });
+        }
       } catch (error) {
         container.classList.add("chart-error");
         var message = document.createElement("p");
@@ -479,6 +487,238 @@
     });
   }
 
+  function dashboardRows(table) {
+    return Array.prototype.slice.call(table.querySelectorAll("tbody tr[data-dashboard-job-row='true']"));
+  }
+
+  function dashboardVisibleRows(root, sectionKey) {
+    var table = root.querySelector("[data-dashboard-job-table='true'][data-dashboard-section-key='" + sectionKey + "']");
+    if (!table) return 0;
+    return dashboardRows(table).filter(function (row) { return !row.hidden; }).length;
+  }
+
+  function dashboardTotalRows(root, sectionKey) {
+    var table = root.querySelector("[data-dashboard-job-table='true'][data-dashboard-section-key='" + sectionKey + "']");
+    return table ? dashboardRows(table).length : 0;
+  }
+
+  function dashboardVisibleActiveJobIds(root) {
+    var table = root.querySelector("[data-dashboard-job-table='true'][data-dashboard-section-key='active']");
+    var visible = {};
+    if (!table) return visible;
+
+    dashboardRows(table).forEach(function (row) {
+      var jobId = row.getAttribute("data-dashboard-job-id") || "";
+      if (!row.hidden && jobId) visible[jobId] = true;
+    });
+    return visible;
+  }
+
+  function applyDashboardChartFilter(visibleActiveJobIds) {
+    successRateChartEntries.forEach(function (entry) {
+      entry.chart.data.datasets = entry.datasets.filter(function (dataset) {
+        return Object.prototype.hasOwnProperty.call(visibleActiveJobIds, dataset.jobId || dataset.label);
+      });
+      entry.chart.update();
+    });
+  }
+
+  function updateDashboardInactiveSummary(root, hasFilter) {
+    var summary = root.querySelector("[data-dashboard-inactive-summary='true']");
+    if (!summary) return;
+
+    var originalText = summary.getAttribute("data-dashboard-original-text") || summary.textContent;
+    if (!hasFilter) {
+      summary.textContent = originalText;
+      return;
+    }
+
+    var completedVisible = dashboardVisibleRows(root, "completed");
+    var softDeletedVisible = dashboardVisibleRows(root, "soft-deleted");
+    var completedTotal = dashboardTotalRows(root, "completed");
+    var softDeletedTotal = dashboardTotalRows(root, "soft-deleted");
+    summary.textContent = (completedVisible + softDeletedVisible) + " of " + (completedTotal + softDeletedTotal)
+      + " job(s): " + completedVisible + " of " + completedTotal + " completed, "
+      + softDeletedVisible + " of " + softDeletedTotal + " soft-deleted";
+  }
+
+  function initDashboardJobFilter() {
+    var root = document.querySelector("[data-dashboard-filter-root='true']");
+    var input = document.querySelector("[data-dashboard-filter-input='true']");
+    if (!root || !input) return;
+
+    var status = root.querySelector("[data-dashboard-filter-status='true']");
+
+    function applyFilter() {
+      var query = input.value.trim().toLowerCase();
+      var hasFilter = query.length > 0;
+      var visibleTotal = 0;
+      var rowTotal = 0;
+
+      root.querySelectorAll("[data-dashboard-job-table='true']").forEach(function (table) {
+        var section = table.closest("[data-dashboard-job-section='true']");
+        var count = section ? section.querySelector("[data-dashboard-section-count='true']") : null;
+        var empty = section ? section.querySelector("[data-dashboard-filter-empty='true']") : null;
+        var sectionVisible = 0;
+        var rows = dashboardRows(table);
+
+        rows.forEach(function (row) {
+          var searchText = row.getAttribute("data-dashboard-search") || "";
+          var visible = !hasFilter || searchText.indexOf(query) >= 0;
+          row.hidden = !visible;
+          rowTotal += 1;
+          if (visible) {
+            sectionVisible += 1;
+            visibleTotal += 1;
+          }
+        });
+
+        if (count) {
+          var originalCount = Number(count.getAttribute("data-dashboard-original-count") || rows.length);
+          count.textContent = hasFilter
+            ? sectionVisible + " of " + originalCount + " job(s)"
+            : originalCount + " job(s)";
+        }
+
+        if (empty) {
+          empty.hidden = !hasFilter || sectionVisible > 0;
+        }
+      });
+
+      updateDashboardInactiveSummary(root, hasFilter);
+      applyDashboardChartFilter(dashboardVisibleActiveJobIds(root));
+      if (status) {
+        status.textContent = hasFilter
+          ? "Showing " + visibleTotal + " of " + rowTotal + " job(s)."
+          : "Showing " + rowTotal + " job(s).";
+      }
+    }
+
+    input.addEventListener("input", applyFilter);
+    applyFilter();
+  }
+
+  var dashboardColumnStorageKey = "ko-lite.dashboard.job-table.column-widths.v1";
+
+  function dashboardResizableTables() {
+    return Array.prototype.slice.call(document.querySelectorAll("table.job-table-dashboard[data-dashboard-resizable='true']"));
+  }
+
+  function readDashboardColumnWidths() {
+    var stored;
+    try {
+      stored = window.localStorage.getItem(dashboardColumnStorageKey);
+    } catch (error) {
+      console.warn("Dashboard column widths could not be loaded.", error);
+      return {};
+    }
+
+    if (!stored) return {};
+
+    try {
+      var parsed = JSON.parse(stored);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+    } catch (error) {
+      console.warn("Dashboard column widths could not be parsed.", error);
+      return {};
+    }
+  }
+
+  function saveDashboardColumnWidths(widths) {
+    try {
+      window.localStorage.setItem(dashboardColumnStorageKey, JSON.stringify(widths));
+    } catch (error) {
+      console.warn("Dashboard column widths could not be saved.", error);
+    }
+  }
+
+  function dashboardColumnWidth(col, widths) {
+    var key = col.getAttribute("data-column-key") || "";
+    var width = Number(widths[key]);
+    if (Number.isFinite(width) && width > 0) return width;
+    return Number(col.getAttribute("data-default-width") || 0);
+  }
+
+  function dashboardAvailableTableWidth(table) {
+    var wrap = table.closest(".table-wrap");
+    if (wrap && wrap.clientWidth > 0) return wrap.clientWidth;
+
+    var visibleWrap = dashboardResizableTables()
+      .map(function (candidate) { return candidate.closest(".table-wrap"); })
+      .filter(function (candidateWrap) { return candidateWrap && candidateWrap.clientWidth > 0; })[0];
+    return visibleWrap ? visibleWrap.clientWidth : 0;
+  }
+
+  function applyDashboardColumnWidths(widths) {
+    dashboardResizableTables().forEach(function (table) {
+      var totalWidth = 0;
+      table.querySelectorAll("col[data-column-key]").forEach(function (col) {
+        var width = dashboardColumnWidth(col, widths);
+        if (width > 0) {
+          col.style.width = Math.round(width) + "px";
+          totalWidth += width;
+        }
+      });
+
+      if (totalWidth > 0) {
+        var pixelWidth = Math.ceil(totalWidth) + "px";
+        if (dashboardAvailableTableWidth(table) >= totalWidth) {
+          table.style.width = "100%";
+          table.style.minWidth = "0";
+        } else {
+          table.style.width = pixelWidth;
+          table.style.minWidth = pixelWidth;
+        }
+      }
+    });
+  }
+
+  function initDashboardColumnResize() {
+    var tables = dashboardResizableTables();
+    if (!tables.length) return;
+
+    var widths = readDashboardColumnWidths();
+    applyDashboardColumnWidths(widths);
+
+    document.querySelectorAll("table.job-table-dashboard[data-dashboard-resizable='true'] .column-resize-handle").forEach(function (handle) {
+      handle.addEventListener("pointerdown", function (event) {
+        var table = handle.closest("table");
+        var columnKey = handle.getAttribute("data-column-key") || "";
+        var col = table ? table.querySelector("col[data-column-key='" + columnKey + "']") : null;
+        if (!table || !col) return;
+
+        event.preventDefault();
+        var startX = event.clientX;
+        var startWidth = dashboardColumnWidth(col, widths) || col.getBoundingClientRect().width;
+        var minWidth = Number(col.getAttribute("data-min-width") || 72);
+        document.body.classList.add("column-resizing");
+        handle.setPointerCapture(event.pointerId);
+
+        function resize(moveEvent) {
+          var nextWidth = Math.max(minWidth, Math.round(startWidth + moveEvent.clientX - startX));
+          widths[columnKey] = nextWidth;
+          applyDashboardColumnWidths(widths);
+        }
+
+        function stopResize(stopEvent) {
+          if (handle.hasPointerCapture && handle.hasPointerCapture(stopEvent.pointerId)) {
+            handle.releasePointerCapture(stopEvent.pointerId);
+          }
+
+          handle.removeEventListener("pointermove", resize);
+          handle.removeEventListener("pointerup", stopResize);
+          handle.removeEventListener("pointercancel", stopResize);
+          document.body.classList.remove("column-resizing");
+          saveDashboardColumnWidths(widths);
+        }
+
+        handle.addEventListener("pointermove", resize);
+        handle.addEventListener("pointerup", stopResize);
+        handle.addEventListener("pointercancel", stopResize);
+      });
+    });
+  }
+
   window.addEventListener("hashchange", function () {
     document.querySelectorAll("[data-tabs]").forEach(function (root) {
       var tab = tabForHash(root, window.location.hash);
@@ -545,7 +785,11 @@
   window.BuildJobDetailChart = buildJobDetailChart;
   window.initJobDetailTabs = initJobDetailTabs;
   window.toggleSuccessRateSeries = toggleSuccessRateSeries;
+  window.initDashboardJobFilter = initDashboardJobFilter;
+  window.initDashboardColumnResize = initDashboardColumnResize;
   initSuccessRateCharts();
   initJobDetailCharts();
   initJobDetailTabs();
+  initDashboardJobFilter();
+  initDashboardColumnResize();
 })();

@@ -2,12 +2,13 @@
 
 @{
     var tableCss = Model.ShowProgressColumn ? "ko-table job-table" : "ko-table job-table job-table-dashboard";
+    var enableDashboardFeatures = Model.EnableClientFilter || Model.EnableColumnResize;
 }
 
-<section class="card @Model.SectionCssClass">
+<section class="card @Model.SectionCssClass" data-dashboard-job-section="@enableDashboardFeatures.ToString().ToLowerInvariant()" data-dashboard-section-key="@Model.TableKey">
     <div class="card-header">
         <h2>@Model.Title</h2>
-        <span class="muted">@Model.Jobs.Count job(s)</span>
+        <span class="muted" data-dashboard-section-count="@Model.EnableClientFilter.ToString().ToLowerInvariant()" data-dashboard-original-count="@Model.Jobs.Count">@Model.Jobs.Count job(s)</span>
     </div>
     @if (Model.Jobs.Count == 0)
     {
@@ -16,57 +17,108 @@
     else
     {
         <div class="table-wrap">
-            <table class="@tableCss">
+            <table class="@tableCss" data-dashboard-job-table="@Model.EnableClientFilter.ToString().ToLowerInvariant()" data-dashboard-resizable="@Model.EnableColumnResize.ToString().ToLowerInvariant()" data-dashboard-section-key="@Model.TableKey">
                 <colgroup>
-                    <col class="job-col-status" />
-                    <col class="job-col-activity" />
+                    <col class="job-col-status" data-column-key="status" data-default-width="132" data-min-width="80" />
+                    <col class="job-col-activity" data-column-key="activity" data-default-width="280" data-min-width="160" />
                     @if (Model.ShowDefinitionColumns)
                     {
-                        <col class="job-col-function" />
+                        <col class="job-col-function" data-column-key="function" data-default-width="240" data-min-width="160" />
                     }
-                    <col class="job-col-schedule" />
+                    <col class="job-col-schedule" data-column-key="schedule" data-default-width="112" data-min-width="90" />
                     @if (Model.ShowProgressColumn)
                     {
-                        <col class="job-col-progress" />
+                        <col class="job-col-progress" data-column-key="progress" data-default-width="210" data-min-width="140" />
                     }
                     @if (Model.ShowNextEligibleColumn)
                     {
-                        <col class="job-col-next" />
+                        <col class="job-col-next" data-column-key="next" data-default-width="170" data-min-width="130" />
                     }
                     @if (Model.ShowUpdatedColumn)
                     {
-                        <col class="job-col-updated" />
+                        <col class="job-col-updated" data-column-key="updated" data-default-width="150" data-min-width="120" />
                     }
-                    <col class="job-col-actions" />
+                    <col class="job-col-actions" data-column-key="actions" data-default-width="300" data-min-width="180" />
                 </colgroup>
                 <thead>
                     <tr>
-                        <th>Status</th>
-                        <th>Activity</th>
+                        @if (Model.EnableColumnResize)
+                        {
+                            <th data-dashboard-column-key="status">Status<button class="column-resize-handle" type="button" data-column-key="status" aria-label="Resize Status column" title="Resize Status column"></button></th>
+                            <th data-dashboard-column-key="activity">Activity<button class="column-resize-handle" type="button" data-column-key="activity" aria-label="Resize Activity column" title="Resize Activity column"></button></th>
+                        }
+                        else
+                        {
+                            <th>Status</th>
+                            <th>Activity</th>
+                        }
                         @if (Model.ShowDefinitionColumns)
                         {
-                            <th>Function / Output</th>
+                            @if (Model.EnableColumnResize)
+                            {
+                                <th data-dashboard-column-key="function">Function / Output<button class="column-resize-handle" type="button" data-column-key="function" aria-label="Resize Function / Output column" title="Resize Function / Output column"></button></th>
+                            }
+                            else
+                            {
+                                <th>Function / Output</th>
+                            }
                         }
-                        <th>Schedule</th>
+                        @if (Model.EnableColumnResize)
+                        {
+                            <th data-dashboard-column-key="schedule">Schedule<button class="column-resize-handle" type="button" data-column-key="schedule" aria-label="Resize Schedule column" title="Resize Schedule column"></button></th>
+                        }
+                        else
+                        {
+                            <th>Schedule</th>
+                        }
                         @if (Model.ShowProgressColumn)
                         {
-                            <th>Progress</th>
+                            @if (Model.EnableColumnResize)
+                            {
+                                <th data-dashboard-column-key="progress">Progress<button class="column-resize-handle" type="button" data-column-key="progress" aria-label="Resize Progress column" title="Resize Progress column"></button></th>
+                            }
+                            else
+                            {
+                                <th>Progress</th>
+                            }
                         }
                         @if (Model.ShowNextEligibleColumn)
                         {
-                            <th>Next eligible</th>
+                            @if (Model.EnableColumnResize)
+                            {
+                                <th data-dashboard-column-key="next">Next eligible<button class="column-resize-handle" type="button" data-column-key="next" aria-label="Resize Next eligible column" title="Resize Next eligible column"></button></th>
+                            }
+                            else
+                            {
+                                <th>Next eligible</th>
+                            }
                         }
                         @if (Model.ShowUpdatedColumn)
                         {
-                            <th>Updated</th>
+                            @if (Model.EnableColumnResize)
+                            {
+                                <th data-dashboard-column-key="updated">Updated<button class="column-resize-handle" type="button" data-column-key="updated" aria-label="Resize Updated column" title="Resize Updated column"></button></th>
+                            }
+                            else
+                            {
+                                <th>Updated</th>
+                            }
                         }
-                        <th class="actions">Actions</th>
+                        @if (Model.EnableColumnResize)
+                        {
+                            <th class="actions" data-dashboard-column-key="actions">Actions<button class="column-resize-handle" type="button" data-column-key="actions" aria-label="Resize Actions column" title="Resize Actions column"></button></th>
+                        }
+                        else
+                        {
+                            <th class="actions">Actions</th>
+                        }
                     </tr>
                 </thead>
                 <tbody>
                 @foreach (var job in Model.Jobs)
                 {
-                    <tr>
+                    var dashboardSearchText = Model.EnableClientFilter ? BuildDashboardSearchText(Model, job) : null;
+                    <tr data-dashboard-job-row="@Model.EnableClientFilter.ToString().ToLowerInvariant()" data-dashboard-job-id="@job.Record.JobId" data-dashboard-search="@dashboardSearchText">
                         <td class="status-cell">
                             <span class="badge @job.StatusCss">@job.StatusText</span>
                         </td>
@@ -170,6 +222,67 @@
                 }
                 </tbody>
             </table>
+            @if (Model.EnableClientFilter)
+            {
+                <p class="empty dashboard-filter-empty" data-dashboard-filter-empty="true" hidden>No jobs match the text filter in this section.</p>
+            }
         </div>
     }
 </section>
+
+@functions {
+    private static string BuildDashboardSearchText(JobTableViewModel model, JobListItem job)
+    {
+        var parts = new List<string?>
+        {
+            job.Record.JobId,
+            job.StatusText,
+            AppFormatting.Duration(job.Definition.QueryWindowSize),
+            "Delay " + AppFormatting.Duration(job.Definition.DelayFromUtcNow)
+        };
+
+        if (model.ShowFolderLine)
+        {
+            parts.Add(job.Definition.Folder);
+        }
+
+        if (model.ShowDefinitionColumns)
+        {
+            parts.Add(job.Definition.FunctionName);
+            parts.Add(job.Definition.OutputTable);
+        }
+
+        if (model.ShowProgressColumn)
+        {
+            if (job.Summary is null)
+            {
+                parts.Add("No slices yet");
+            }
+            else
+            {
+                parts.Add(job.Summary.CompletedCount + " completed");
+                parts.Add(job.TotalSlices + " total");
+                parts.Add(job.Summary.QueuedCount + " queued");
+                if (model.ShowRunningProgressCount)
+                {
+                    parts.Add(job.Summary.RunningCount + " running");
+                }
+
+                parts.Add(job.FailedLikeSlices + " failed blocked");
+            }
+        }
+
+        if (model.ShowNextEligibleColumn)
+        {
+            parts.Add(job.NextSlice.Text);
+            parts.Add(job.NextSlice.Detail);
+        }
+
+        if (model.ShowUpdatedColumn)
+        {
+            parts.Add(AppFormatting.Local(job.Summary?.LastUpdatedAtUtc ?? job.Record.UpdatedAtUtc));
+        }
+
+        return string.Join(" ", parts.Where(part => !string.IsNullOrWhiteSpace(part))).ToLowerInvariant();
+    }
+}

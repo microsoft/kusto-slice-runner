@@ -221,6 +221,8 @@ h3 { font-size: 16px; margin-bottom: 10px; }
 .tag-filter-pane {
   align-self: stretch;
   display: flex;
+  flex-direction: column;
+  gap: 12px;
   position: sticky;
   top: 16px;
 }
@@ -228,13 +230,40 @@ h3 { font-size: 16px; margin-bottom: 10px; }
   flex: 1;
   margin-bottom: 0;
 }
+.dashboard-text-filter {
+  margin-bottom: 0;
+}
+.dashboard-filter-header {
+  margin-bottom: 10px;
+}
+.dashboard-filter-label {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.dashboard-filter-input {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font: inherit;
+  padding: 7px;
+  width: 100%;
+}
+.dashboard-filter-help,
+.dashboard-filter-status {
+  margin: 8px 0 0;
+}
 .ko-table th, .ko-table td {
   border-top: 1px solid var(--border);
   padding: 8px;
   text-align: left;
   vertical-align: top;
 }
-.ko-table th { background: #f6f8fa; font-weight: 600; }
+.ko-table th {
+  background: #f6f8fa;
+  font-weight: 600;
+  position: relative;
+}
 .ko-table.compact th, .ko-table.compact td { padding: 5px 7px; font-size: 12px; }
 .job-col-status { width: 132px; }
 .job-col-activity { width: 280px; }
@@ -260,6 +289,40 @@ h3 { font-size: 16px; margin-bottom: 10px; }
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.column-resize-handle {
+  background: transparent;
+  border: 0;
+  bottom: 0;
+  cursor: col-resize;
+  padding: 0;
+  position: absolute;
+  right: 0;
+  top: 0;
+  touch-action: none;
+  width: 10px;
+  z-index: 2;
+}
+.column-resize-handle::after {
+  background: transparent;
+  bottom: 6px;
+  content: "";
+  position: absolute;
+  right: 4px;
+  top: 6px;
+  width: 2px;
+}
+.column-resize-handle:hover::after,
+.column-resize-handle:focus::after,
+.column-resizing .column-resize-handle::after {
+  background: var(--primary);
+}
+.column-resize-handle:focus {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+}
+.dashboard-filter-empty {
+  margin: 10px 0 0;
 }
 .action-group {
   display: flex;

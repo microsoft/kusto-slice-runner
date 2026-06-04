@@ -25,19 +25,20 @@
 </div>
 
 @{
-    var activeJobs = new JobTableViewModel("Active jobs", Model.Data.ActiveJobs, false, ShowSoftDeleteAction: false, ShowDefinitionColumns: false, ShowUpdatedColumn: false, ShowNextEligibleColumn: true, ShowRunningProgressCount: false, ShowProgressColumn: false, ShowHistoryAction: false, ShowFolderLine: false);
-    var completedJobs = new JobTableViewModel("Completed jobs", Model.Data.CompletedJobs, false, ShowSoftDeleteAction: false, SectionCssClass: "nested-card", ShowDefinitionColumns: false, ShowUpdatedColumn: false, ShowNextEligibleColumn: true, ShowRunningProgressCount: false, ShowProgressColumn: false, ShowHistoryAction: false, ShowFolderLine: false);
-    var softDeletedJobs = new JobTableViewModel("Soft-deleted jobs", Model.Data.SoftDeletedJobs, true, SectionCssClass: "nested-card", ShowDefinitionColumns: false, ShowUpdatedColumn: false, ShowNextEligibleColumn: true, ShowRunningProgressCount: false, ShowProgressColumn: false, ShowHistoryAction: false, ShowFolderLine: false);
+    var activeJobs = new JobTableViewModel("Active jobs", Model.Data.ActiveJobs, false, ShowSoftDeleteAction: false, ShowDefinitionColumns: false, ShowUpdatedColumn: false, ShowNextEligibleColumn: true, ShowRunningProgressCount: false, ShowProgressColumn: false, ShowHistoryAction: false, ShowFolderLine: false, EnableClientFilter: true, EnableColumnResize: true, TableKey: "active");
+    var completedJobs = new JobTableViewModel("Completed jobs", Model.Data.CompletedJobs, false, ShowSoftDeleteAction: false, SectionCssClass: "nested-card", ShowDefinitionColumns: false, ShowUpdatedColumn: false, ShowNextEligibleColumn: true, ShowRunningProgressCount: false, ShowProgressColumn: false, ShowHistoryAction: false, ShowFolderLine: false, EnableClientFilter: true, EnableColumnResize: true, TableKey: "completed");
+    var softDeletedJobs = new JobTableViewModel("Soft-deleted jobs", Model.Data.SoftDeletedJobs, true, SectionCssClass: "nested-card", ShowDefinitionColumns: false, ShowUpdatedColumn: false, ShowNextEligibleColumn: true, ShowRunningProgressCount: false, ShowProgressColumn: false, ShowHistoryAction: false, ShowFolderLine: false, EnableClientFilter: true, EnableColumnResize: true, TableKey: "soft-deleted");
     var inactiveCount = Model.Data.CompletedJobs.Count + Model.Data.SoftDeletedJobs.Count;
+    var dashboardJobCount = Model.Data.ActiveJobs.Count + inactiveCount;
 }
 
-<div class="jobs-with-tags">
+<div class="jobs-with-tags" data-dashboard-filter-root="true">
     <div class="jobs-main">
         <partial name="_JobTable" model="activeJobs" />
         <details class="card disclosure-card inactive-jobs">
             <summary>
                 <span class="summary-title">Inactive jobs</span>
-                <span class="muted">@inactiveCount job(s): @Model.Data.CompletedJobs.Count completed, @Model.Data.SoftDeletedJobs.Count soft-deleted</span>
+                <span class="muted" data-dashboard-inactive-summary="true" data-dashboard-original-text="@inactiveCount job(s): @Model.Data.CompletedJobs.Count completed, @Model.Data.SoftDeletedJobs.Count soft-deleted">@inactiveCount job(s): @Model.Data.CompletedJobs.Count completed, @Model.Data.SoftDeletedJobs.Count soft-deleted</span>
             </summary>
             <div class="inactive-job-groups">
                 <partial name="_JobTable" model="completedJobs" />
@@ -45,12 +46,34 @@
             </div>
         </details>
     </div>
-    @if (tagFilter.HasTags)
-    {
-        <aside class="tag-filter-pane">
+    <aside class="tag-filter-pane" data-dashboard-filter-pane="true" aria-label="Dashboard filters">
+        <section class="card dashboard-text-filter">
+            <div class="dashboard-filter-header">
+                <div>
+                    <h2>Find jobs</h2>
+                    <p class="muted">Text search narrows the jobs currently shown after tag selection.</p>
+                </div>
+            </div>
+            <label class="dashboard-filter-label" for="dashboard-job-filter">Text filter</label>
+            <input id="dashboard-job-filter" class="dashboard-filter-input" type="search" placeholder="Type to filter jobs" autocomplete="off" data-dashboard-filter-input="true" aria-describedby="dashboard-job-filter-status" />
+            <p id="dashboard-job-filter-status" class="muted dashboard-filter-status" data-dashboard-filter-status="true" data-dashboard-total-count="@dashboardJobCount" role="status" aria-live="polite">Showing @dashboardJobCount job(s).</p>
+        </section>
+        @if (tagFilter.HasTags)
+        {
             <partial name="_TagFilter" model="tagFilter" />
-        </aside>
-    }
+        }
+        else
+        {
+            <section class="card tag-filter">
+                <div class="tag-filter-header">
+                    <div>
+                        <h2>Tags</h2>
+                        <p class="muted">No schedule tags are available yet.</p>
+                    </div>
+                </div>
+            </section>
+        }
+    </aside>
 </div>
 
 <section class="card success-statistics">

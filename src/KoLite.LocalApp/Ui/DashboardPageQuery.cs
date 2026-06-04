@@ -30,7 +30,10 @@ namespace KoLite.LocalApp.Ui
         bool ShowRunningProgressCount = true,
         bool ShowProgressColumn = true,
         bool ShowHistoryAction = true,
-        bool ShowFolderLine = true);
+        bool ShowFolderLine = true,
+        bool EnableClientFilter = false,
+        bool EnableColumnResize = false,
+        string? TableKey = null);
 
     public sealed record JobListItem(
         JobCatalogRecord Record,
@@ -108,14 +111,15 @@ namespace KoLite.LocalApp.Ui
             var filteredJobs = normalizedSelectedTags.Count == 0
                 ? jobs
                 : jobs.Where(job => MatchesSelectedTags(job, normalizedSelectedTags)).ToList();
-            var chartJobIds = normalizedSelectedTags.Count == 0
-                ? null
-                : filteredJobs.Select(job => job.Record.JobId).ToArray();
+            var activeJobs = filteredJobs.Where(j => j.LifecycleStatus != "SoftDeleted" && !j.IsCompleted).OrderBy(j => j.Record.JobId, StringComparer.Ordinal).ToList();
+            var completedJobs = filteredJobs.Where(j => j.LifecycleStatus != "SoftDeleted" && j.IsCompleted).OrderBy(j => j.Record.JobId, StringComparer.Ordinal).ToList();
+            var softDeletedJobs = filteredJobs.Where(j => j.LifecycleStatus == "SoftDeleted").OrderBy(j => j.Record.JobId, StringComparer.Ordinal).ToList();
+            var chartJobIds = activeJobs.Select(job => job.Record.JobId).ToArray();
 
             return new DashboardPageData(
-                filteredJobs.Where(j => j.LifecycleStatus != "SoftDeleted" && !j.IsCompleted).OrderBy(j => j.Record.JobId, StringComparer.Ordinal).ToList(),
-                filteredJobs.Where(j => j.LifecycleStatus != "SoftDeleted" && j.IsCompleted).OrderBy(j => j.Record.JobId, StringComparer.Ordinal).ToList(),
-                filteredJobs.Where(j => j.LifecycleStatus == "SoftDeleted").OrderBy(j => j.Record.JobId, StringComparer.Ordinal).ToList(),
+                activeJobs,
+                completedJobs,
+                softDeletedJobs,
                 tagSummaries,
                 normalizedSelectedTags,
                 chartQuery.GetDashboardCharts(selectedRange, chartJobIds),
