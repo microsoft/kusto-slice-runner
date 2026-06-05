@@ -988,6 +988,32 @@
   window.initDashboardJobFilter = initDashboardJobFilter;
   window.initDashboardColumnResize = initDashboardColumnResize;
   window.initDashboardJobToggle = initDashboardJobToggle;
+  function initUpdateBadge() {
+    var badge = document.querySelector(".update-badge");
+    if (!badge) return;
+    var button = badge.querySelector(".update-badge-button");
+    if (!button) return;
+
+    function close() {
+      badge.classList.remove("is-open");
+      button.setAttribute("aria-expanded", "false");
+    }
+
+    button.addEventListener("click", function (event) {
+      event.stopPropagation();
+      var open = badge.classList.toggle("is-open");
+      button.setAttribute("aria-expanded", open ? "true" : "false");
+    });
+
+    document.addEventListener("click", function (event) {
+      if (!badge.contains(event.target)) close();
+    });
+
+    document.addEventListener("keydown", function (event) {
+      if (event.key === "Escape") close();
+    });
+  }
+
   window.initBulkSelect = initBulkSelect;
   initSuccessRateCharts();
   initJobDetailCharts();
@@ -996,4 +1022,5 @@
   initDashboardColumnResize();
   initDashboardJobToggle();
   initBulkSelect();
+  initUpdateBadge();
 })();

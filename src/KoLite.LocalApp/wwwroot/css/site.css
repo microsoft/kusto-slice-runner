@@ -749,3 +749,80 @@ h3 { font-size: 16px; margin-bottom: 10px; }
   .success-chart-canvas-wrap,
   .job-chart-canvas-wrap { height: 300px; }
 }
+
+/* Update status badge in the top bar */
+.update-badge {
+  position: relative;
+  margin-left: auto;
+}
+.update-badge-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 999px;
+  padding: 5px 12px;
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  line-height: 1.2;
+}
+.update-badge-button:hover { background: rgba(255, 255, 255, 0.16); }
+.update-badge-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--slice-stat-waiting);
+  flex: 0 0 auto;
+}
+.update-badge-uptodate .update-badge-dot { background: #2da44e; }
+.update-badge-update .update-badge-dot { background: #d4a72c; }
+.update-badge-ahead .update-badge-dot { background: #8250df; }
+.update-badge-diverged .update-badge-dot { background: #bc4c00; }
+.update-badge-unavailable .update-badge-dot { background: #cf5d22; }
+.update-badge-checking .update-badge-dot { background: #afb8c1; }
+.update-badge-update .update-badge-button { border-color: rgba(212, 167, 44, 0.7); }
+.update-badge-ahead .update-badge-button { border-color: rgba(130, 80, 223, 0.7); }
+.update-badge-diverged .update-badge-button { border-color: rgba(188, 76, 0, 0.7); }
+.update-badge-unavailable .update-badge-button { border-color: rgba(207, 93, 34, 0.7); }
+.update-badge-popover {
+  display: none;
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 20;
+  width: 320px;
+  max-width: 80vw;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(31, 35, 40, 0.2);
+  padding: 14px 16px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.update-badge.is-open .update-badge-popover,
+.update-badge:focus-within .update-badge-popover { display: block; }
+.update-badge-popover-title { font-weight: 600; margin-bottom: 8px; }
+.update-badge-detail { list-style: none; margin: 0 0 8px; padding: 0; color: var(--muted); }
+.update-badge-detail li { margin: 2px 0; }
+.update-badge-remediation {
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+  margin-top: 4px;
+}
+.update-badge-remediation-title { font-weight: 600; color: var(--warning); margin-bottom: 4px; }
+.update-badge-remediation ul { margin: 0; padding-left: 18px; }
+.update-badge-remediation li { margin: 2px 0; }
+.update-badge-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.update-badge-links a { color: var(--primary); }

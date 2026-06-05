@@ -15,6 +15,7 @@ using KoLite.Local.Sqlite.Queue;
 using KoLite.Local.Sqlite.Rerun;
 using KoLite.Local.Sqlite.State;
 using KoLite.LocalApp.Ui;
+using KoLite.LocalApp.Updates;
 using Microsoft.AspNetCore.Antiforgery;
 
 namespace KoLite.LocalApp
@@ -66,6 +67,14 @@ namespace KoLite.LocalApp
             builder.Services.AddSingleton<LocalWorkerPoolRuntimeState>();
             builder.Services.AddHostedService<LocalBackgroundSchedulerService>();
             builder.Services.AddHostedService<LocalBackgroundWorkerService>();
+            builder.Services.AddSingleton(sp => LocalUpdateCheckOptions.From(sp.GetRequiredService<IConfiguration>()));
+            builder.Services.AddSingleton(new AppBuildVersion(BuildInfo.GetCommitSha()));
+            builder.Services.AddSingleton(sp => new UpdateCheckRuntimeState(UpdateCheckSnapshot.Initial(
+                sp.GetRequiredService<LocalUpdateCheckOptions>().Enabled,
+                sp.GetRequiredService<AppBuildVersion>().CommitSha)));
+            builder.Services.AddSingleton<IRepositoryUpdateChecker, GhCliRepositoryUpdateChecker>();
+            builder.Services.AddScoped<UpdateBadgeReadModel>();
+            builder.Services.AddHostedService<LocalUpdateCheckBackgroundService>();
             builder.WebHost.UseUrls(builder.Configuration["KoLite:Urls"] ?? "http://127.0.0.1:5057");
 
             var app = builder.Build();
@@ -106,6 +115,8 @@ namespace KoLite.LocalApp
                 LocalWorkerOptions localWorkerOptions,
                 KoLiteKustoOptions kustoOptions,
                 LocalShutdownDrainCoordinator shutdownDrain,
+                UpdateCheckRuntimeState updateCheckState,
+                LocalUpdateCheckOptions updateCheckOptions,
                 IClock clock) =>
             {
                 using var connection = connections.OpenConnection();
@@ -115,6 +126,7 @@ namespace KoLite.LocalApp
                 var nowUtc = clock.UtcNow;
                 var queueStatus = observability.GetQueueStatus(localWorkerOptions.QueueName, nowUtc);
                 var claimableBacklog = queue.CountClaimable(localWorkerOptions.QueueName, nowUtc);
+                var updateSnapshot = updateCheckState.GetSnapshot();
                 return Results.Json(new
                 {
                     status = "Healthy",
@@ -132,6 +144,21 @@ namespace KoLite.LocalApp
                         logEveryPass = schedulerOptions.LogEveryPass
                     },
                     workerPool = workerPoolState.GetSnapshot(workerPoolOptions, queueStatus, claimableBacklog),
+                    updateCheck = new
+                    {
+                        status = updateSnapshot.Status.ToString(),
+                        reason = updateSnapshot.Reason.ToString(),
+                        enabled = updateCheckOptions.Enabled,
+                        repository = updateCheckOptions.Repository,
+                        branch = updateCheckOptions.Branch,
+                        interval = updateCheckOptions.Interval.ToString(),
+                        builtSha = updateSnapshot.BuiltSha,
+                        remoteSha = updateSnapshot.RemoteSha,
+                        commitsBehind = updateSnapshot.CommitsBehind,
+                        commitsAhead = updateSnapshot.CommitsAhead,
+                        lastCheckedUtc = updateSnapshot.LastCheckedUtc,
+                        error = updateSnapshot.ErrorMessage
+                    },
                     shutdown = shutdownDrain.GetSnapshot()
                 });
             });

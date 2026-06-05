@@ -1732,7 +1732,8 @@ namespace KoLite.LocalApp.Tests
                     var values = new Dictionary<string, string?>
                     {
                         ["ConnectionStrings:KoLiteSqlite"] = databasePath,
-                        ["KoLite:Scheduler:Enabled"] = enableScheduler.ToString()
+                        ["KoLite:Scheduler:Enabled"] = enableScheduler.ToString(),
+                        ["KoLite:UpdateCheck:Enabled"] = "false"
                     };
                     if (tickInterval is not null) values["KoLite:Scheduler:TickInterval"] = tickInterval;
                     if (logEveryPass is not null) values["KoLite:Scheduler:LogEveryPass"] = logEveryPass.Value.ToString();

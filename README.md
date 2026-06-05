@@ -24,6 +24,7 @@ If you're familiar with [scheduled Kusto jobs](https://learn.microsoft.com/kusto
 - Executes live Kusto `.set-or-append` commands for each claimed slice.
 - Tracks queue state, slice history, attempts, logs, failures, and success-rate charts.
 - Plans historical reruns and local state repair while leaving destructive Kusto cleanup to the operator.
+- Periodically checks GitHub (via the `gh` CLI) for newer KO Lite commits and shows an update badge in the top bar.
 
 ## Quick start
 

@@ -49,8 +49,38 @@ dotnet run --project .\src\KoLite.LocalApp\KoLite.LocalApp.csproj -- --Connectio
 | `KoLite:WorkerPool:MaxDispatchStartsPerCycle` | `100` | Per-cycle dispatch start cap. |
 | `KoLite:Kusto:AuthMode` | `AzureCli` | Supported values: `AzureCli`, `ManagedIdentity`. |
 | `KoLite:Kusto:ManagedIdentityClientId` | Empty | Optional user-assigned managed identity client ID. |
+| `KoLite:UpdateCheck:Enabled` | `true` | Periodically checks GitHub for newer KO Lite commits. Set `false` to disable. |
+| `KoLite:UpdateCheck:Interval` | `01:00:00` | How often to poll GitHub. Must be greater than zero. |
+| `KoLite:UpdateCheck:Repository` | `microsoft/kusto-slice-runner` | `owner/repo` to compare against. |
+| `KoLite:UpdateCheck:Branch` | `main` | Branch whose HEAD is compared to the running build. |
 
 Compatibility aliases `KoLite:Scheduler:WorkerConcurrency` and `KoLite:Scheduler:MaxWorkerIterations` are still accepted by the worker-pool options.
+
+## Update checks
+
+KO Lite stamps the git commit it was built from into the app at build time and, when
+update checks are enabled, periodically compares that commit against the remote branch
+HEAD. The check shells out to the **GitHub CLI (`gh`)**, so it reuses whatever GitHub
+account is already signed in on the machine — no token configuration is required.
+
+A status badge on the right of the top bar shows one of:
+
+- **Up to date** — the running build matches the remote branch HEAD.
+- **Update available** — the remote branch is ahead; the badge popover links to the GitHub
+  compare view and shows how many commits behind the build is.
+- **Ahead of published** — the build contains commits the remote branch does not (you are
+  developing ahead of the published branch, or the build commit hasn't been pushed yet).
+- **Diverged** — both the build and the remote branch have commits the other lacks.
+- **Updates: unavailable** — the check could not run. Opening the badge shows targeted
+  guidance for the cause, for example:
+  - GitHub CLI not installed → install `gh` and restart KO Lite.
+  - Not signed in → run `gh auth login` for github.com.
+  - No access to the repository → request access to `microsoft/kusto-slice-runner`.
+  - The build was produced without a git checkout, so it carries no commit to compare.
+
+Failures are non-fatal and never affect scheduling or Kusto execution. Full detail
+(status, reason, built/remote SHA, commits-behind, last-checked time, and any error) is
+also exposed under `updateCheck` in `/status/health`.
 
 ## Job catalog import and export
 

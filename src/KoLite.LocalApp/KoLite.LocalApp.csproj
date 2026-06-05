@@ -12,4 +12,33 @@
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
 
+  <!--
+    Stamp the git commit the app was built from into assembly metadata so the running
+    app can compare itself against the remote repository. Degrades gracefully to an
+    empty value when git or the .git directory is unavailable (e.g. published builds).
+  -->
+  <PropertyGroup>
+    <KoLiteGitCommitSha Condition="'$(KoLiteGitCommitSha)' == ''"></KoLiteGitCommitSha>
+  </PropertyGroup>
+
+  <Target Name="AddKoLiteGitCommitShaAttribute" BeforeTargets="GetAssemblyAttributes" Condition="'$(KoLiteGitCommitSha)' == ''">
+    <Exec Command="git -C &quot;$(MSBuildProjectDirectory)&quot; rev-parse HEAD"
+          ConsoleToMSBuild="true"
+          ContinueOnError="true"
+          StandardOutputImportance="low"
+          StandardErrorImportance="low">
+      <Output TaskParameter="ConsoleOutput" PropertyName="_KoLiteGitShaOutput" />
+      <Output TaskParameter="ExitCode" PropertyName="_KoLiteGitExitCode" />
+    </Exec>
+    <PropertyGroup>
+      <KoLiteGitCommitSha Condition="'$(_KoLiteGitExitCode)' == '0'">$(_KoLiteGitShaOutput.Trim())</KoLiteGitCommitSha>
+    </PropertyGroup>
+    <ItemGroup>
+      <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+        <_Parameter1>KoLiteGitCommitSha</_Parameter1>
+        <_Parameter2>$(KoLiteGitCommitSha)</_Parameter2>
+      </AssemblyAttribute>
+    </ItemGroup>
+  </Target>
+
 </Project>
