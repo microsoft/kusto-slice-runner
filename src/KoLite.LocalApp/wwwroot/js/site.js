@@ -592,6 +592,8 @@
           ? "Showing " + visibleTotal + " of " + rowTotal + " job(s)."
           : "Showing " + rowTotal + " job(s).";
       }
+
+      document.dispatchEvent(new CustomEvent("dashboard:filtered"));
     }
 
     input.addEventListener("input", applyFilter);
@@ -874,6 +876,111 @@
     });
   }
 
+  function bulkCheckboxes(root) {
+    return Array.prototype.slice.call(root.querySelectorAll("[data-bulk-select]"));
+  }
+
+  function bulkSelectedRows(root) {
+    return bulkCheckboxes(root).filter(function (checkbox) {
+      var row = checkbox.closest("tr");
+      return checkbox.checked && (!row || !row.hidden);
+    });
+  }
+
+  function initBulkSelect() {
+    var root = document.querySelector("[data-dashboard-filter-root='true']");
+    var bar = document.querySelector("[data-bulk-bar]");
+    if (!root || !bar) return;
+
+    var count = bar.querySelector("[data-bulk-count]");
+    var inputs = bar.querySelector("[data-bulk-inputs]");
+    var form = bar.querySelector("form");
+    var clear = bar.querySelector("[data-bulk-clear]");
+
+    function refresh() {
+      var selected = bulkSelectedRows(root);
+      bar.hidden = selected.length === 0;
+      if (count) count.textContent = selected.length + " selected";
+
+      root.querySelectorAll("[data-bulk-select-all]").forEach(function (master) {
+        var section = master.getAttribute("data-bulk-section");
+        var table = root.querySelector("[data-dashboard-job-table][data-dashboard-section-key='" + section + "']");
+        if (!table) return;
+        var rows = bulkCheckboxes(table).filter(function (checkbox) {
+          var row = checkbox.closest("tr");
+          return !row || !row.hidden;
+        });
+        var checkedRows = rows.filter(function (checkbox) { return checkbox.checked; });
+        master.checked = rows.length > 0 && checkedRows.length === rows.length;
+        master.indeterminate = checkedRows.length > 0 && checkedRows.length < rows.length;
+      });
+    }
+
+    root.addEventListener("change", function (event) {
+      var target = event.target;
+      if (!(target instanceof HTMLInputElement)) return;
+
+      if (target.hasAttribute("data-bulk-select-all")) {
+        var section = target.getAttribute("data-bulk-section");
+        var table = root.querySelector("[data-dashboard-job-table][data-dashboard-section-key='" + section + "']");
+        if (table) {
+          bulkCheckboxes(table).forEach(function (checkbox) {
+            var row = checkbox.closest("tr");
+            if (!row || !row.hidden) checkbox.checked = target.checked;
+          });
+        }
+        refresh();
+        return;
+      }
+
+      if (target.hasAttribute("data-bulk-select")) {
+        refresh();
+      }
+    });
+
+    if (clear) {
+      clear.addEventListener("click", function () {
+        bulkCheckboxes(root).forEach(function (checkbox) { checkbox.checked = false; });
+        refresh();
+      });
+    }
+
+    document.addEventListener("dashboard:filtered", function () {
+      bulkCheckboxes(root).forEach(function (checkbox) {
+        var row = checkbox.closest("tr");
+        if (row && row.hidden) checkbox.checked = false;
+      });
+      refresh();
+    });
+
+    if (form && inputs) {
+      form.addEventListener("submit", function (event) {
+        var selected = bulkSelectedRows(root);
+        if (selected.length === 0) {
+          event.preventDefault();
+          return;
+        }
+
+        inputs.textContent = "";
+        selected.forEach(function (checkbox) {
+          var jobInput = document.createElement("input");
+          jobInput.type = "hidden";
+          jobInput.name = "jobIds";
+          jobInput.value = checkbox.value;
+          inputs.appendChild(jobInput);
+
+          var versionInput = document.createElement("input");
+          versionInput.type = "hidden";
+          versionInput.name = "expectedVersions";
+          versionInput.value = checkbox.getAttribute("data-expected-version") || "0";
+          inputs.appendChild(versionInput);
+        });
+      });
+    }
+
+    refresh();
+  }
+
   window.BuildSuccessRateChart = buildSuccessRateChart;
   window.BuildJobDetailChart = buildJobDetailChart;
   window.initJobDetailTabs = initJobDetailTabs;
@@ -881,10 +988,12 @@
   window.initDashboardJobFilter = initDashboardJobFilter;
   window.initDashboardColumnResize = initDashboardColumnResize;
   window.initDashboardJobToggle = initDashboardJobToggle;
+  window.initBulkSelect = initBulkSelect;
   initSuccessRateCharts();
   initJobDetailCharts();
   initJobDetailTabs();
   initDashboardJobFilter();
   initDashboardColumnResize();
   initDashboardJobToggle();
+  initBulkSelect();
 })();

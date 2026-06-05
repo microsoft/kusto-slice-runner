@@ -19,6 +19,10 @@
         <div class="table-wrap">
             <table class="@tableCss" data-dashboard-job-table="@Model.EnableClientFilter.ToString().ToLowerInvariant()" data-dashboard-resizable="@Model.EnableColumnResize.ToString().ToLowerInvariant()" data-dashboard-section-key="@Model.TableKey">
                 <colgroup>
+                    @if (Model.EnableBulkSelect)
+                    {
+                        <col class="job-col-select" data-column-key="select" data-default-width="40" data-min-width="40" />
+                    }
                     <col class="job-col-status" data-column-key="status" data-default-width="132" data-min-width="80" />
                     <col class="job-col-activity" data-column-key="activity" data-default-width="280" data-min-width="160" />
                     @if (Model.ShowDefinitionColumns)
@@ -42,6 +46,10 @@
                 </colgroup>
                 <thead>
                     <tr>
+                        @if (Model.EnableBulkSelect)
+                        {
+                            <th class="select-col"><input type="checkbox" class="bulk-select-all" data-bulk-select-all data-bulk-section="@Model.TableKey" aria-label="Select all jobs in @Model.Title" /></th>
+                        }
                         @if (Model.EnableColumnResize)
                         {
                             <th data-dashboard-column-key="status">Status<button class="column-resize-handle" type="button" data-column-key="status" aria-label="Resize Status column" title="Resize Status column"></button></th>
@@ -121,6 +129,10 @@
                     var inlineToggle = Model.EnableInlineToggle;
                     var toggleBase = "/catalog/" + Uri.EscapeDataString(job.Record.JobId);
                     <tr data-dashboard-job-row="@Model.EnableClientFilter.ToString().ToLowerInvariant()" data-dashboard-job-id="@job.Record.JobId" data-dashboard-search="@dashboardSearchText">
+                        @if (Model.EnableBulkSelect)
+                        {
+                            <td class="select-cell"><input type="checkbox" class="bulk-select" data-bulk-select value="@job.Record.JobId" data-expected-version="@job.Record.CatalogVersion" aria-label="Select @job.Record.JobId" /></td>
+                        }
                         <td class="status-cell">
                             <span class="badge @job.StatusCss">@job.StatusText</span>
                         </td>

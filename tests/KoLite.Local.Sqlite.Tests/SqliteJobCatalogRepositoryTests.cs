@@ -81,6 +81,22 @@ namespace KoLite.Local.Sqlite.Tests
         }
 
         [Fact]
+        public void ExportSelected_returns_importable_subset_in_catalog_order_and_skips_unknown_and_duplicates()
+        {
+            repository.Create(Schedule("job.b", paused: false));
+            repository.Create(Schedule("job.a", paused: true));
+            repository.Create(Schedule("job.c", paused: false));
+
+            var selectedJson = repository.ExportSelected(["job.c", "job.a", "job.a", "job.missing"]);
+            var parsed = ScheduleImportParser.Parse(selectedJson);
+            var errors = string.Join("; ", parsed.Errors.Select(e => $"{e.Field}: {e.Message}"));
+
+            Assert.True(parsed.IsValid, errors);
+            Assert.Equal(["job.a", "job.c"], ActivityIds(selectedJson));
+            Assert.Equal("[]", repository.ExportSelected([]));
+        }
+
+        [Fact]
         public void Update_allows_window_and_start_changes_before_job_has_started()
         {
             var created = repository.Create(Schedule("job.catalog", paused: false));

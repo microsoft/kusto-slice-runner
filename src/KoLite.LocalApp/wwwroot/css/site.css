@@ -644,6 +644,41 @@ h3 { font-size: 16px; margin-bottom: 10px; }
 .alert.warning { background: #fff8c5; border-color: rgba(154, 103, 0, 0.35); color: var(--warning); }
 .alert.danger { background: #ffebe9; border-color: rgba(207, 34, 46, 0.35); }
 
+.bulk-summary-banner {
+  background: #ddf4ff;
+  border: 1px solid rgba(9, 105, 218, 0.35);
+  border-radius: 6px;
+  color: var(--text);
+  margin-bottom: 16px;
+  padding: 10px 12px;
+}
+
+.job-col-select { width: 40px; }
+.select-col, .select-cell { text-align: center; padding-left: 8px; padding-right: 8px; }
+.select-cell input, .select-col input { cursor: pointer; margin: 0; }
+
+.bulk-action-bar {
+  align-items: center;
+  background: var(--surface);
+  border: 1px solid var(--primary);
+  border-radius: 8px;
+  box-shadow: 0 1px 4px rgba(27, 31, 36, 0.12);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: space-between;
+  margin-bottom: 16px;
+  padding: 10px 14px;
+  position: sticky;
+  top: 8px;
+  z-index: 5;
+}
+.bulk-action-bar[hidden] { display: none; }
+.bulk-action-count { font-weight: 600; }
+.bulk-action-form { align-items: center; display: flex; gap: 8px; }
+.bulk-action-inputs { display: none; }
+
+
 @media (max-width: 900px) {
   .page-heading, .card-header { flex-direction: column; align-items: flex-start; }
   .grid-two, .summary-grid, .form-grid { grid-template-columns: 1fr; }

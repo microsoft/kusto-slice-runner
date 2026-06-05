@@ -26,6 +26,13 @@ You are the KO Lite maintainer for this repository. Use this agent for KO Lite i
 - Graceful drain shutdown should stop new scheduling/claims, let active work record final state, then stop the local app. Ctrl+C/process kill is the emergency path.
 - Rerun flow is intentionally two-step: KO Lite suggests Kusto cleanup commands, but users execute cleanup manually before acknowledging rerun.
 
+## Running and inspecting the local app
+
+- Run the app: `dotnet run --project .\src\KoLite.LocalApp\KoLite.LocalApp.csproj`. For a safe local UI session, append the flags from `DEVELOPMENT.md` (e.g., `--KoLite:Scheduler:Enabled=false`, an explicit `--ConnectionStrings:KoLiteSqlite=...`).
+- Default endpoint is `http://127.0.0.1:5057`; health/status is at `http://127.0.0.1:5057/status/health`.
+- The app calls `UseUrls(...)` in `Program.cs` with a default of `http://127.0.0.1:5057`, so the `--urls` switch / `ASPNETCORE_URLS` are overridden and ignored. To actually move the endpoint, set the `KoLite:Urls` configuration key (e.g., `--KoLite:Urls=http://127.0.0.1:5099`). Treat it as one local instance on `:5057` at a time; stop the existing instance before starting another.
+- To find a running instance (for example, the process holding a build-output lock): `Get-NetTCPConnection -LocalPort 5057 -State Listen` and read `OwningProcess`. Stop it gracefully with `scripts\Stop-KoLiteApp.ps1` (see the file-lock section); only ever kill by confirmed PID.
+
 ## Maintenance workflow
 
 1. Classify the task before editing:
@@ -68,6 +75,10 @@ You are the KO Lite maintainer for this repository. Use this agent for KO Lite i
 - Keep UI changes consistent with existing Razor Pages and `Ui` read-model patterns.
 - Update page models, read models, tests, and navigation links together when changing a flow.
 - Keep long-running or dangerous actions explicit and reviewable in the UI.
+- Static assets under `src\KoLite.LocalApp\wwwroot` (notably `js\site.js` and `css\site.css`) are cache-busted with `asp-append-version="true"` in `_Layout.cshtml`. Preserve that on existing and new asset tags. A stale browser-cached `site.js`/`site.css` is the most likely cause of "my JS/CSS change isn't taking effect" and can mimic functional bugs (e.g., a handler that never runs).
+- `dotnet test` only asserts server-rendered HTML; it does **not** execute `site.js`. Treat markup assertions as necessary but not sufficient for behavior. For DOM/interaction changes, verify with a jsdom simulation (stub `Chart`) or a browser/Playwright pass (`.playwright-mcp` holds prior browser-verification artifacts).
+- Before inserting a new top-level element into a dashboard region, check the parent's layout in `site.css` first — for example `.jobs-with-tags` is a fixed two-column CSS grid, so an extra child breaks the layout unless it is placed outside the grid.
+- Web tests live in `tests\KoLite.LocalApp.Tests\LocalAppWebTests.cs`. Use `ReadFormToken` + `PostForm`/`PostFormAjax`; for endpoints that bind arrays from repeated form keys (such as `jobIds[]`), use the `PostFormValues` helper.
 
 ### Operational scripts
 
@@ -98,6 +109,7 @@ You are the KO Lite maintainer for this repository. Use this agent for KO Lite i
   2. The user stops the app themselves, then you continue.
   3. Continue without rebuilding (proceed with existing binaries or defer the build and tests) if they prefer.
 - Only stop a process with explicit user consent. Prefer the graceful `scripts\Stop-KoLiteApp.ps1` drain over a hard kill so active work can record final state; if a hard kill is unavoidable, use `Stop-Process -Id <PID>` for the confirmed process id (never name-based kills).
+- After editing `.cshtml` views or `wwwroot` static assets, a rebuild **and** an app restart are required to see the change: Razor views are build-compiled and there is no runtime recompilation by default. If a rendered page looks wrong (for example an apparently missing antiforgery token or a handler that does not fire), first confirm the running instance is the latest build (compare the process start time to the built DLL timestamp, or restart it) before debugging the source.
 
 ## Response style
 

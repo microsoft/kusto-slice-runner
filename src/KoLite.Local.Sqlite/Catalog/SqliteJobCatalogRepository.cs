@@ -188,6 +188,17 @@ namespace KoLite.Local.Sqlite.Catalog
             return "[" + string.Join(",", included.Select(record => record.ScheduleJson)) + "]";
         }
 
+        public string ExportSelected(IReadOnlyCollection<string> jobIds)
+        {
+            var selected = jobIds is null || jobIds.Count == 0
+                ? new HashSet<string>(StringComparer.Ordinal)
+                : jobIds.ToHashSet(StringComparer.Ordinal);
+            var included = selected.Count == 0
+                ? Enumerable.Empty<JobCatalogRecord>()
+                : List().Where(record => selected.Contains(record.JobId));
+            return "[" + string.Join(",", included.Select(record => record.ScheduleJson)) + "]";
+        }
+
         public bool HasStarted(string jobId)
         {
             using var connection = connectionFactory.OpenConnection();

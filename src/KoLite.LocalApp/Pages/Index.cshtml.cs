@@ -17,6 +17,8 @@ namespace KoLite.LocalApp.Pages
         public string Range { get; private set; } = "1d";
         public IReadOnlyList<ChartRangeLink> RangeLinks => ChartRangeOptions.Links;
 
+        public string? BulkOperationSummary => TempData[Catalog.CatalogBulkOperations.TempDataKey] as string;
+
         public void OnGet(string? range, [FromQuery(Name = "tag")] string[]? tags)
         {
             Range = ChartRangeOptions.Normalize(range);

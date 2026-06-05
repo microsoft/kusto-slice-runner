@@ -64,6 +64,12 @@ After a job has execution history, `activityId`, `queryWindowSize`, and `startFr
 
 See [schedule-json.md](schedule-json.md) for the schedule contract.
 
+## Bulk actions on the dashboard
+
+The home dashboard supports multi-select bulk actions on the **Active jobs** and **Completed jobs** sections. Use the per-row checkboxes or a section's header checkbox to select jobs; a contextual action bar appears only while at least one job is selected and offers **Pause**, **Resume**, **Soft delete**, and **Export** for the current selection. The Soft-deleted section is not selectable. Selection respects the dashboard text filter — filtered-out rows are excluded — and collapsing the Inactive jobs group keeps the current selection.
+
+Bulk Pause/Resume/Soft delete apply with no extra confirmation (soft delete is reversible from the Soft-deleted section via **Restore**). They honor the same optimistic-concurrency model as the single-row actions: each selected row carries the catalog version shown on the page, and any job that changed since the page loaded — or is already in the requested state, soft-deleted, or missing — is **skipped** rather than forced. After the action, a summary banner reports how many jobs changed and how many were skipped. Bulk **Export** downloads an import-compatible JSON array (`ko-lite-jobs.json`) containing only the selected jobs, in catalog order.
+
 ## Published output
 
 Publish to an isolated local folder when you want to run from compiled output instead of `dotnet run`:

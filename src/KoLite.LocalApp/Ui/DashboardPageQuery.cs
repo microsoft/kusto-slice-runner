@@ -34,6 +34,7 @@ namespace KoLite.LocalApp.Ui
         bool EnableClientFilter = false,
         bool EnableColumnResize = false,
         bool EnableInlineToggle = false,
+        bool EnableBulkSelect = false,
         string? TableKey = null);
 
     public sealed record JobListItem(

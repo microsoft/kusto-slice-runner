@@ -259,7 +259,7 @@ namespace KoLite.LocalApp.Tests
             Assert.Contains(">Healthy</span>", dashboard);
             Assert.Contains("Success Rate By Function", dashboard);
             Assert.Contains("Success Rate After Retries by function", dashboard);
-            Assert.Contains("src=\"/lib/chartjs/chart.umd.min.js\"", dashboard);
+            Assert.Contains("src=\"/lib/chartjs/chart.umd.min.js?v=", dashboard);
             Assert.Contains("class=\"ko-table job-table job-table-dashboard\"", dashboard);
             Assert.Contains("data-dashboard-filter-input=\"true\"", dashboard);
             Assert.Contains("data-dashboard-job-table=\"true\"", dashboard);
@@ -890,6 +890,203 @@ namespace KoLite.LocalApp.Tests
         }
 
         [Fact]
+        public async Task Dashboard_renders_bulk_select_controls_only_on_active_and_completed_sections()
+        {
+            var catalog = new SqliteJobCatalogRepository(sqlite);
+            catalog.Create(Schedule("job.alpha", "AlphaFunction", isPaused: false));
+            var soft = catalog.Create(Schedule("job.soft", "SoftFunction", isPaused: false));
+            new SqliteJobLifecycleService(sqlite, catalog).SoftDelete("job.soft", soft.CatalogVersion, "web-test", "exclude");
+            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+
+            var dashboard = await client.GetStringAsync("/");
+            var catalogPage = await client.GetStringAsync("/catalog");
+
+            Assert.Contains("data-bulk-bar", dashboard);
+            Assert.Contains("data-bulk-select-all data-bulk-section=\"active\"", dashboard);
+            Assert.Contains("data-bulk-select value=\"job.alpha\" data-expected-version=\"1\"", dashboard);
+            Assert.Contains("aria-label=\"Select job.alpha\"", dashboard);
+            Assert.Contains("formaction=\"/catalog/bulk/pause\"", dashboard);
+            Assert.Contains("formaction=\"/catalog/bulk/resume\"", dashboard);
+            Assert.Contains("formaction=\"/catalog/bulk/soft-delete\"", dashboard);
+            Assert.Contains("formaction=\"/catalog/bulk/export\"", dashboard);
+            // The bulk form must carry an antiforgery token so the no-fetch POST submit is accepted.
+            var bulkForm = dashboard.Substring(dashboard.IndexOf("bulk-action-form", StringComparison.Ordinal));
+            bulkForm = bulkForm.Substring(0, bulkForm.IndexOf("</form>", StringComparison.Ordinal));
+            Assert.Contains("__RequestVerificationToken", bulkForm);
+            // The action bar must sit outside the two-column jobs grid so it does not break the layout.
+            Assert.True(
+                dashboard.IndexOf("data-bulk-bar", StringComparison.Ordinal) < dashboard.IndexOf("data-dashboard-filter-root", StringComparison.Ordinal),
+                "The bulk action bar should render before (outside) the jobs grid.");
+            // The soft-deleted section must not offer bulk selection.
+            Assert.DoesNotContain("data-bulk-select value=\"job.soft\"", dashboard);
+            // The catalog page does not get the bulk experience at all.
+            Assert.DoesNotContain("data-bulk-bar", catalogPage);
+            Assert.DoesNotContain("data-bulk-select-all", catalogPage);
+        }
+
+        [Fact]
+        public async Task Dashboard_bulk_pause_disables_selected_jobs_and_skips_soft_deleted()
+        {
+            var catalog = new SqliteJobCatalogRepository(sqlite);
+            catalog.Create(Schedule("job.one", "OneFunction", isPaused: false));
+            catalog.Create(Schedule("job.two", "TwoFunction", isPaused: false));
+            var soft = catalog.Create(Schedule("job.soft", "SoftFunction", isPaused: false));
+            new SqliteJobLifecycleService(sqlite, catalog).SoftDelete("job.soft", soft.CatalogVersion, "web-test", "exclude");
+            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+            var token = await ReadFormToken(client, "/");
+
+            var response = await PostFormValues(client, "/catalog/bulk/pause", token,
+            [
+                new("jobIds", "job.one"), new("expectedVersions", "1"),
+                new("jobIds", "job.two"), new("expectedVersions", "1"),
+                new("jobIds", "job.soft"), new("expectedVersions", "2")
+            ]);
+
+            Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
+            Assert.Equal("/", response.Headers.Location?.OriginalString);
+            Assert.False(catalog.Get("job.one")?.IsEnabled);
+            Assert.False(catalog.Get("job.two")?.IsEnabled);
+            // Soft-deleted job is skipped, so no further catalog-version bump beyond the soft delete (version 2).
+            Assert.Equal(2, catalog.Get("job.soft")?.CatalogVersion);
+        }
+
+        [Fact]
+        public async Task Dashboard_bulk_resume_enables_selected_paused_jobs()
+        {
+            var catalog = new SqliteJobCatalogRepository(sqlite);
+            catalog.Create(Schedule("job.one", "OneFunction", isPaused: true));
+            catalog.Create(Schedule("job.two", "TwoFunction", isPaused: true));
+            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+            var token = await ReadFormToken(client, "/");
+
+            var response = await PostFormValues(client, "/catalog/bulk/resume", token,
+            [
+                new("jobIds", "job.one"), new("expectedVersions", "1"),
+                new("jobIds", "job.two"), new("expectedVersions", "1")
+            ]);
+
+            Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
+            Assert.True(catalog.Get("job.one")?.IsEnabled);
+            Assert.True(catalog.Get("job.two")?.IsEnabled);
+        }
+
+        [Fact]
+        public async Task Dashboard_bulk_soft_delete_marks_selected_jobs_soft_deleted()
+        {
+            var catalog = new SqliteJobCatalogRepository(sqlite);
+            catalog.Create(Schedule("job.one", "OneFunction", isPaused: false));
+            catalog.Create(Schedule("job.two", "TwoFunction", isPaused: false));
+            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+            var token = await ReadFormToken(client, "/");
+
+            var response = await PostFormValues(client, "/catalog/bulk/soft-delete", token,
+            [
+                new("jobIds", "job.one"), new("expectedVersions", "1"),
+                new("jobIds", "job.two"), new("expectedVersions", "1")
+            ]);
+
+            Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
+            var states = new LifecycleReadModel(sqlite).GetLatestStates();
+            Assert.True(states["job.one"].IsSoftDeleted);
+            Assert.True(states["job.two"].IsSoftDeleted);
+        }
+
+        [Fact]
+        public async Task Dashboard_bulk_export_downloads_selected_jobs_in_catalog_order()
+        {
+            var catalog = new SqliteJobCatalogRepository(sqlite);
+            catalog.Create(Schedule("job.b", "BFunction", isPaused: false));
+            catalog.Create(Schedule("job.a", "AFunction", isPaused: false));
+            catalog.Create(Schedule("job.c", "CFunction", isPaused: false));
+            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+            var token = await ReadFormToken(client, "/");
+
+            using var response = await PostFormValues(client, "/catalog/bulk/export", token,
+            [
+                new("jobIds", "job.b"),
+                new("jobIds", "job.a")
+            ]);
+            var body = await response.Content.ReadAsStringAsync();
+            using var document = JsonDocument.Parse(body);
+            var ids = document.RootElement.EnumerateArray()
+                .Select(item => item.GetProperty("activityId").GetString() ?? string.Empty)
+                .ToArray();
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Equal("application/json", response.Content.Headers.ContentType?.MediaType);
+            Assert.Equal("attachment", response.Content.Headers.ContentDisposition?.DispositionType);
+            Assert.Equal("ko-lite-jobs.json", response.Content.Headers.ContentDisposition?.FileName);
+            Assert.Equal(["job.a", "job.b"], ids);
+        }
+
+        [Fact]
+        public async Task Dashboard_bulk_pause_dedupes_skips_missing_and_reports_version_conflicts()
+        {
+            var catalog = new SqliteJobCatalogRepository(sqlite);
+            catalog.Create(Schedule("job.already", "AlreadyFunction", isPaused: false));
+            catalog.Create(Schedule("job.conflict", "ConflictFunction", isPaused: false));
+            // Bump job.conflict to version 3 while leaving it enabled, so an expectedVersion of 1 is stale.
+            catalog.SetEnabled("job.conflict", enabled: false, expectedVersion: 1);
+            catalog.SetEnabled("job.conflict", enabled: true, expectedVersion: 2);
+            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+            var token = await ReadFormToken(client, "/");
+
+            var response = await PostFormValues(client, "/catalog/bulk/pause", token,
+            [
+                new("jobIds", "job.already"), new("expectedVersions", "1"),
+                new("jobIds", "job.already"), new("expectedVersions", "1"),
+                new("jobIds", "job.conflict"), new("expectedVersions", "1"),
+                new("jobIds", "job.missing"), new("expectedVersions", "1")
+            ]);
+
+            Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
+            // job.already paused exactly once (version 1 -> 2), despite the duplicate id.
+            Assert.False(catalog.Get("job.already")?.IsEnabled);
+            Assert.Equal(2, catalog.Get("job.already")?.CatalogVersion);
+            // job.conflict left untouched because the submitted version was stale.
+            Assert.True(catalog.Get("job.conflict")?.IsEnabled);
+            Assert.Equal(3, catalog.Get("job.conflict")?.CatalogVersion);
+
+            var dashboard = await client.GetStringAsync("/");
+            Assert.Contains("bulk-summary-banner", dashboard);
+            Assert.Contains("Paused 1 job(s).", dashboard);
+            Assert.Contains("1 already in the requested state or no longer eligible.", dashboard);
+            Assert.Contains("1 skipped because they changed since the page loaded.", dashboard);
+        }
+
+        [Fact]
+        public async Task Dashboard_bulk_endpoints_require_post_and_csrf_token()
+        {
+            new SqliteJobCatalogRepository(sqlite).Create(Schedule("job.safe", "SafeFunction", isPaused: false));
+            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+
+            Assert.Equal(HttpStatusCode.MethodNotAllowed, (await client.GetAsync("/catalog/bulk/pause")).StatusCode);
+            Assert.Equal(HttpStatusCode.MethodNotAllowed, (await client.GetAsync("/catalog/bulk/export")).StatusCode);
+
+            var noToken = await client.PostAsync("/catalog/bulk/pause", new FormUrlEncodedContent(new[]
+            {
+                new KeyValuePair<string, string>("jobIds", "job.safe"),
+                new KeyValuePair<string, string>("expectedVersions", "1")
+            }));
+            Assert.Equal(HttpStatusCode.BadRequest, noToken.StatusCode);
+            Assert.True(new SqliteJobCatalogRepository(sqlite).Get("job.safe")?.IsEnabled);
+        }
+
+        [Fact]
+        public async Task Dashboard_bulk_pause_with_no_selection_is_a_safe_noop()
+        {
+            var catalog = new SqliteJobCatalogRepository(sqlite);
+            catalog.Create(Schedule("job.one", "OneFunction", isPaused: false));
+            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+            var token = await ReadFormToken(client, "/");
+
+            var response = await PostFormValues(client, "/catalog/bulk/pause", token, Array.Empty<KeyValuePair<string, string>>());
+
+            Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
+            Assert.True(catalog.Get("job.one")?.IsEnabled);
+        }
+
+        [Fact]
         public async Task Import_page_rejects_invalid_array_without_persisting_valid_items()
         {
             using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
@@ -1447,6 +1644,20 @@ namespace KoLite.LocalApp.Tests
             using var request = new HttpRequestMessage(HttpMethod.Post, path)
             {
                 Content = new FormUrlEncodedContent(values)
+            };
+            if (!string.IsNullOrEmpty(token.Cookie)) request.Headers.Add("Cookie", token.Cookie);
+            return await client.SendAsync(request);
+        }
+
+        private static async Task<HttpResponseMessage> PostFormValues(HttpClient client, string path, FormToken token, IEnumerable<KeyValuePair<string, string>> values)
+        {
+            var fields = new List<KeyValuePair<string, string>>(values)
+            {
+                new("__RequestVerificationToken", token.Value)
+            };
+            using var request = new HttpRequestMessage(HttpMethod.Post, path)
+            {
+                Content = new FormUrlEncodedContent(fields)
             };
             if (!string.IsNullOrEmpty(token.Cookie)) request.Headers.Add("Cookie", token.Cookie);
             return await client.SendAsync(request);
