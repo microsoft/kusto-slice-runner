@@ -12,19 +12,12 @@ else
 {
     var data = Model.Data;
     var charts = Model.Charts;
-    var showPausedIndicator = data.Lifecycle?.IsSoftDeleted != true && (!data.Job.IsEnabled || data.Definition.IsPaused);
     <div class="page-heading">
         <div>
             <h1>@data.Job.JobId</h1>
             <p class="muted">@data.Definition.FunctionName -> @data.Definition.OutputTable</p>
         </div>
-        @if (showPausedIndicator)
-        {
-            <div class="paused-job-indicator" role="status">
-                <span class="badge badge-warning">Paused</span>
-                <span>Scheduling is paused. New slices and queued retries will not run until this job is resumed.</span>
-            </div>
-        }
+        <partial name="_PausedIndicator" model="data" />
         <div class="button-row">
             <a class="btn" href="/">Back to jobs</a>
             <a class="btn" href="/catalog/@Uri.EscapeDataString(data.Job.JobId)/export">Export</a>
@@ -80,7 +73,7 @@ else
                 <div class="card-header">
                     <div>
                         <h2>Slice history</h2>
-                        <p class="muted">Each cell is one scheduled slice. Colors distinguish completed, completed after retry, queued, running, paused, failed, and missing work.</p>
+                        <p class="muted">Each cell is one scheduled slice. Colors distinguish completed, completed after retry, queued, running, waiting, failed, and missing work.</p>
                     </div>
                     <a class="btn small" href="/jobs/@Uri.EscapeDataString(data.Job.JobId)/history">Open full history</a>
                 </div>

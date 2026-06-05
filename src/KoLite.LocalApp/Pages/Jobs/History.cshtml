@@ -13,8 +13,9 @@ else
     <div class="page-heading">
         <div>
             <h1>Slice History: @Model.Data.Job.JobId</h1>
-            <p class="muted">SQLite-backed slice status timeline. Queued retry work on a paused job appears as Paused.</p>
+            <p class="muted">SQLite-backed slice status timeline.</p>
         </div>
+        <partial name="_PausedIndicator" model="Model.Data" />
         <a class="btn" href="/jobs/@Uri.EscapeDataString(Model.Data.Job.JobId)">Back to details</a>
     </div>
     <section class="card">

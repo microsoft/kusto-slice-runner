@@ -1,0 +1,9 @@
+@model JobDetailsPageData
+
+@if (Model.Lifecycle?.IsSoftDeleted != true && (!Model.Job.IsEnabled || Model.Definition.IsPaused))
+{
+    <div class="paused-job-indicator" role="status">
+        <span class="badge badge-warning">Paused</span>
+        <span>Scheduling is paused. New slices and queued retries will not run until this job is resumed.</span>
+    </div>
+}

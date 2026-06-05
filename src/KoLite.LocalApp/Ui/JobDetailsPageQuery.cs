@@ -81,7 +81,7 @@ namespace KoLite.LocalApp.Ui
             lifecycleStates.TryGetValue(jobId, out var lifecycleState);
             var statuses = readModels.GetSliceStatus(jobId);
             var queueItems = queue.List(jobId);
-            var sliceHistory = BuildSliceHistory(job.Definition, job.IsEnabled, statuses, queueItems, fromUtc, toUtc, sliceHistoryCellLimit);
+            var sliceHistory = BuildSliceHistory(job.Definition, statuses, queueItems, fromUtc, toUtc, sliceHistoryCellLimit);
             return new JobDetailsPageData(
                 job,
                 job.Definition,
@@ -120,7 +120,7 @@ namespace KoLite.LocalApp.Ui
                 operationalDetails.GetEvents(jobId, sliceStartUtc, sliceEndUtc, 100));
         }
 
-        private static SliceHistoryBuildResult BuildSliceHistory(JobDefinition definition, bool jobEnabled, IReadOnlyList<SliceStatusReadout> statuses, IReadOnlyList<DurableWorkItem> queueItems, DateTimeOffset? fromUtc, DateTimeOffset? toUtc, int cellLimit)
+        private static SliceHistoryBuildResult BuildSliceHistory(JobDefinition definition, IReadOnlyList<SliceStatusReadout> statuses, IReadOnlyList<DurableWorkItem> queueItems, DateTimeOffset? fromUtc, DateTimeOffset? toUtc, int cellLimit)
         {
             var now = DateTimeOffset.UtcNow;
             var queryWindow = definition.QueryWindowSize;
@@ -152,15 +152,14 @@ namespace KoLite.LocalApp.Ui
             var fixedRowSpan = FixedRowSpanFor(queryWindow);
             if (fixedRowSpan is { } rowSpan && rowSpan.Ticks % queryWindow.Ticks == 0)
             {
-                return BuildFixedSpanSliceHistory(definition, jobEnabled, statusByStart, activeQueueByStart, start, end, now, cellLimit, rowSpan);
+                return BuildFixedSpanSliceHistory(definition, statusByStart, activeQueueByStart, start, end, now, cellLimit, rowSpan);
             }
 
-            return BuildSequentialSliceHistory(definition, jobEnabled, statusByStart, activeQueueByStart, start, end, now, cellLimit);
+            return BuildSequentialSliceHistory(definition, statusByStart, activeQueueByStart, start, end, now, cellLimit);
         }
 
         private static SliceHistoryBuildResult BuildFixedSpanSliceHistory(
             JobDefinition definition,
-            bool jobEnabled,
             IReadOnlyDictionary<DateTimeOffset, SliceStatusReadout> statusByStart,
             IReadOnlyDictionary<DateTimeOffset, DurableWorkItem> activeQueueByStart,
             DateTimeOffset start,
@@ -188,7 +187,7 @@ namespace KoLite.LocalApp.Ui
                 var firstSliceStart = FirstSliceStartAtOrAfter(row, definition.StartFrom, definition.QueryWindowSize);
                 for (var i = 0; i < cellsPerRow; i++)
                 {
-                    cells.Add(BuildSliceHistoryCell(definition, jobEnabled, statusByStart, activeQueueByStart, firstSliceStart.AddTicks(definition.QueryWindowSize.Ticks * i), now));
+                    cells.Add(BuildSliceHistoryCell(definition, statusByStart, activeQueueByStart, firstSliceStart.AddTicks(definition.QueryWindowSize.Ticks * i), now));
                 }
 
                 rows.Add(new SliceHistoryRow(RowLabel(row, rowSpan), cells));
@@ -199,7 +198,6 @@ namespace KoLite.LocalApp.Ui
 
         private static SliceHistoryBuildResult BuildSequentialSliceHistory(
             JobDefinition definition,
-            bool jobEnabled,
             IReadOnlyDictionary<DateTimeOffset, SliceStatusReadout> statusByStart,
             IReadOnlyDictionary<DateTimeOffset, DurableWorkItem> activeQueueByStart,
             DateTimeOffset start,
@@ -221,7 +219,7 @@ namespace KoLite.LocalApp.Ui
             var cells = new List<SliceHistoryCell>();
             for (var cursor = start; cursor < end && cells.Count < cellLimit; cursor = cursor.Add(queryWindow))
             {
-                cells.Add(BuildSliceHistoryCell(definition, jobEnabled, statusByStart, activeQueueByStart, cursor, now));
+                cells.Add(BuildSliceHistoryCell(definition, statusByStart, activeQueueByStart, cursor, now));
             }
 
             var rows = cells
@@ -237,7 +235,6 @@ namespace KoLite.LocalApp.Ui
 
         private static SliceHistoryCell BuildSliceHistoryCell(
             JobDefinition definition,
-            bool jobEnabled,
             IReadOnlyDictionary<DateTimeOffset, SliceStatusReadout> statusByStart,
             IReadOnlyDictionary<DateTimeOffset, DurableWorkItem> activeQueueByStart,
             DateTimeOffset sliceStart,
@@ -247,7 +244,7 @@ namespace KoLite.LocalApp.Ui
             var sliceEnd = sliceStart.Add(definition.QueryWindowSize);
             statusByStart.TryGetValue(sliceStart, out var status);
             activeQueueByStart.TryGetValue(sliceStart, out var activeQueueItem);
-            var state = VisualState(jobEnabled, status, activeQueueItem, definition, sliceStart, sliceEnd, now);
+            var state = VisualState(status, activeQueueItem, definition, sliceStart, sliceEnd, now);
             var attempt = DisplayAttempt(status, activeQueueItem);
             var css = AppFormatting.StateCss(state);
             var statusLabel = AppFormatting.StatusLabel(state);
@@ -292,7 +289,7 @@ namespace KoLite.LocalApp.Ui
         private static int DisplayAttempt(SliceStatusReadout? status, DurableWorkItem? activeQueueItem) =>
             Math.Max(Math.Max(status?.Attempt ?? 0, status?.SuccessfulAttempt ?? 0), activeQueueItem?.Attempts ?? 0);
 
-        private static string VisualState(bool jobEnabled, SliceStatusReadout? status, DurableWorkItem? activeQueueItem, JobDefinition definition, DateTimeOffset sliceStart, DateTimeOffset sliceEnd, DateTimeOffset now)
+        private static string VisualState(SliceStatusReadout? status, DurableWorkItem? activeQueueItem, JobDefinition definition, DateTimeOffset sliceStart, DateTimeOffset sliceEnd, DateTimeOffset now)
         {
             var durableState = status?.Status;
             if (string.Equals(durableState, "Completed", StringComparison.Ordinal))
@@ -317,12 +314,12 @@ namespace KoLite.LocalApp.Ui
 
             if (activeQueueItem?.State == DurableWorkQueueState.Queued)
             {
-                return jobEnabled ? "Queued" : "Paused";
+                return "Queued";
             }
 
             if (string.Equals(durableState, "Queued", StringComparison.Ordinal))
             {
-                return jobEnabled ? "Queued" : "Paused";
+                return "Queued";
             }
 
             if (string.Equals(durableState, "Failed", StringComparison.Ordinal))
@@ -330,7 +327,12 @@ namespace KoLite.LocalApp.Ui
                 return "Failed";
             }
 
-            return durableState ?? MissingState(definition, sliceStart, sliceEnd, now);
+            if (durableState is null || string.Equals(durableState, "Missing", StringComparison.Ordinal))
+            {
+                return MissingState(definition, sliceStart, sliceEnd, now);
+            }
+
+            return durableState;
         }
 
         private static bool IsCompletedAfterRetry(SliceStatusReadout? status)
@@ -362,7 +364,7 @@ namespace KoLite.LocalApp.Ui
 
             return sliceEnd > now.ToUniversalTime().Subtract(definition.DelayFromUtcNow)
                 ? "NotYetEligible"
-                : "Missing";
+                : "WaitingToSchedule";
         }
 
         private static TimeSpan? FixedRowSpanFor(TimeSpan queryWindow)

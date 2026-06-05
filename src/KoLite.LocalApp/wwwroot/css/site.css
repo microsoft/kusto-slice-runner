@@ -15,8 +15,7 @@
   --slice-stat-red: #cf222e;
   --slice-stat-queued: #8250df;
   --slice-stat-running: #0969da;
-  --slice-stat-paused: #6e7781;
-  --slice-stat-blocked: #afb8c1;
+  --slice-stat-waiting: #afb8c1;
   --slice-stat-processing: #0969da;
   --slice-stat-border: #8c959f;
 }
@@ -553,8 +552,11 @@ h3 { font-size: 16px; margin-bottom: 10px; }
 .processing { background-color: var(--slice-stat-running); }
 .queued { background-color: var(--slice-stat-queued); }
 .running { background-color: var(--slice-stat-running); }
-.paused { background-color: var(--slice-stat-paused); }
-.blocked { background-color: var(--slice-stat-blocked); }
+.waiting { background-color: var(--slice-stat-waiting); }
+.waiting-scheduled {
+  background-color: var(--slice-stat-waiting);
+  background-image: repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.45) 0, rgba(255, 255, 255, 0.45) 2px, transparent 2px, transparent 5px);
+}
 .missing { background-color: #fff; }
 .AllRunsSucceeded-SomeRetries, .SomeSucceededWithRetries-SomeSucceeded {
   background: linear-gradient(135deg, var(--slice-stat-yellow) 0%, var(--slice-stat-yellow) 48%, var(--slice-stat-border) 50%, var(--slice-stat-green) 52%, var(--slice-stat-green) 100%);
