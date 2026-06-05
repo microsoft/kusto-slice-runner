@@ -41,7 +41,17 @@ code { background: #f6f8fa; border: 1px solid var(--border); border-radius: 4px;
 }
 .topbar a { color: #fff; }
 .topbar nav { display: flex; gap: 14px; flex-wrap: wrap; }
-.brand { font-weight: 700; font-size: 18px; }
+.brand { font-weight: 700; font-size: 18px; display: inline-flex; align-items: center; gap: 10px; }
+.brand-logo {
+  height: 34px;
+  width: 34px;
+  box-sizing: content-box;
+  padding: 5px;
+  background: #fff;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 7px;
+  display: block;
+}
 .container { max-width: 1480px; margin: 0 auto; padding: 24px; }
 
 .page-heading {
