@@ -90,6 +90,15 @@ You are the KO Lite maintainer for this repository. Use this agent for KO Lite i
 - For script changes, run the script in dry-run or help mode when available.
 - Documentation-only or agent-profile-only changes do not require KO Lite build/test unless they alter validated examples or commands.
 
+### Build blocked by a running app (file lock)
+
+- `dotnet build` can fail with MSB3026/MSB3027 "file is being used by another process" errors on `KoLite.LocalApp.exe`/`.dll` when a KO Lite app instance is already running and holding the build output. This is an environment lock, not a code error — the compile itself usually already succeeded.
+- Do not stop or kill the process automatically. Stop and ask the user how to proceed, offering options such as:
+  1. Gracefully stop the running app with `scripts\Stop-KoLiteApp.ps1` (drain shutdown), then rebuild. Use `-DryRun` to preview, and pass `-BaseUrl`/`-Reason` if the instance is not on the default endpoint.
+  2. The user stops the app themselves, then you continue.
+  3. Continue without rebuilding (proceed with existing binaries or defer the build and tests) if they prefer.
+- Only stop a process with explicit user consent. Prefer the graceful `scripts\Stop-KoLiteApp.ps1` drain over a hard kill so active work can record final state; if a hard kill is unavoidable, use `Stop-Process -Id <PID>` for the confirmed process id (never name-based kills).
+
 ## Response style
 
 - Lead with the outcome and the meaningful change.
