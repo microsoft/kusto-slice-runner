@@ -40,7 +40,7 @@ code { background: #f6f8fa; border: 1px solid var(--border); border-radius: 4px;
   padding: 10px 24px;
 }
 .topbar a { color: #fff; }
-.topbar nav { display: flex; gap: 14px; flex-wrap: wrap; }
+.topbar nav { display: flex; gap: 14px; flex-wrap: wrap; font-size: 18px; }
 .brand { font-weight: 700; font-size: 18px; display: inline-flex; align-items: center; gap: 10px; }
 .brand-logo {
   height: 34px;
@@ -206,6 +206,36 @@ h3 { font-size: 16px; margin-bottom: 10px; }
 .btn.small { padding: 3px 7px; font-size: 12px; }
 .inline-form { display: inline; margin: 0; }
 
+.icon {
+  width: 1em;
+  height: 1em;
+  fill: currentColor;
+  flex: none;
+  vertical-align: -0.125em;
+}
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.btn.icon-only {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+.btn.icon-only.small { padding: 4px 6px; }
+.btn .icon { margin-right: 5px; }
+.btn .icon:last-child { margin-right: 0; }
+.btn.icon-only .icon { margin-right: 0; }
+
 .table-wrap { overflow-x: auto; }
 .ko-table {
   width: 100%;
@@ -213,10 +243,10 @@ h3 { font-size: 16px; margin-bottom: 10px; }
 }
 .job-table {
   table-layout: fixed;
-  min-width: 1180px;
+  min-width: 1040px;
 }
 .job-table-dashboard {
-  min-width: 960px;
+  min-width: 820px;
 }
 .jobs-with-tags {
   align-items: stretch;
@@ -281,7 +311,7 @@ h3 { font-size: 16px; margin-bottom: 10px; }
 .job-col-progress { width: 210px; }
 .job-col-next { width: 170px; }
 .job-col-updated { width: 150px; }
-.job-col-actions { width: 300px; }
+.job-col-actions { width: 160px; }
 .job-table .status-cell {
   white-space: nowrap;
 }

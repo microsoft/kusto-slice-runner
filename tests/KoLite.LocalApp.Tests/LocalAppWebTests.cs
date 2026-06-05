@@ -267,6 +267,14 @@ namespace KoLite.LocalApp.Tests
             Assert.Contains("data-dashboard-search=\"job.web ", dashboard);
             Assert.Contains("data-dashboard-resizable=\"true\"", dashboard);
             Assert.Contains("class=\"column-resize-handle\"", dashboard);
+            Assert.Contains("<symbol id=\"icon-edit\"", dashboard);
+            Assert.Contains("class=\"btn small icon-only\" title=\"Edit\" aria-label=\"Edit\"", dashboard);
+            Assert.Contains("<use href=\"#icon-edit\">", dashboard);
+            Assert.Contains("<span class=\"visually-hidden\">Edit</span>", dashboard);
+            Assert.Contains("aria-label=\"Copy\"", dashboard);
+            Assert.DoesNotContain("/catalog/job.web/export", dashboard);
+            Assert.DoesNotContain("aria-label=\"Export\"", dashboard);
+            Assert.Contains(">New job</span>", dashboard);
             Assert.DoesNotContain("class=\"success-chart-svg\"", dashboard);
             Assert.DoesNotContain("class=\"success-chart-marker\"", dashboard);
             Assert.DoesNotContain("View point details", dashboard);
@@ -275,7 +283,7 @@ namespace KoLite.LocalApp.Tests
             Assert.DoesNotContain("Function / Output", dashboard);
             Assert.DoesNotContain("<th>Updated</th>", dashboard);
             Assert.DoesNotContain("<th>Progress</th>", dashboard);
-            Assert.DoesNotContain("/jobs/job.web/history\">History</a>", dashboard);
+            Assert.DoesNotContain("/jobs/job.web/history", dashboard);
             Assert.DoesNotContain("Web Folder", dashboard);
             Assert.DoesNotContain(" running,", dashboard);
             Assert.DoesNotContain("KO.Web-style local dashboard backed by SQLite.", dashboard);
@@ -658,7 +666,8 @@ namespace KoLite.LocalApp.Tests
             Assert.Contains("Job Catalog", page);
             Assert.Contains("job.catalog", page);
             Assert.Contains("<th>Progress</th>", page);
-            Assert.Contains("/jobs/job.catalog/history\">History</a>", page);
+            Assert.Contains("href=\"/jobs/job.catalog/history\"", page);
+            Assert.Contains("aria-label=\"History\"", page);
 
             var details = await client.GetStringAsync("/jobs/job.catalog");
             Assert.Contains("Schedule fields", details);
@@ -883,7 +892,8 @@ namespace KoLite.LocalApp.Tests
                 .Select(item => item.GetProperty("activityId").GetString() ?? string.Empty)
                 .ToArray();
 
-            Assert.Contains("href=\"/catalog/export\">Export all</a>", dashboard);
+            Assert.Contains("href=\"/catalog/export\"", dashboard);
+            Assert.Contains(">Export all</span>", dashboard);
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             Assert.Equal("application/json", response.Content.Headers.ContentType?.MediaType);
             Assert.Equal(["job.active", "job.disabled"], ids);

@@ -10,16 +10,16 @@
         <h1>KO Lite Local Dashboard</h1>
     </div>
     <div class="button-row">
-        <a class="btn primary" href="/catalog/new">New job</a>
-        <a class="btn" href="/catalog/import">Import</a>
-        <a class="btn" href="/catalog/export">Export all</a>
+        <a class="btn primary" href="/catalog/new">@UiIcons.IconText("plus", "New job")</a>
+        <a class="btn" href="/catalog/import">@UiIcons.IconText("upload", "Import")</a>
+        <a class="btn" href="/catalog/export">@UiIcons.IconText("download", "Export all")</a>
         <form method="post" action="/catalog/pause-all" class="inline-form">
             @Html.AntiForgeryToken()
-            <button class="btn" type="submit">Pause all</button>
+            <button class="btn" type="submit">@UiIcons.IconText("pause", "Pause all")</button>
         </form>
         <form method="post" action="/catalog/resume-all" class="inline-form">
             @Html.AntiForgeryToken()
-            <button class="btn" type="submit">Resume all</button>
+            <button class="btn" type="submit">@UiIcons.IconText("play", "Resume all")</button>
         </form>
     </div>
 </div>
@@ -43,11 +43,11 @@
         @Html.AntiForgeryToken()
         <span class="bulk-action-inputs" data-bulk-inputs></span>
         <div class="button-row">
-            <button class="btn small" type="submit" formaction="/catalog/bulk/pause">Pause</button>
-            <button class="btn small" type="submit" formaction="/catalog/bulk/resume">Resume</button>
-            <button class="btn small danger" type="submit" formaction="/catalog/bulk/soft-delete">Soft delete</button>
-            <button class="btn small" type="submit" formaction="/catalog/bulk/export">Export</button>
-            <button class="btn small" type="button" data-bulk-clear>Clear</button>
+            <button class="btn small" type="submit" formaction="/catalog/bulk/pause">@UiIcons.IconText("pause", "Pause")</button>
+            <button class="btn small" type="submit" formaction="/catalog/bulk/resume">@UiIcons.IconText("play", "Resume")</button>
+            <button class="btn small danger" type="submit" formaction="/catalog/bulk/soft-delete">@UiIcons.IconText("trash", "Soft delete")</button>
+            <button class="btn small" type="submit" formaction="/catalog/bulk/export">@UiIcons.IconText("download", "Export")</button>
+            <button class="btn small" type="button" data-bulk-clear>@UiIcons.IconText("x", "Clear")</button>
         </div>
     </form>
 </div>
