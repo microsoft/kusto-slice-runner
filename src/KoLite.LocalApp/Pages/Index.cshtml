@@ -66,32 +66,30 @@
         </details>
     </div>
     <aside class="tag-filter-pane" data-dashboard-filter-pane="true" aria-label="Dashboard filters">
-        <section class="card dashboard-text-filter">
+        <section class="card dashboard-find-jobs">
             <div class="dashboard-filter-header">
                 <div>
                     <h2>Find jobs</h2>
-                    <p class="muted">Text search narrows the jobs currently shown after tag selection.</p>
+                    <p class="muted">Combine the text filter and tags to narrow the jobs shown — they work together.</p>
                 </div>
             </div>
-            <label class="dashboard-filter-label" for="dashboard-job-filter">Text filter</label>
-            <input id="dashboard-job-filter" class="dashboard-filter-input" type="search" placeholder="Type to filter jobs" autocomplete="off" data-dashboard-filter-input="true" aria-describedby="dashboard-job-filter-status" />
-            <p id="dashboard-job-filter-status" class="muted dashboard-filter-status" data-dashboard-filter-status="true" data-dashboard-total-count="@dashboardJobCount" role="status" aria-live="polite">Showing @dashboardJobCount job(s).</p>
-        </section>
-        @if (tagFilter.HasTags)
-        {
-            <partial name="_TagFilter" model="tagFilter" />
-        }
-        else
-        {
-            <section class="card tag-filter">
-                <div class="tag-filter-header">
-                    <div>
-                        <h2>Tags</h2>
-                        <p class="muted">No schedule tags are available yet.</p>
-                    </div>
+            <div class="find-jobs-section dashboard-text-filter">
+                <h3>Text filter</h3>
+                <input id="dashboard-job-filter" class="dashboard-filter-input" type="search" placeholder="Type to filter jobs" autocomplete="off" data-dashboard-filter-input="true" aria-label="Text filter" aria-describedby="dashboard-job-filter-status" />
+                <p id="dashboard-job-filter-status" class="muted dashboard-filter-status" data-dashboard-filter-status="true" data-dashboard-total-count="@dashboardJobCount" role="status" aria-live="polite">Showing @dashboardJobCount job(s).</p>
+            </div>
+            @if (tagFilter.HasTags)
+            {
+                <partial name="_TagFilter" model="@(tagFilter with { Bare = true })" />
+            }
+            else
+            {
+                <div class="find-jobs-section tag-filter-section">
+                    <h3>Tags</h3>
+                    <p class="muted">No schedule tags are available yet.</p>
                 </div>
-            </section>
-        }
+            }
+        </section>
     </aside>
 </div>
 

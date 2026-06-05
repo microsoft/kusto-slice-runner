@@ -272,6 +272,21 @@ h3 { font-size: 16px; margin-bottom: 10px; }
 .dashboard-text-filter {
   margin-bottom: 0;
 }
+.dashboard-find-jobs {
+  margin-bottom: 0;
+}
+.find-jobs-section + .find-jobs-section {
+  border-top: 1px solid var(--border);
+  margin-top: 14px;
+  padding-top: 14px;
+}
+.find-jobs-section h3 {
+  font-size: 15px;
+  margin: 0 0 8px;
+}
+.find-jobs-section .tag-filter-header {
+  margin-bottom: 8px;
+}
 .dashboard-filter-header {
   margin-bottom: 10px;
 }

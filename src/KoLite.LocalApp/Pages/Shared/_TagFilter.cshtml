@@ -1,11 +1,17 @@
 @model TagFilterViewModel
-
-@if (Model.HasTags)
-{
-    <section class="card tag-filter">
+@{
+    void RenderInner()
+    {
         <div class="tag-filter-header">
             <div>
-                <h2>Tags</h2>
+                @if (Model.Bare)
+                {
+                    <h3>Tags</h3>
+                }
+                else
+                {
+                    <h2>Tags</h2>
+                }
                 <p class="muted">Filter jobs by schedule tags. Multiple selected tags use AND matching.</p>
             </div>
             @if (Model.SelectedTags.Count > 0)
@@ -27,5 +33,21 @@
         {
             <p class="muted tag-filter-help">Showing jobs tagged with all selected tags: @string.Join(", ", Model.SelectedTags).</p>
         }
-    </section>
+    }
+}
+
+@if (Model.HasTags)
+{
+    if (Model.Bare)
+    {
+        <div class="find-jobs-section tag-filter-section">
+            @{ RenderInner(); }
+        </div>
+    }
+    else
+    {
+        <section class="card tag-filter">
+            @{ RenderInner(); }
+        </section>
+    }
 }

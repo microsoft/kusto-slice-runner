@@ -6,7 +6,8 @@ namespace KoLite.LocalApp.Ui
         string BasePath,
         string? Range,
         IReadOnlyList<JobTagSummary> Tags,
-        IReadOnlyList<string> SelectedTags)
+        IReadOnlyList<string> SelectedTags,
+        bool Bare = false)
     {
         public bool HasTags => Tags.Count > 0 || SelectedTags.Count > 0;
 
