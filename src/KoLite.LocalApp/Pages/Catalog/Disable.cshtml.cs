@@ -1,4 +1,5 @@
 using KoLite.Local.Sqlite.Catalog;
+using KoLite.LocalApp.Ui;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 
@@ -7,18 +8,17 @@ namespace KoLite.LocalApp.Pages.Catalog
     public sealed class DisableModel : PageModel
     {
         private readonly SqliteJobCatalogRepository catalog;
+        private readonly DashboardPageQuery dashboard;
 
-        public DisableModel(SqliteJobCatalogRepository catalog)
+        public DisableModel(SqliteJobCatalogRepository catalog, DashboardPageQuery dashboard)
         {
             this.catalog = catalog;
+            this.dashboard = dashboard;
         }
 
         [BindProperty(Name = "expectedVersion")] public long ExpectedVersion { get; set; }
         public IActionResult OnGet() => StatusCode(StatusCodes.Status405MethodNotAllowed);
-        public IActionResult OnPost(string jobId)
-        {
-            catalog.SetEnabled(jobId, false, ExpectedVersion, actor: "local-web");
-            return Redirect($"/jobs/{Uri.EscapeDataString(jobId)}");
-        }
+        public IActionResult OnPost(string jobId) =>
+            CatalogEnabledToggle.Execute(this, catalog, dashboard, jobId, enabled: false, ExpectedVersion);
     }
 }

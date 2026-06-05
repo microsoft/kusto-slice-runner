@@ -33,6 +33,7 @@ namespace KoLite.LocalApp.Ui
         bool ShowFolderLine = true,
         bool EnableClientFilter = false,
         bool EnableColumnResize = false,
+        bool EnableInlineToggle = false,
         string? TableKey = null);
 
     public sealed record JobListItem(
@@ -71,42 +72,9 @@ namespace KoLite.LocalApp.Ui
             var summaries = readModels.GetJobStatusSummaries().ToDictionary(s => s.JobId, StringComparer.Ordinal);
             var queuedAvailability = GetQueuedAvailability();
             var latestSliceEnds = GetLatestSliceEnds();
-            var jobs = catalog.List().Select(record =>
-            {
-                var definition = record.Definition;
-                lifecycleStates.TryGetValue(record.JobId, out var lifecycle);
-                summaries.TryGetValue(record.JobId, out var summary);
-                var completed = IsCompletedSchedule(definition, summary, now);
-                var status = lifecycle?.IsSoftDeleted == true
-                    ? "SoftDeleted"
-                    : !record.IsEnabled
-                        ? "Paused"
-                        : summary is { FailedCount: > 0 } or { DeadLetteredCount: > 0 }
-                            ? "Failed"
-                            : summary is { DependencyBlockedCount: > 0 }
-                                ? "DependencyBlocked"
-                                : summary is { QueuedCount: > 0 } or { RunningCount: > 0 }
-                                    ? "Running"
-                                    : completed
-                                        ? "Completed"
-                                        : "Healthy";
-
-                return new JobListItem(
-                    record,
-                    definition,
-                    summary,
-                    lifecycle,
-                    status,
-                    status switch
-                    {
-                        "SoftDeleted" => "Soft deleted",
-                        "DependencyBlocked" => "Dependency blocked",
-                        _ => status
-                    },
-                    AppFormatting.BadgeCss(status),
-                    GetNextSliceTiming(record, definition, lifecycle, summary, completed, queuedAvailability, latestSliceEnds, now),
-                    completed);
-            }).ToList();
+            var jobs = catalog.List()
+                .Select(record => BuildJobListItem(record, lifecycleStates, summaries, queuedAvailability, latestSliceEnds, now))
+                .ToList();
             var tagSummaries = BuildTagSummaries(jobs, normalizedSelectedTags);
             var filteredJobs = normalizedSelectedTags.Count == 0
                 ? jobs
@@ -125,6 +93,65 @@ namespace KoLite.LocalApp.Ui
                 chartQuery.GetDashboardCharts(selectedRange, chartJobIds),
                 readModels.GetRecentFailures(10),
                 selectedRange);
+        }
+
+        public JobListItem? GetJob(string jobId)
+        {
+            var record = catalog.Get(jobId);
+            if (record is null)
+            {
+                return null;
+            }
+
+            var now = clock.UtcNow;
+            var lifecycleStates = lifecycleReadModel.GetLatestStates();
+            var summaries = readModels.GetJobStatusSummaries().ToDictionary(s => s.JobId, StringComparer.Ordinal);
+            var queuedAvailability = GetQueuedAvailability();
+            var latestSliceEnds = GetLatestSliceEnds();
+            return BuildJobListItem(record, lifecycleStates, summaries, queuedAvailability, latestSliceEnds, now);
+        }
+
+        private static JobListItem BuildJobListItem(
+            JobCatalogRecord record,
+            IReadOnlyDictionary<string, JobLifecycleProjection> lifecycleStates,
+            IReadOnlyDictionary<string, JobStatusSummary> summaries,
+            IReadOnlyDictionary<string, DateTimeOffset> queuedAvailability,
+            IReadOnlyDictionary<string, DateTimeOffset> latestSliceEnds,
+            DateTimeOffset now)
+        {
+            var definition = record.Definition;
+            lifecycleStates.TryGetValue(record.JobId, out var lifecycle);
+            summaries.TryGetValue(record.JobId, out var summary);
+            var completed = IsCompletedSchedule(definition, summary, now);
+            var status = lifecycle?.IsSoftDeleted == true
+                ? "SoftDeleted"
+                : !record.IsEnabled
+                    ? "Paused"
+                    : summary is { FailedCount: > 0 } or { DeadLetteredCount: > 0 }
+                        ? "Failed"
+                        : summary is { DependencyBlockedCount: > 0 }
+                            ? "DependencyBlocked"
+                            : summary is { QueuedCount: > 0 } or { RunningCount: > 0 }
+                                ? "Running"
+                                : completed
+                                    ? "Completed"
+                                    : "Healthy";
+
+            return new JobListItem(
+                record,
+                definition,
+                summary,
+                lifecycle,
+                status,
+                status switch
+                {
+                    "SoftDeleted" => "Soft deleted",
+                    "DependencyBlocked" => "Dependency blocked",
+                    _ => status
+                },
+                AppFormatting.BadgeCss(status),
+                GetNextSliceTiming(record, definition, lifecycle, summary, completed, queuedAvailability, latestSliceEnds, now),
+                completed);
         }
 
         private static IReadOnlyList<JobTagSummary> BuildTagSummaries(IReadOnlyList<JobListItem> jobs, IReadOnlyList<string> selectedTags)

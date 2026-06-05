@@ -781,15 +781,110 @@
     }
   });
 
+  function applyDashboardToggleResult(form, data) {
+    var base = form.getAttribute("data-toggle-base") || "";
+    var enabled = data.enabled === true;
+    var versionInput = form.querySelector("input[name='expectedVersion']");
+    if (versionInput && data.version !== null && typeof data.version !== "undefined") {
+      versionInput.value = data.version;
+    }
+
+    if (base) {
+      form.setAttribute("action", base + (enabled ? "/disable" : "/enable"));
+    }
+
+    var button = form.querySelector("button[type='submit']");
+    if (button) {
+      button.textContent = enabled ? "Pause" : "Resume";
+    }
+
+    var row = form.closest("tr");
+    if (row) {
+      if (typeof data.statusText === "string" && data.statusText) {
+        var badge = row.querySelector(".status-cell .badge");
+        if (badge) {
+          badge.textContent = data.statusText;
+          badge.className = "badge " + (data.statusCss || "badge-neutral");
+        }
+      }
+
+      if (typeof data.nextText === "string") {
+        var nextCell = row.querySelector(".next-cell");
+        if (nextCell) {
+          nextCell.textContent = data.nextText;
+          nextCell.setAttribute("title", data.nextDetail || "");
+        }
+      }
+    }
+  }
+
+  function submitDashboardToggle(form) {
+    if (form.getAttribute("data-toggle-inflight") === "true") return;
+
+    var token = form.querySelector("input[name='__RequestVerificationToken']");
+    var button = form.querySelector("button[type='submit']");
+    if (!token) {
+      form.submit();
+      return;
+    }
+
+    form.setAttribute("data-toggle-inflight", "true");
+    if (button) button.disabled = true;
+
+    fetch(form.action, {
+      method: "POST",
+      headers: {
+        "X-Requested-With": "XMLHttpRequest",
+        "X-CSRF-TOKEN": token.value,
+        "Accept": "application/json"
+      },
+      body: new URLSearchParams(new FormData(form))
+    }).then(function (response) {
+      return response.json().then(function (data) {
+        return { ok: response.ok, status: response.status, data: data };
+      }).catch(function () {
+        return { ok: response.ok, status: response.status, data: null };
+      });
+    }).then(function (result) {
+      if (result.data) {
+        // A 409 conflict still returns the current projected state so the row resyncs.
+        applyDashboardToggleResult(form, result.data);
+      }
+      if (!result.ok) {
+        var jobId = form.getAttribute("data-dashboard-job-id") || "this job";
+        var message = result.data && result.data.error ? result.data.error : ("Request failed (" + result.status + ").");
+        window.alert("Could not update " + jobId + ". " + message);
+      }
+    }).catch(function () {
+      var jobId = form.getAttribute("data-dashboard-job-id") || "this job";
+      window.alert("Could not update " + jobId + ". Refresh the page and try again.");
+    }).then(function () {
+      form.removeAttribute("data-toggle-inflight");
+      if (button) button.disabled = false;
+    });
+  }
+
+  function initDashboardJobToggle() {
+    document.addEventListener("submit", function (event) {
+      var form = event.target;
+      if (!(form instanceof HTMLFormElement)) return;
+      if (form.getAttribute("data-dashboard-toggle") !== "true") return;
+      event.preventDefault();
+      submitDashboardToggle(form);
+    });
+  }
+
   window.BuildSuccessRateChart = buildSuccessRateChart;
   window.BuildJobDetailChart = buildJobDetailChart;
   window.initJobDetailTabs = initJobDetailTabs;
   window.toggleSuccessRateSeries = toggleSuccessRateSeries;
   window.initDashboardJobFilter = initDashboardJobFilter;
   window.initDashboardColumnResize = initDashboardColumnResize;
+  window.initDashboardJobToggle = initDashboardJobToggle;
   initSuccessRateCharts();
   initJobDetailCharts();
   initJobDetailTabs();
   initDashboardJobFilter();
   initDashboardColumnResize();
+  initDashboardJobToggle();
 })();

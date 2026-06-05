@@ -730,6 +730,65 @@ namespace KoLite.LocalApp.Tests
         }
 
         [Fact]
+        public async Task Dashboard_inline_pause_toggle_returns_json_state_without_redirecting()
+        {
+            new SqliteJobCatalogRepository(sqlite).Create(Schedule("job.toggle", "ToggleFunction", isPaused: false));
+            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+            var catalog = new SqliteJobCatalogRepository(sqlite);
+
+            var dashboard = await client.GetStringAsync("/");
+            Assert.Contains("data-dashboard-toggle=\"true\"", dashboard);
+            Assert.Contains("data-toggle-base=\"/catalog/job.toggle\"", dashboard);
+
+            var token = await ReadFormToken(client, "/");
+
+            var pause = await PostFormAjax(client, "/catalog/job.toggle/disable", token, new Dictionary<string, string>
+            {
+                ["expectedVersion"] = "1"
+            });
+            Assert.Equal(HttpStatusCode.OK, pause.StatusCode);
+            Assert.Equal("application/json", pause.Content.Headers.ContentType?.MediaType);
+            using (var pauseDoc = JsonDocument.Parse(await pause.Content.ReadAsStringAsync()))
+            {
+                var root = pauseDoc.RootElement;
+                Assert.False(root.GetProperty("enabled").GetBoolean());
+                Assert.Equal(2, root.GetProperty("version").GetInt64());
+                Assert.Equal("Paused", root.GetProperty("statusText").GetString());
+                Assert.Equal("badge-warning", root.GetProperty("statusCss").GetString());
+                Assert.False(root.GetProperty("conflict").GetBoolean());
+            }
+            Assert.False(catalog.Get("job.toggle")?.IsEnabled);
+
+            var resume = await PostFormAjax(client, "/catalog/job.toggle/enable", token, new Dictionary<string, string>
+            {
+                ["expectedVersion"] = "2"
+            });
+            Assert.Equal(HttpStatusCode.OK, resume.StatusCode);
+            using (var resumeDoc = JsonDocument.Parse(await resume.Content.ReadAsStringAsync()))
+            {
+                var root = resumeDoc.RootElement;
+                Assert.True(root.GetProperty("enabled").GetBoolean());
+                Assert.Equal(3, root.GetProperty("version").GetInt64());
+                Assert.Equal("Healthy", root.GetProperty("statusText").GetString());
+            }
+            Assert.True(catalog.Get("job.toggle")?.IsEnabled);
+
+            var conflict = await PostFormAjax(client, "/catalog/job.toggle/disable", token, new Dictionary<string, string>
+            {
+                ["expectedVersion"] = "1"
+            });
+            Assert.Equal(HttpStatusCode.Conflict, conflict.StatusCode);
+            using (var conflictDoc = JsonDocument.Parse(await conflict.Content.ReadAsStringAsync()))
+            {
+                var root = conflictDoc.RootElement;
+                Assert.True(root.GetProperty("conflict").GetBoolean());
+                Assert.True(root.GetProperty("enabled").GetBoolean());
+                Assert.Equal(3, root.GetProperty("version").GetInt64());
+            }
+            Assert.True(catalog.Get("job.toggle")?.IsEnabled);
+        }
+
+        [Fact]
         public async Task Started_job_edit_page_marks_protected_fields_readonly_and_rejects_raw_json_tampering()
         {
             var catalog = new SqliteJobCatalogRepository(sqlite);
@@ -1384,6 +1443,18 @@ namespace KoLite.LocalApp.Tests
             {
                 Content = new FormUrlEncodedContent(values)
             };
+            if (!string.IsNullOrEmpty(token.Cookie)) request.Headers.Add("Cookie", token.Cookie);
+            return await client.SendAsync(request);
+        }
+
+        private static async Task<HttpResponseMessage> PostFormAjax(HttpClient client, string path, FormToken token, Dictionary<string, string> values)
+        {
+            values["__RequestVerificationToken"] = token.Value;
+            using var request = new HttpRequestMessage(HttpMethod.Post, path)
+            {
+                Content = new FormUrlEncodedContent(values)
+            };
+            request.Headers.Add("X-Requested-With", "XMLHttpRequest");
             if (!string.IsNullOrEmpty(token.Cookie)) request.Headers.Add("Cookie", token.Cookie);
             return await client.SendAsync(request);
         }
