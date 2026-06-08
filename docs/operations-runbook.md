@@ -56,6 +56,10 @@ dotnet run --project .\src\KoLite.LocalApp\KoLite.LocalApp.csproj -- --Connectio
 
 Compatibility aliases `KoLite:Scheduler:WorkerConcurrency` and `KoLite:Scheduler:MaxWorkerIterations` are still accepted by the worker-pool options.
 
+### Console log verbosity
+
+Routine progress lines (scheduler enqueue, per-slice worker start/finish, dispatcher start, and graceful-drain completion) are emitted at `Debug` level, so they stay out of the default `Information` console output. Warnings, errors, and dead-letter lines remain visible. To see the routine lines again, lower the log level — for example set `Logging:LogLevel:Default` (or a specific `KoLite.LocalApp.*` category) to `Debug` in `appsettings.json` or via `--Logging:LogLevel:Default=Debug`. Durable scheduler/worker diagnostic rows are still controlled separately by `KoLite:Scheduler:LogEveryPass`.
+
 ## Update checks
 
 KO Lite stamps the git commit it was built from into the app at build time and, when

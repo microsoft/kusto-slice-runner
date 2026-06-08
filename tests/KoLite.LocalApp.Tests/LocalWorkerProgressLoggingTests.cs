@@ -32,11 +32,19 @@ namespace KoLite.LocalApp.Tests
                         ["KoLite:Scheduler:Enabled"] = "false"
                     });
                 });
-                builder.ConfigureServices(services => services.AddLogging(logging =>
+                builder.ConfigureServices(services =>
                 {
-                    logging.ClearProviders();
-                    logging.AddProvider(provider);
-                }));
+                    services.AddLogging(logging =>
+                    {
+                        logging.ClearProviders();
+                        logging.AddProvider(provider);
+                    });
+                    services.PostConfigure<LoggerFilterOptions>(options =>
+                    {
+                        options.Rules.Clear();
+                        options.MinLevel = LogLevel.Trace;
+                    });
+                });
             });
             using var scope = factory.Services.CreateScope();
             var sink = scope.ServiceProvider.GetRequiredService<ILocalWorkerProgressSink>();
@@ -61,7 +69,7 @@ namespace KoLite.LocalApp.Tests
             });
 
             Assert.Contains(provider.Entries, entry =>
-                entry.Level == LogLevel.Information
+                entry.Level == LogLevel.Debug
                 && entry.Message.Contains("Job slice started", StringComparison.Ordinal)
                 && HasValue(entry, "ActivityId", "job.console")
                 && HasValue(entry, "SliceStartUtc", At(10))

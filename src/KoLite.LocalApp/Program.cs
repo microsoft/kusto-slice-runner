@@ -201,7 +201,7 @@ namespace KoLite.LocalApp
                             logger.LogWarning(ex, "Failed to record graceful drain completion before stopping the app.");
                         }
 
-                        logger.LogInformation("Graceful drain completed; stopping KO Lite local app.");
+                        logger.LogDebug("Graceful drain completed; stopping KO Lite local app.");
                         appLifetime.StopApplication();
                     });
                 }
@@ -531,7 +531,7 @@ namespace KoLite.LocalApp
 
         public void RecordStarted(LocalWorkerProgressEvent progress)
         {
-            logger.LogInformation(
+            logger.LogDebug(
                 "Job slice started for activity {ActivityId}: slice {SliceStartUtc:O} to {SliceEndUtc:O}, attempt {Attempt}.",
                 progress.ActivityId,
                 progress.SliceStartUtc,
@@ -543,7 +543,7 @@ namespace KoLite.LocalApp
         {
             if (progress.Status == LocalWorkerProgressStatus.Succeeded)
             {
-                logger.LogInformation(
+                logger.LogDebug(
                     "Job slice finished for activity {ActivityId}: slice {SliceStartUtc:O} to {SliceEndUtc:O}, attempt {Attempt}, status {CompletionStatus}.",
                     progress.ActivityId,
                     progress.SliceStartUtc,
@@ -628,7 +628,7 @@ namespace KoLite.LocalApp
 
             if (tick.Enqueued > 0)
             {
-                logger.LogInformation("Local scheduler pass enqueued {Enqueued} slices.", tick.Enqueued);
+                logger.LogDebug("Local scheduler pass enqueued {Enqueued} slices.", tick.Enqueued);
             }
 
             if (options.LogEveryPass)
@@ -755,7 +755,7 @@ namespace KoLite.LocalApp
 
                         if (started > 0)
                         {
-                            logger.LogInformation("Local worker dispatcher started {Started} workers with {InFlight} in flight.", started, inFlightWorkers.Count);
+                            logger.LogDebug("Local worker dispatcher started {Started} workers with {InFlight} in flight.", started, inFlightWorkers.Count);
                         }
                     }
 
@@ -907,7 +907,7 @@ namespace KoLite.LocalApp
             catch (OperationCanceledException)
             {
                 workerPoolState.RecordWorkerFault(clock.UtcNow);
-                logger.LogInformation("Local worker dispatcher stopped while in-flight worker {WorkerId} was observing cancellation.", worker.WorkerId);
+                logger.LogDebug("Local worker dispatcher stopped while in-flight worker {WorkerId} was observing cancellation.", worker.WorkerId);
             }
             catch (Exception ex)
             {
