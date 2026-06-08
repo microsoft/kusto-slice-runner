@@ -29,7 +29,7 @@ namespace KoLite.Local.Core.Orchestration
     {
         public static TimeSpan QueryTimeoutLeaseBuffer { get; } = TimeSpan.FromMinutes(2);
         public TimeSpan EffectiveVisibilityTimeout => VisibilityTimeout ?? TimeSpan.FromMinutes(5);
-        public TimeSpan EffectiveInitialRetryDelay => InitialRetryDelay ?? TimeSpan.FromSeconds(1);
+        public TimeSpan EffectiveInitialRetryDelay => InitialRetryDelay ?? TimeSpan.FromMinutes(1);
         public TimeSpan EffectiveMaxRetryDelay => MaxRetryDelay ?? TimeSpan.FromMinutes(5);
 
         public TimeSpan EffectiveLeaseDuration(JobDefinition job)
