@@ -58,7 +58,7 @@ Compatibility aliases `KoLite:Scheduler:WorkerConcurrency` and `KoLite:Scheduler
 
 ### Console log verbosity
 
-Routine progress lines (scheduler enqueue, per-slice worker start/finish, dispatcher start, and graceful-drain completion) are emitted at `Debug` level, so they stay out of the default `Information` console output. Warnings, errors, and dead-letter lines remain visible. To see the routine lines again, lower the log level — for example set `Logging:LogLevel:Default` (or a specific `KoLite.LocalApp.*` category) to `Debug` in `appsettings.json` or via `--Logging:LogLevel:Default=Debug`. Durable scheduler/worker diagnostic rows are still controlled separately by `KoLite:Scheduler:LogEveryPass`.
+Console verbosity uses per-category log-level filters. The default level is `Warning`, which keeps framework and host `info:` lines (for example `Microsoft.Hosting.Lifetime` "Now listening on…" / "Application started") out of the console. The `KoLite.LocalApp` category is raised to `Information`, so KO Lite's own progress lines — scheduler enqueue, per-slice worker start/finish, graceful-drain completion, and update-check transitions — remain visible. Warnings, errors, and dead-letter lines always remain visible. The two lower-value worker-dispatcher lines (dispatcher start and in-flight cancellation during shutdown) are emitted at `Debug`, so they stay quiet even at `Information`. To see everything, raise the level — for example set `Logging:LogLevel:Default` to `Debug` or `KoLite.LocalApp` to `Debug` in `appsettings.json`, or pass `--Logging:LogLevel:KoLite.LocalApp=Debug`. Durable scheduler/worker diagnostic rows are still controlled separately by `KoLite:Scheduler:LogEveryPass`.
 
 ## Update checks
 

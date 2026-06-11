@@ -69,7 +69,7 @@ namespace KoLite.LocalApp.Tests
             });
 
             Assert.Contains(provider.Entries, entry =>
-                entry.Level == LogLevel.Debug
+                entry.Level == LogLevel.Information
                 && entry.Message.Contains("Job slice started", StringComparison.Ordinal)
                 && HasValue(entry, "ActivityId", "job.console")
                 && HasValue(entry, "SliceStartUtc", At(10))

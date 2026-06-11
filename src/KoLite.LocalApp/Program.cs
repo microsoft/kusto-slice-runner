@@ -201,7 +201,7 @@ namespace KoLite.LocalApp
                             logger.LogWarning(ex, "Failed to record graceful drain completion before stopping the app.");
                         }
 
-                        logger.LogDebug("Graceful drain completed; stopping KO Lite local app.");
+                        logger.LogInformation("Graceful drain completed; stopping KO Lite local app.");
                         appLifetime.StopApplication();
                     });
                 }
@@ -531,7 +531,7 @@ namespace KoLite.LocalApp
 
         public void RecordStarted(LocalWorkerProgressEvent progress)
         {
-            logger.LogDebug(
+            logger.LogInformation(
                 "Job slice started for activity {ActivityId}: slice {SliceStartUtc:O} to {SliceEndUtc:O}, attempt {Attempt}.",
                 progress.ActivityId,
                 progress.SliceStartUtc,
@@ -543,7 +543,7 @@ namespace KoLite.LocalApp
         {
             if (progress.Status == LocalWorkerProgressStatus.Succeeded)
             {
-                logger.LogDebug(
+                logger.LogInformation(
                     "Job slice finished for activity {ActivityId}: slice {SliceStartUtc:O} to {SliceEndUtc:O}, attempt {Attempt}, status {CompletionStatus}.",
                     progress.ActivityId,
                     progress.SliceStartUtc,
@@ -628,7 +628,7 @@ namespace KoLite.LocalApp
 
             if (tick.Enqueued > 0)
             {
-                logger.LogDebug("Local scheduler pass enqueued {Enqueued} slices.", tick.Enqueued);
+                logger.LogInformation("Local scheduler pass enqueued {Enqueued} slices.", tick.Enqueued);
             }
 
             if (options.LogEveryPass)
