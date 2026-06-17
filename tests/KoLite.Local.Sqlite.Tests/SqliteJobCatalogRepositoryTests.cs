@@ -97,6 +97,21 @@ namespace KoLite.Local.Sqlite.Tests
         }
 
         [Fact]
+        public void Export_uses_stable_ordinal_job_id_sort_independent_of_insertion_or_selection_order()
+        {
+            repository.Create(Schedule("job.b", paused: false));
+            repository.Create(Schedule("job.A", paused: false));
+            repository.Create(Schedule("job.1", paused: false));
+            repository.Create(Schedule("job.a", paused: false));
+
+            Assert.Equal(["job.1", "job.A", "job.a", "job.b"], ActivityIds(repository.ExportAll()));
+            Assert.Equal(["job.1", "job.A", "job.a", "job.b"], ActivityIds(repository.ExportAll(new HashSet<string>(StringComparer.Ordinal))));
+
+            var selectedJson = repository.ExportSelected(["job.b", "job.a", "job.1"]);
+            Assert.Equal(["job.1", "job.a", "job.b"], ActivityIds(selectedJson));
+        }
+
+        [Fact]
         public void Update_allows_window_and_start_changes_before_job_has_started()
         {
             var created = repository.Create(Schedule("job.catalog", paused: false));

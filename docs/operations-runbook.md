@@ -92,17 +92,21 @@ Use **Import** to add or update jobs from schedule JSON. Imports accept either o
 
 Imports are additive and update-only: jobs with matching `activityId` values are updated, missing jobs are created, and jobs omitted from the payload are left untouched.
 
-Use **Export all** on the home dashboard to export an import-compatible JSON array for every non-soft-deleted job in the local catalog. Individual job rows and job details pages also include single-job export links.
+Use **Export all** on the home dashboard to export an import-compatible JSON array for every non-soft-deleted job in the local catalog. Individual job rows and job details pages also include single-job export links. Multi-job exports are sorted in ascending `activityId` (job id) order, so the output is deterministic and diff-stable.
 
 After a job has execution history, `activityId`, `queryWindowSize`, and `startFrom` are read-only. The edit page marks those fields read-only, and the backend rejects raw JSON or import payloads that try to change them for a started job.
 
 See [schedule-json.md](schedule-json.md) for the schedule contract.
 
+## Local management API
+
+KO Lite hosts a localhost-only JSON API so a same-machine agent or tool can read jobs and create/update schedules without using the dashboard. It starts and stops with the app. Every write goes through the same validated, additive/update-only import path as the dashboard, and the API exposes no enable/disable, delete, Kusto, rerun, or repair surface. Reads are `GET /api/jobs`, `GET /api/jobs/{jobId}`, and `GET /api/jobs/export`; writes are `POST /api/jobs/import`. All `/api` routes are loopback-only. See [local-api.md](local-api.md) for the full contract and the `ko-lite-job-manager` skill that drives it.
+
 ## Bulk actions on the dashboard
 
 The home dashboard supports multi-select bulk actions on the **Active jobs** and **Completed jobs** sections. Use the per-row checkboxes or a section's header checkbox to select jobs; a contextual action bar appears only while at least one job is selected and offers **Pause**, **Resume**, **Soft delete**, and **Export** for the current selection. The Soft-deleted section is not selectable. Selection respects the dashboard text filter — filtered-out rows are excluded — and collapsing the Inactive jobs group keeps the current selection.
 
-Bulk Pause/Resume/Soft delete apply with no extra confirmation (soft delete is reversible from the Soft-deleted section via **Restore**). They honor the same optimistic-concurrency model as the single-row actions: each selected row carries the catalog version shown on the page, and any job that changed since the page loaded — or is already in the requested state, soft-deleted, or missing — is **skipped** rather than forced. After the action, a summary banner reports how many jobs changed and how many were skipped. Bulk **Export** downloads an import-compatible JSON array (`ko-lite-jobs.json`) containing only the selected jobs, in catalog order.
+Bulk Pause/Resume/Soft delete apply with no extra confirmation (soft delete is reversible from the Soft-deleted section via **Restore**). They honor the same optimistic-concurrency model as the single-row actions: each selected row carries the catalog version shown on the page, and any job that changed since the page loaded — or is already in the requested state, soft-deleted, or missing — is **skipped** rather than forced. After the action, a summary banner reports how many jobs changed and how many were skipped. Bulk **Export** downloads an import-compatible JSON array (`ko-lite-jobs.json`) containing only the selected jobs, sorted in ascending `activityId` (job id) order.
 
 ## Published output
 
@@ -172,4 +176,5 @@ Back up the SQLite database before service upgrades, hard deletes, repair experi
 - **Kusto auth failures:** verify Azure CLI sign-in, managed identity settings, target cluster/database, and Kusto permissions.
 - **Locked publish output:** stop the published app before republishing.
 - **SQLite inspection:** use the database path shown by `/status/health`; runtime sidecar files such as `*.db-wal` and `*.db-shm` are local artifacts.
+- **Local API unreachable:** the `/api/*` routes only exist while the app is running and only accept loopback callers; confirm the app is up via `/status/health` and use the loopback base URL.
 - **Crash recovery:** long `queryTimeout` values also lengthen queue lease windows, so recovery after a hard crash can take longer for long-running jobs.

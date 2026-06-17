@@ -70,4 +70,4 @@ Tags are local UI/catalog metadata for organizing jobs. They are separate from K
 
 The import page accepts a single schedule object or an array of schedule objects. Imports are additive and update-only: matching `activityId` values are updated, missing jobs are created, and omitted jobs are left untouched.
 
-Exports are import-compatible. Export all emits every non-soft-deleted job; row/detail export emits one job.
+Exports are import-compatible. Export all emits every non-soft-deleted job; row/detail export emits one job. Multi-job exports (export all and bulk/selected export) are emitted as a JSON array sorted in ascending `activityId` (job id) order, so the output is deterministic and produces stable diffs regardless of insertion order.

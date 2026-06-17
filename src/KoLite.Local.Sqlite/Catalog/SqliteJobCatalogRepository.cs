@@ -185,7 +185,7 @@ namespace KoLite.Local.Sqlite.Catalog
             var included = excludedJobIds is null || excludedJobIds.Count == 0
                 ? records
                 : records.Where(record => !excludedJobIds.Contains(record.JobId));
-            return "[" + string.Join(",", included.Select(record => record.ScheduleJson)) + "]";
+            return SerializeAsImportArray(included);
         }
 
         public string ExportSelected(IReadOnlyCollection<string> jobIds)
@@ -196,8 +196,13 @@ namespace KoLite.Local.Sqlite.Catalog
             var included = selected.Count == 0
                 ? Enumerable.Empty<JobCatalogRecord>()
                 : List().Where(record => selected.Contains(record.JobId));
-            return "[" + string.Join(",", included.Select(record => record.ScheduleJson)) + "]";
+            return SerializeAsImportArray(included);
         }
+
+        private static string SerializeAsImportArray(IEnumerable<JobCatalogRecord> records) =>
+            "[" + string.Join(",", records
+                .OrderBy(record => record.JobId, StringComparer.Ordinal)
+                .Select(record => record.ScheduleJson)) + "]";
 
         public bool HasStarted(string jobId)
         {

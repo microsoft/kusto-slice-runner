@@ -24,6 +24,7 @@ If you're familiar with [scheduled Kusto jobs](https://learn.microsoft.com/kusto
 - Executes live Kusto `.set-or-append` commands for each claimed slice.
 - Tracks queue state, slice history, attempts, logs, failures, and success-rate charts.
 - Plans historical reruns and local state repair while leaving destructive Kusto cleanup to the operator.
+- Exposes a localhost-only JSON API so a same-machine agent can read jobs and create/update schedules through the same validated import path the dashboard uses.
 - Periodically checks GitHub (via the `gh` CLI) for newer KO Lite commits and shows an update badge in the top bar.
 
 ## Quick start
@@ -56,6 +57,7 @@ Job detail:
 | --- | --- |
 | Architecture and component responsibilities | [Local-first architecture](docs/local-first-architecture.md) |
 | Schedule JSON contract and import/export behavior | [Schedule JSON](docs/schedule-json.md) |
+| Localhost API for agent-driven job management | [Local management API](docs/local-api.md) |
 | Safe local runs, configuration, diagnostics, and reruns | [Operations runbook](docs/operations-runbook.md) |
 | Repository layout, restore, build, and test commands | [Development guide](DEVELOPMENT.md) |
 | Standalone repo validation checklist | [Release readiness checklist](docs/release-readiness-checklist.md) |

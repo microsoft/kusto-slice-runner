@@ -14,6 +14,7 @@ using KoLite.Local.Sqlite.Orchestration;
 using KoLite.Local.Sqlite.Queue;
 using KoLite.Local.Sqlite.Rerun;
 using KoLite.Local.Sqlite.State;
+using KoLite.LocalApp.Api;
 using KoLite.LocalApp.Ui;
 using KoLite.LocalApp.Updates;
 using Microsoft.AspNetCore.Antiforgery;
@@ -179,35 +180,49 @@ namespace KoLite.LocalApp
                 }
 
                 var snapshot = shutdownDrain.RequestDrain(clock.UtcNow, context.Request.Query["reason"].ToString());
-                if (shutdownDrain.TryStartStopWhenDrained())
-                {
-                    var logger = loggerFactory.CreateLogger("LocalShutdownDrain");
-                    _ = Task.Run(async () =>
-                    {
-                        await shutdownDrain.WaitForDrainedAsync().ConfigureAwait(false);
-                        var stoppingSnapshot = shutdownDrain.MarkStopping(clock.UtcNow);
-                        try
-                        {
-                            using var scope = scopes.CreateScope();
-                            var observability = scope.ServiceProvider.GetRequiredService<SqliteOperationalReadModelRepository>();
-                            observability.RecordLog(
-                                "Information",
-                                "Graceful drain completed; stopping KO Lite local app.",
-                                "shutdown-drain",
-                                propertiesJson: JsonSerializer.Serialize(stoppingSnapshot));
-                        }
-                        catch (Exception ex)
-                        {
-                            logger.LogWarning(ex, "Failed to record graceful drain completion before stopping the app.");
-                        }
 
-                        logger.LogInformation("Graceful drain completed; stopping KO Lite local app.");
-                        appLifetime.StopApplication();
-                    });
-                }
+                // Defer the drain-wait-then-stop work until the HTTP response has been fully
+                // sent. When the app is already drained (worker pool disabled or no active work),
+                // WaitForDrainedAsync completes immediately, so calling StopApplication() inline
+                // can abort Kestrel's in-flight response before it is flushed and surface as
+                // "The response ended prematurely." on the client. The start-once guard is taken
+                // inside the callback so a dropped response does not permanently consume it.
+                context.Response.OnCompleted(() =>
+                {
+                    if (shutdownDrain.TryStartStopWhenDrained())
+                    {
+                        var logger = loggerFactory.CreateLogger("LocalShutdownDrain");
+                        _ = Task.Run(async () =>
+                        {
+                            await shutdownDrain.WaitForDrainedAsync().ConfigureAwait(false);
+                            var stoppingSnapshot = shutdownDrain.MarkStopping(clock.UtcNow);
+                            try
+                            {
+                                using var scope = scopes.CreateScope();
+                                var observability = scope.ServiceProvider.GetRequiredService<SqliteOperationalReadModelRepository>();
+                                observability.RecordLog(
+                                    "Information",
+                                    "Graceful drain completed; stopping KO Lite local app.",
+                                    "shutdown-drain",
+                                    propertiesJson: JsonSerializer.Serialize(stoppingSnapshot));
+                            }
+                            catch (Exception ex)
+                            {
+                                logger.LogWarning(ex, "Failed to record graceful drain completion before stopping the app.");
+                            }
+
+                            logger.LogInformation("Graceful drain completed; stopping KO Lite local app.");
+                            appLifetime.StopApplication();
+                        });
+                    }
+
+                    return Task.CompletedTask;
+                });
 
                 return Results.Json(snapshot);
             });
+
+            LocalCatalogApi.Map(app);
 
             app.MapRazorPages();
 
