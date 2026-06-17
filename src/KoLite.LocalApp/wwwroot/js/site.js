@@ -158,7 +158,7 @@
       var color = successChartPalette[index % successChartPalette.length];
       return {
         label: series.name,
-        jobId: series.name,
+        jobId: series.jobId || series.name,
         data: series.points.map(function (point) {
           return {
             x: point.x,

@@ -71,7 +71,7 @@ namespace KoLite.LocalApp.Tests
             Assert.Contains(provider.Entries, entry =>
                 entry.Level == LogLevel.Information
                 && entry.Message.Contains("Job slice started", StringComparison.Ordinal)
-                && HasValue(entry, "ActivityId", "job.console")
+                && HasValue(entry, "JobId", "job.console")
                 && HasValue(entry, "SliceStartUtc", At(10))
                 && HasValue(entry, "SliceEndUtc", At(15))
                 && HasValue(entry, "Attempt", 2)
@@ -80,7 +80,7 @@ namespace KoLite.LocalApp.Tests
             Assert.Contains(provider.Entries, entry =>
                 entry.Level == LogLevel.Error
                 && entry.Message.Contains("Kusto command failed", StringComparison.Ordinal)
-                && HasValue(entry, "ActivityId", "job.console")
+                && HasValue(entry, "JobId", "job.console")
                 && HasValue(entry, "CompletionStatus", LocalWorkerProgressStatus.DeadLettered)
                 && HasValue(entry, "ErrorCode", "KustoServiceException")
                 && HasValue(entry, "ErrorMessage", "Kusto command failed"));

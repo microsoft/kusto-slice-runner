@@ -27,31 +27,31 @@ namespace KoLite.Local.Sqlite.Orchestration
         public LocalSchedulerTickResult Tick()
         {
             var jobs = catalog.List(enabledOnly: true);
-            var jobsByActivityId = jobs.ToDictionary(j => j.JobId, j => j.Definition, StringComparer.Ordinal);
+            var jobsById = jobs.ToDictionary(j => j.JobId, j => j.Definition, StringComparer.Ordinal);
             var enqueued = 0; var blocked = 0; var completed = 0; var maxSkipped = 0;
 
             foreach (var record in jobs)
             {
                 var job = record.Definition;
-                var activeForJob = queue.CountActive(job.ActivityId, options.QueueName);
+                var activeForJob = queue.CountActive(record.JobId, options.QueueName);
                 foreach (var slice in SliceEnumerator.EnumerateEligible(job, clock).OrderBy(s => s.StartUtc))
                 {
                     if (enqueued >= options.MaxSlicesPerTick) break;
-                    var current = state.Get(job.ActivityId, slice.StartUtc, slice.EndUtc);
+                    var current = state.Get(record.JobId, slice.StartUtc, slice.EndUtc);
                     if (!CanSchedulerEnqueue(current.Status))
                     {
                         if (current.Status == DurableSliceStatus.Completed) completed++;
                         continue;
                     }
 
-                    var readiness = state.EvaluateDependencyReadiness(job, slice, jobsByActivityId);
+                    var readiness = state.EvaluateDependencyReadiness(job, slice, jobsById);
                     if (!readiness.IsReady)
                     {
                         if (current.Status == DurableSliceStatus.Missing)
                         {
-                            state.Append(OperationId("dependency-blocked", slice), job.ActivityId, slice.StartUtc, slice.EndUtc, DurableSliceStatus.DependencyBlocked, expectedVersion: current.Version, reason: string.Join(",", readiness.MissingSlices.Select(s => s.Value)));
-                            observability.RecordScheduledSlice(job.ActivityId, slice.StartUtc, slice.EndUtc, "DependencyBlocked", clock.UtcNow, slice.EndUtc);
-                            observability.RecordLog("Information", "Slice blocked by dependencies.", "scheduler", job.ActivityId, slice.StartUtc, slice.EndUtc, JsonSerializer.Serialize(new { missing = readiness.MissingSlices.Select(s => s.Value).ToArray() }));
+                            state.Append(OperationId("dependency-blocked", slice), record.JobId, slice.StartUtc, slice.EndUtc, DurableSliceStatus.DependencyBlocked, expectedVersion: current.Version, reason: string.Join(",", readiness.MissingSlices.Select(s => s.Value)));
+                            observability.RecordScheduledSlice(record.JobId, slice.StartUtc, slice.EndUtc, "DependencyBlocked", clock.UtcNow, slice.EndUtc);
+                            observability.RecordLog("Information", "Slice blocked by dependencies.", "scheduler", record.JobId, slice.StartUtc, slice.EndUtc, JsonSerializer.Serialize(new { activityId = record.ActivityId, missing = readiness.MissingSlices.Select(s => s.Value).ToArray() }));
                         }
                         blocked++;
                         continue;
@@ -66,12 +66,12 @@ namespace KoLite.Local.Sqlite.Orchestration
                     var expected = current.Version;
                     if (current.Status is DurableSliceStatus.Missing or DurableSliceStatus.DependencyBlocked)
                     {
-                        state.Append(OperationId("queued", slice), job.ActivityId, slice.StartUtc, slice.EndUtc, DurableSliceStatus.Queued, expected, actor: "scheduler");
+                        state.Append(OperationId("queued", slice), record.JobId, slice.StartUtc, slice.EndUtc, DurableSliceStatus.Queued, expected, actor: "scheduler");
                     }
 
-                    queue.Enqueue(job.ActivityId, slice.StartUtc, slice.EndUtc, IdempotencyKey(slice), clock.UtcNow, queueName: options.QueueName, maxAttempts: 3, payloadJson: JsonSerializer.Serialize(new { jobId = job.ActivityId, sliceKey = slice.ToKey().Value }));
-                    observability.RecordScheduledSlice(job.ActivityId, slice.StartUtc, slice.EndUtc, "Queued", clock.UtcNow, clock.UtcNow);
-                    observability.RecordLog("Information", "Slice enqueued.", "scheduler", job.ActivityId, slice.StartUtc, slice.EndUtc);
+                    queue.Enqueue(record.JobId, slice.StartUtc, slice.EndUtc, IdempotencyKey(slice), clock.UtcNow, queueName: options.QueueName, maxAttempts: 3, payloadJson: JsonSerializer.Serialize(new { jobId = record.JobId, sliceKey = slice.ToKey().Value }));
+                    observability.RecordScheduledSlice(record.JobId, slice.StartUtc, slice.EndUtc, "Queued", clock.UtcNow, clock.UtcNow);
+                    observability.RecordLog("Information", "Slice enqueued.", "scheduler", record.JobId, slice.StartUtc, slice.EndUtc);
                     enqueued++; activeForJob++;
                 }
             }

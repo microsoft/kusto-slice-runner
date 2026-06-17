@@ -65,7 +65,7 @@ $ErrorActionPreference = 'Stop'
 
 $AllowedTopLevel = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
 @(
-    'activityId','functionName','outputTable','queryWindowSize',
+    'id','activityId','functionName','outputTable','queryWindowSize',
     'delayFromUtcNow','maxParallelism','queryTimeout','isPaused',
     'startFrom','endOn','folder','tags','dependsOn','jobSettings','target'
 ) | ForEach-Object { [void]$AllowedTopLevel.Add($_) }
@@ -74,6 +74,7 @@ $AllowedTargetFields = [System.Collections.Generic.HashSet[string]]::new([System
 @('clusterUri','database') | ForEach-Object { [void]$AllowedTargetFields.Add($_) }
 
 $AllowedDependencyFields = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+[void]$AllowedDependencyFields.Add('id')
 [void]$AllowedDependencyFields.Add('activityId')
 
 $StartFromRegex = [regex]::new(
@@ -211,6 +212,24 @@ function Test-Definition {
     }
     else {
         Add-Error $errors 'activityId' 'activityId is required and must be a non-empty string.'
+    }
+
+    $jobId = $null
+    $idProp = Get-Property -Element $Root -Name 'id'
+    if ($null -ne $idProp -and $idProp.ValueKind -ne [System.Text.Json.JsonValueKind]::Null) {
+        if ($idProp.ValueKind -ne [System.Text.Json.JsonValueKind]::String) {
+            Add-Error $errors 'id' "id must be a GUID string (got $($idProp.ValueKind))."
+        }
+        else {
+            $rawId = $idProp.GetString()
+            $parsedId = [Guid]::Empty
+            if ([string]::IsNullOrWhiteSpace($rawId) -or -not [Guid]::TryParse($rawId, [ref]$parsedId)) {
+                Add-Error $errors 'id' "id must be a valid GUID; got '$rawId'."
+            }
+            else {
+                $jobId = $parsedId.ToString('N')
+            }
+        }
     }
 
     function Read-RequiredString {
@@ -383,7 +402,7 @@ function Test-Definition {
             foreach ($entry in $dependsOnProp.EnumerateArray()) {
                 $path = "dependsOn[$i]"
                 if ($entry.ValueKind -eq [System.Text.Json.JsonValueKind]::String) {
-                    Add-Error $errors $path "$path must be an object of shape { ""activityId"": ""..."" }; bare-string dependency shorthand is not supported."
+                    Add-Error $errors $path "$path must be an object referencing an upstream by 'id' and/or 'activityId'; bare-string dependency shorthand is not supported."
                 }
                 elseif ($entry.ValueKind -ne [System.Text.Json.JsonValueKind]::Object) {
                     Add-Error $errors $path "$path must be a JSON object."
@@ -394,22 +413,48 @@ function Test-Definition {
                             Add-Error $errors "$path.$($prop.Name)" "Field '$path.$($prop.Name)' is not part of the supported KO Lite dependency contract."
                         }
                     }
-                    $depIdProp = Get-Property -Element $entry -Name 'activityId'
-                    $depId = $null
-                    if ($null -eq $depIdProp) {
-                        Add-Error $errors "$path.activityId" "$path.activityId is required and must be a non-empty string."
-                    }
-                    elseif ($depIdProp.ValueKind -ne [System.Text.Json.JsonValueKind]::String) {
-                        Add-Error $errors "$path.activityId" "$path.activityId must be a string."
-                    }
-                    else {
-                        $depId = $depIdProp.GetString()
-                        if ([string]::IsNullOrWhiteSpace($depId)) {
-                            Add-Error $errors "$path.activityId" "$path.activityId is required and must be a non-empty string."
+                    $depActProp = Get-Property -Element $entry -Name 'activityId'
+                    $depIdProp = Get-Property -Element $entry -Name 'id'
+                    $depActivityId = $null
+                    $depGuid = $null
+                    $hasAct = $false
+                    $hasId = $false
+
+                    if ($null -ne $depActProp -and $depActProp.ValueKind -ne [System.Text.Json.JsonValueKind]::Null) {
+                        if ($depActProp.ValueKind -ne [System.Text.Json.JsonValueKind]::String) {
+                            Add-Error $errors "$path.activityId" "$path.activityId must be a string."
                         }
-                        elseif ($null -ne $activityId -and [string]::Equals($depId, $activityId, [System.StringComparison]::Ordinal)) {
-                            Add-Error $errors $path "$path declares self-dependency on '$activityId'."
+                        else {
+                            $depActivityId = $depActProp.GetString()
+                            if (-not [string]::IsNullOrWhiteSpace($depActivityId)) { $hasAct = $true }
                         }
+                    }
+
+                    if ($null -ne $depIdProp -and $depIdProp.ValueKind -ne [System.Text.Json.JsonValueKind]::Null) {
+                        if ($depIdProp.ValueKind -ne [System.Text.Json.JsonValueKind]::String) {
+                            Add-Error $errors "$path.id" "$path.id must be a GUID string."
+                        }
+                        else {
+                            $rawDepId = $depIdProp.GetString()
+                            $parsedDepId = [Guid]::Empty
+                            if ([string]::IsNullOrWhiteSpace($rawDepId) -or -not [Guid]::TryParse($rawDepId, [ref]$parsedDepId)) {
+                                Add-Error $errors "$path.id" "$path.id must be a valid GUID; got '$rawDepId'."
+                            }
+                            else {
+                                $depGuid = $parsedDepId.ToString('N')
+                                $hasId = $true
+                            }
+                        }
+                    }
+
+                    if (-not $hasAct -and -not $hasId) {
+                        Add-Error $errors $path "$path must specify an upstream 'id' or 'activityId'."
+                    }
+                    if ($hasAct -and $null -ne $activityId -and [string]::Equals($depActivityId, $activityId, [System.StringComparison]::Ordinal)) {
+                        Add-Error $errors $path "$path declares self-dependency on '$activityId'."
+                    }
+                    if ($hasId -and $null -ne $jobId -and [string]::Equals($depGuid, $jobId, [System.StringComparison]::Ordinal)) {
+                        Add-Error $errors $path "$path declares self-dependency on id '$jobId'."
                     }
                 }
                 $i++

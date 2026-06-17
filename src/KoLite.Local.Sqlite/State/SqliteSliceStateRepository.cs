@@ -54,12 +54,12 @@ namespace KoLite.Local.Sqlite.State
         public bool FailLease(string operationId, string jobId, DateTimeOffset sliceStartUtc, DateTimeOffset sliceEndUtc, string leaseOwner, string leaseToken, DateTimeOffset nowUtc, string reason, string payloadJson = "{}") => FinishLease(operationId, jobId, sliceStartUtc, sliceEndUtc, leaseOwner, leaseToken, nowUtc, DurableSliceStatus.Failed, reason, payloadJson);
         public bool DeadLetterLease(string operationId, string jobId, DateTimeOffset sliceStartUtc, DateTimeOffset sliceEndUtc, string leaseOwner, string leaseToken, DateTimeOffset nowUtc, string reason, string payloadJson = "{}") => FinishLease(operationId, jobId, sliceStartUtc, sliceEndUtc, leaseOwner, leaseToken, nowUtc, DurableSliceStatus.DeadLettered, reason, payloadJson);
 
-        public DependencyReadiness EvaluateDependencyReadiness(JobDefinition downstream, SliceRange downstreamSlice, IReadOnlyDictionary<string, JobDefinition> jobsByActivityId)
+        public DependencyReadiness EvaluateDependencyReadiness(JobDefinition downstream, SliceRange downstreamSlice, IReadOnlyDictionary<string, JobDefinition> jobsById)
         {
             var completed = new HashSet<SliceKey>(); using var c = connectionFactory.OpenConnection();
             using (var cmd = SqliteStorage.Command(c, null, "SELECT job_id, slice_start_utc, slice_end_utc FROM current_slice_state WHERE state = 'Completed';"))
             using (var r = cmd.ExecuteReader()) while (r.Read()) completed.Add(SliceKey.Create(r.GetString(0), DateTimeOffset.Parse(r.GetString(1)), DateTimeOffset.Parse(r.GetString(2))));
-            return DependencyReadinessEvaluator.Evaluate(downstream, downstreamSlice, jobsByActivityId, completed);
+            return DependencyReadinessEvaluator.Evaluate(downstream, downstreamSlice, jobsById, completed);
         }
 
         private bool FinishLease(string op, string jobId, DateTimeOffset start, DateTimeOffset end, string owner, string leaseToken, DateTimeOffset now, DurableSliceStatus status, string? reason, string payload)

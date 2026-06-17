@@ -16,7 +16,7 @@ namespace KoLite.Local.Core.Tests
 
             Assert.True(SliceKey.TryParse(aFirst.Value, out var parsed, out var range));
             Assert.Equal(aFirst, parsed);
-            Assert.Equal("a", range.ActivityId);
+            Assert.Equal("a", range.JobId);
             Assert.Equal(Utc("2024-01-01T00:00:00Z"), range.StartUtc);
             Assert.Equal(Utc("2024-01-01T01:00:00Z"), range.EndUtc);
 
@@ -145,6 +145,7 @@ namespace KoLite.Local.Core.Tests
 
         private static JobDefinition Job(string activityId, string start, TimeSpan window, TimeSpan delay, string? endOn = null, IReadOnlyList<string>? dependencies = null) => new()
         {
+            Id = activityId,
             ActivityId = activityId,
             FunctionName = "Fn",
             OutputTable = "Output",
@@ -155,7 +156,7 @@ namespace KoLite.Local.Core.Tests
             StartFrom = Utc(start),
             EndOn = endOn is null ? null : Utc(endOn),
             Target = new JobTarget { ClusterUri = "https://kolite-example.invalid", Database = "DemoDb" },
-            DependsOn = dependencies?.Select(d => new DependentJob { ActivityId = d }).ToArray() ?? []
+            DependsOn = dependencies?.Select(d => new DependentJob { Id = d }).ToArray() ?? []
         };
 
         private static DateTimeOffset Utc(string value) => DateTimeOffset.Parse(value, CultureInfo.InvariantCulture).ToUniversalTime();

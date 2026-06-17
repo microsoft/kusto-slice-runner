@@ -38,7 +38,7 @@ namespace KoLite.LocalApp.Tests
             catalog.Create(Schedule("job.active", "ActiveFunction", isPaused: false, tags: ["prod", "daily"]));
             catalog.Create(Schedule("job.paused", "PausedFunction", isPaused: true));
             var soft = catalog.Create(Schedule("job.soft", "SoftFunction", isPaused: false));
-            new SqliteJobLifecycleService(sqlite, catalog).SoftDelete("job.soft", soft.CatalogVersion, "api-test", "exclude");
+            new SqliteJobLifecycleService(sqlite, catalog).SoftDelete(JobId("job.soft"), soft.CatalogVersion, "api-test", "exclude");
 
             using var client = factory.CreateClient();
             using var document = JsonDocument.Parse(await client.GetStringAsync("/api/jobs"));
@@ -48,7 +48,7 @@ namespace KoLite.LocalApp.Tests
 
             Assert.Equal(3, jobs.Count);
 
-            var active = jobs["job.active"];
+            var active = jobs[JobId("job.active")];
             Assert.True(active.GetProperty("isEnabled").GetBoolean());
             Assert.False(active.GetProperty("isPaused").GetBoolean());
             Assert.False(active.GetProperty("isSoftDeleted").GetBoolean());
@@ -62,9 +62,9 @@ namespace KoLite.LocalApp.Tests
             Assert.Contains("daily", tags);
 
             // A paused schedule is stored as not-enabled (the scheduler emits no work for it).
-            Assert.False(jobs["job.paused"].GetProperty("isEnabled").GetBoolean());
-            Assert.True(jobs["job.paused"].GetProperty("isPaused").GetBoolean());
-            Assert.True(jobs["job.soft"].GetProperty("isSoftDeleted").GetBoolean());
+            Assert.False(jobs[JobId("job.paused")].GetProperty("isEnabled").GetBoolean());
+            Assert.True(jobs[JobId("job.paused")].GetProperty("isPaused").GetBoolean());
+            Assert.True(jobs[JobId("job.soft")].GetProperty("isSoftDeleted").GetBoolean());
         }
 
         [Fact]
@@ -73,8 +73,8 @@ namespace KoLite.LocalApp.Tests
             new SqliteJobCatalogRepository(sqlite).Create(Schedule("job.detail", "DetailFunction", isPaused: true));
             using var client = factory.CreateClient();
 
-            using var found = JsonDocument.Parse(await client.GetStringAsync("/api/jobs/job.detail"));
-            Assert.Equal("job.detail", found.RootElement.GetProperty("job").GetProperty("jobId").GetString());
+            using var found = JsonDocument.Parse(await client.GetStringAsync($"/api/jobs/{JobId("job.detail")}"));
+            Assert.Equal(JobId("job.detail"), found.RootElement.GetProperty("job").GetProperty("jobId").GetString());
             var schedule = found.RootElement.GetProperty("schedule");
             Assert.Equal("job.detail", schedule.GetProperty("activityId").GetString());
             Assert.Equal("DetailFunction", schedule.GetProperty("functionName").GetString());
@@ -93,7 +93,7 @@ namespace KoLite.LocalApp.Tests
             catalog.Create(Schedule("job.active", "ActiveFunction", isPaused: false));
             catalog.Create(Schedule("job.paused", "PausedFunction", isPaused: true));
             var soft = catalog.Create(Schedule("job.soft", "SoftFunction", isPaused: false));
-            new SqliteJobLifecycleService(sqlite, catalog).SoftDelete("job.soft", soft.CatalogVersion, "api-test", "exclude");
+            new SqliteJobLifecycleService(sqlite, catalog).SoftDelete(JobId("job.soft"), soft.CatalogVersion, "api-test", "exclude");
             using var client = factory.CreateClient();
 
             using var response = await client.GetAsync("/api/jobs/export");
@@ -119,7 +119,7 @@ namespace KoLite.LocalApp.Tests
             Assert.Equal(1, createdBody.RootElement.GetProperty("created").GetInt32());
             Assert.Equal(0, createdBody.RootElement.GetProperty("updated").GetInt32());
             Assert.Equal(1, createdBody.RootElement.GetProperty("total").GetInt32());
-            Assert.Equal("OneFunction", catalog.Get("job.one")?.QueryRef);
+            Assert.Equal("OneFunction", catalog.Get(JobId("job.one"))?.QueryRef);
 
             var array = "[" + Schedule("job.one", "OneFunctionV2", isPaused: true) + "," + Schedule("job.two", "TwoFunction", isPaused: true) + "]";
             using var upserted = await PostImport(client, array);
@@ -127,15 +127,15 @@ namespace KoLite.LocalApp.Tests
             using var upsertedBody = JsonDocument.Parse(await upserted.Content.ReadAsStringAsync());
             Assert.Equal(1, upsertedBody.RootElement.GetProperty("created").GetInt32());
             Assert.Equal(1, upsertedBody.RootElement.GetProperty("updated").GetInt32());
-            Assert.Equal("OneFunctionV2", catalog.Get("job.one")?.QueryRef);
-            Assert.NotNull(catalog.Get("job.two"));
+            Assert.Equal("OneFunctionV2", catalog.Get(JobId("job.one"))?.QueryRef);
+            Assert.NotNull(catalog.Get(JobId("job.two")));
 
             // A later single-job import must not delete the jobs it omits.
             using var additive = await PostImport(client, Schedule("job.three", "ThreeFunction", isPaused: true));
             Assert.Equal(HttpStatusCode.OK, additive.StatusCode);
-            Assert.NotNull(catalog.Get("job.one"));
-            Assert.NotNull(catalog.Get("job.two"));
-            Assert.NotNull(catalog.Get("job.three"));
+            Assert.NotNull(catalog.Get(JobId("job.one")));
+            Assert.NotNull(catalog.Get(JobId("job.two")));
+            Assert.NotNull(catalog.Get(JobId("job.three")));
         }
 
         [Fact]
@@ -156,7 +156,7 @@ namespace KoLite.LocalApp.Tests
             using var empty = await PostImport(client, "   ");
             Assert.Equal(HttpStatusCode.BadRequest, empty.StatusCode);
 
-            Assert.Null(new SqliteJobCatalogRepository(sqlite).Get("job.unknown"));
+            Assert.Null(new SqliteJobCatalogRepository(sqlite).Get(JobId("job.unknown")));
         }
 
         [Fact]
@@ -164,7 +164,7 @@ namespace KoLite.LocalApp.Tests
         {
             var catalog = new SqliteJobCatalogRepository(sqlite);
             catalog.Create(Schedule("job.started", "StartedFunction", isPaused: true));
-            new SqliteSliceStateRepository(sqlite).Append("started-1", "job.started", At(0), At(5), DurableSliceStatus.Queued, expectedVersion: 0);
+            new SqliteSliceStateRepository(sqlite).Append("started-1", JobId("job.started"), At(0), At(5), DurableSliceStatus.Queued, expectedVersion: 0);
             using var client = factory.CreateClient();
 
             var tampered = Schedule("job.started", "StartedFunction", isPaused: true)
@@ -174,7 +174,7 @@ namespace KoLite.LocalApp.Tests
             Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
             using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
             Assert.Contains("queryWindowSize", body.RootElement.GetProperty("error").GetString());
-            Assert.Equal(TimeSpan.FromMinutes(5), catalog.Get("job.started")!.Definition.QueryWindowSize);
+            Assert.Equal(TimeSpan.FromMinutes(5), catalog.Get(JobId("job.started"))!.Definition.QueryWindowSize);
         }
 
         [Fact]
@@ -209,6 +209,12 @@ namespace KoLite.LocalApp.Tests
                 builder.ConfigureServices(services => services.AddLogging(logging => logging.ClearProviders()));
             });
 
+        private static string JobId(string activityId)
+        {
+            var bytes = System.Security.Cryptography.MD5.HashData(System.Text.Encoding.UTF8.GetBytes(activityId));
+            return new Guid(bytes).ToString("N");
+        }
+
         private static string Schedule(string activityId, string functionName, bool isPaused, IReadOnlyList<string>? tags = null)
         {
             var tagsLine = tags is { Count: > 0 }
@@ -216,6 +222,7 @@ namespace KoLite.LocalApp.Tests
                 : string.Empty;
             return
                 "{\n" +
+                $"  \"id\": \"{JobId(activityId)}\",\n" +
                 $"  \"activityId\": \"{activityId}\",\n" +
                 $"  \"functionName\": \"{functionName}\",\n" +
                 "  \"outputTable\": \"Output\",\n" +

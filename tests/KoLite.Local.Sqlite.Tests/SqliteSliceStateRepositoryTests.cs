@@ -36,12 +36,12 @@ namespace KoLite.Local.Sqlite.Tests
         {
             var start = At(0);
             var end = At(30);
-            var queued = repository.Append("op-queued", "upstream", start, end, DurableSliceStatus.Queued, expectedVersion: 0);
-            var completed = repository.Append("op-completed", "upstream", start, end, DurableSliceStatus.Completed, expectedVersion: queued.State.Version);
+            var queued = repository.Append("op-queued", JobId("upstream"), start, end, DurableSliceStatus.Queued, expectedVersion: 0);
+            var completed = repository.Append("op-completed", JobId("upstream"), start, end, DurableSliceStatus.Completed, expectedVersion: queued.State.Version);
 
             Assert.Equal(DurableSliceStatus.Completed, completed.State.Status);
             Assert.Equal(2, completed.State.Version);
-            Assert.Throws<InvalidOperationException>(() => repository.Append("op-stale", "upstream", start, end, DurableSliceStatus.Failed, expectedVersion: 1));
+            Assert.Throws<InvalidOperationException>(() => repository.Append("op-stale", JobId("upstream"), start, end, DurableSliceStatus.Failed, expectedVersion: 1));
         }
 
         [Fact]
@@ -49,19 +49,19 @@ namespace KoLite.Local.Sqlite.Tests
         {
             var start = At(0);
             var end = At(30);
-            repository.Append("op-queued", "upstream", start, end, DurableSliceStatus.Queued, expectedVersion: 0);
+            repository.Append("op-queued", JobId("upstream"), start, end, DurableSliceStatus.Queued, expectedVersion: 0);
             var now = At(60);
 
-            var lease = repository.AcquireLease("lease-1", "upstream", start, end, "worker-a", TimeSpan.FromMinutes(5), now);
+            var lease = repository.AcquireLease("lease-1", JobId("upstream"), start, end, "worker-a", TimeSpan.FromMinutes(5), now);
 
             Assert.NotNull(lease);
             Assert.Equal(DurableSliceStatus.Running, lease.Status);
-            Assert.Null(repository.AcquireLease("lease-2", "upstream", start, end, "worker-b", TimeSpan.FromMinutes(5), now.AddMinutes(1)));
-            var currentLease = repository.AcquireLease("lease-3", "upstream", start, end, "worker-b", TimeSpan.FromMinutes(5), now.AddMinutes(6));
+            Assert.Null(repository.AcquireLease("lease-2", JobId("upstream"), start, end, "worker-b", TimeSpan.FromMinutes(5), now.AddMinutes(1)));
+            var currentLease = repository.AcquireLease("lease-3", JobId("upstream"), start, end, "worker-b", TimeSpan.FromMinutes(5), now.AddMinutes(6));
             Assert.NotNull(currentLease);
-            Assert.False(repository.CompleteLease("complete-stale", "upstream", start, end, "worker-a", lease.LeaseToken!, now.AddMinutes(7)));
-            Assert.True(repository.CompleteLease("complete-current", "upstream", start, end, "worker-b", currentLease.LeaseToken!, now.AddMinutes(7)));
-            Assert.Equal(DurableSliceStatus.Completed, repository.Get("upstream", start, end).Status);
+            Assert.False(repository.CompleteLease("complete-stale", JobId("upstream"), start, end, "worker-a", lease.LeaseToken!, now.AddMinutes(7)));
+            Assert.True(repository.CompleteLease("complete-current", JobId("upstream"), start, end, "worker-b", currentLease.LeaseToken!, now.AddMinutes(7)));
+            Assert.Equal(DurableSliceStatus.Completed, repository.Get(JobId("upstream"), start, end).Status);
         }
 
         [Fact]
@@ -69,53 +69,60 @@ namespace KoLite.Local.Sqlite.Tests
         {
             var start = At(30);
             var end = At(60);
-            repository.Append("op-queued-token", "upstream", start, end, DurableSliceStatus.Queued, expectedVersion: 0);
+            repository.Append("op-queued-token", JobId("upstream"), start, end, DurableSliceStatus.Queued, expectedVersion: 0);
             var now = At(90);
 
-            var staleLease = repository.AcquireLease("lease-token-stale", "upstream", start, end, "same-worker", TimeSpan.FromMinutes(5), now);
-            var currentLease = repository.AcquireLease("lease-token-current", "upstream", start, end, "same-worker", TimeSpan.FromMinutes(5), now.AddMinutes(6));
+            var staleLease = repository.AcquireLease("lease-token-stale", JobId("upstream"), start, end, "same-worker", TimeSpan.FromMinutes(5), now);
+            var currentLease = repository.AcquireLease("lease-token-current", JobId("upstream"), start, end, "same-worker", TimeSpan.FromMinutes(5), now.AddMinutes(6));
 
             Assert.NotNull(staleLease);
             Assert.NotNull(currentLease);
-            Assert.False(repository.FailLease("fail-stale-token", "upstream", start, end, "same-worker", staleLease.LeaseToken!, now.AddMinutes(7), "stale"));
-            Assert.Equal(DurableSliceStatus.Running, repository.Get("upstream", start, end).Status);
-            Assert.True(repository.FailLease("fail-current-token", "upstream", start, end, "same-worker", currentLease.LeaseToken!, now.AddMinutes(7), "current"));
-            Assert.Equal(DurableSliceStatus.Failed, repository.Get("upstream", start, end).Status);
+            Assert.False(repository.FailLease("fail-stale-token", JobId("upstream"), start, end, "same-worker", staleLease.LeaseToken!, now.AddMinutes(7), "stale"));
+            Assert.Equal(DurableSliceStatus.Running, repository.Get(JobId("upstream"), start, end).Status);
+            Assert.True(repository.FailLease("fail-current-token", JobId("upstream"), start, end, "same-worker", currentLease.LeaseToken!, now.AddMinutes(7), "current"));
+            Assert.Equal(DurableSliceStatus.Failed, repository.Get(JobId("upstream"), start, end).Status);
         }
 
         [Fact]
         public void Dependency_readiness_uses_persisted_current_state_per_window()
         {
-            repository.Append("u1", "upstream", At(0), At(30), DurableSliceStatus.Completed, expectedVersion: 0);
+            repository.Append("u1", JobId("upstream"), At(0), At(30), DurableSliceStatus.Completed, expectedVersion: 0);
             var downstream = Job("downstream", "01:00:00", dependsOn: "upstream");
-            var jobs = new Dictionary<string, JobDefinition> { ["upstream"] = Job("upstream", "00:30:00"), ["downstream"] = downstream };
+            var jobs = new Dictionary<string, JobDefinition> { [JobId("upstream")] = Job("upstream", "00:30:00"), [JobId("downstream")] = downstream };
 
-            var notReady = repository.EvaluateDependencyReadiness(downstream, new SliceRange("downstream", At(0), At(60)), jobs);
-            repository.Append("u2", "upstream", At(30), At(60), DurableSliceStatus.Completed, expectedVersion: 0);
-            var ready = repository.EvaluateDependencyReadiness(downstream, new SliceRange("downstream", At(0), At(60)), jobs);
+            var notReady = repository.EvaluateDependencyReadiness(downstream, new SliceRange(JobId("downstream"), At(0), At(60)), jobs);
+            repository.Append("u2", JobId("upstream"), At(30), At(60), DurableSliceStatus.Completed, expectedVersion: 0);
+            var ready = repository.EvaluateDependencyReadiness(downstream, new SliceRange(JobId("downstream"), At(0), At(60)), jobs);
 
             Assert.False(notReady.IsReady);
-            Assert.Contains(SliceKey.Create("upstream", At(30), At(60)), notReady.MissingSlices);
+            Assert.Contains(SliceKey.Create(JobId("upstream"), At(30), At(60)), notReady.MissingSlices);
             Assert.True(ready.IsReady);
         }
 
         [Fact]
         public async Task Concurrent_lease_attempts_allow_only_one_owner()
         {
-            repository.Append("op-queued", "upstream", At(0), At(30), DurableSliceStatus.Queued, expectedVersion: 0);
+            repository.Append("op-queued", JobId("upstream"), At(0), At(30), DurableSliceStatus.Queued, expectedVersion: 0);
             var now = At(60);
 
             var leases = await Task.WhenAll(
-                Task.Run(() => repository.AcquireLease("lease-a", "upstream", At(0), At(30), "worker-a", TimeSpan.FromMinutes(5), now)),
-                Task.Run(() => repository.AcquireLease("lease-b", "upstream", At(0), At(30), "worker-b", TimeSpan.FromMinutes(5), now)));
+                Task.Run(() => repository.AcquireLease("lease-a", JobId("upstream"), At(0), At(30), "worker-a", TimeSpan.FromMinutes(5), now)),
+                Task.Run(() => repository.AcquireLease("lease-b", JobId("upstream"), At(0), At(30), "worker-b", TimeSpan.FromMinutes(5), now)));
 
             Assert.Single(leases, l => l is not null);
         }
 
         private static DateTimeOffset At(int minutes) => new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero).AddMinutes(minutes);
 
+        private static string JobId(string activityId)
+        {
+            var bytes = System.Security.Cryptography.MD5.HashData(System.Text.Encoding.UTF8.GetBytes(activityId));
+            return new Guid(bytes).ToString("N");
+        }
+
         private static JobDefinition Job(string activityId, string window, string? dependsOn = null) => new()
         {
+            Id = JobId(activityId),
             ActivityId = activityId,
             FunctionName = "Fn",
             OutputTable = "Out",
@@ -125,11 +132,12 @@ namespace KoLite.Local.Sqlite.Tests
             QueryTimeout = TimeSpan.FromMinutes(1),
             StartFrom = At(0),
             Target = new JobTarget { ClusterUri = "https://kolite-example.invalid", Database = "DemoDb" },
-            DependsOn = dependsOn is null ? [] : [new DependentJob { ActivityId = dependsOn }]
+            DependsOn = dependsOn is null ? [] : [new DependentJob { Id = JobId(dependsOn) }]
         };
 
         private static string Schedule(string activityId, string window, string? dependsOn) => $$"""
         {
+          "id": "{{JobId(activityId)}}",
           "activityId": "{{activityId}}",
           "functionName": "StateFunction",
           "outputTable": "StateOutput",

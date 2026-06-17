@@ -6,7 +6,7 @@ namespace KoLite.Local.Core.Tests
     public sealed class ScheduleMutationPolicyTests
     {
         [Fact]
-        public void Started_job_rejects_activity_window_and_start_changes()
+        public void Started_job_allows_rename_but_rejects_window_and_start_changes()
         {
             var current = Job("job.policy", "2026-01-01T00:00:00Z", TimeSpan.FromMinutes(5));
             var proposed = current with
@@ -18,25 +18,34 @@ namespace KoLite.Local.Core.Tests
 
             var violations = ScheduleMutationPolicy.ValidateUpdate(current, proposed, hasStarted: true);
 
-            Assert.Equal(["activityId", "queryWindowSize", "startFrom"], violations.Select(v => v.Field).ToArray());
+            Assert.Equal(["queryWindowSize", "startFrom"], violations.Select(v => v.Field).ToArray());
             Assert.All(violations, v => Assert.Contains("cannot change", v.Message, StringComparison.OrdinalIgnoreCase));
         }
 
         [Fact]
-        public void Unstarted_job_allows_window_and_start_changes_but_not_activity_rename()
+        public void Unstarted_job_allows_window_start_and_rename_changes()
         {
             var current = Job("job.policy", "2026-01-01T00:00:00Z", TimeSpan.FromMinutes(5));
-            var retimed = current with
+            var changed = current with
             {
                 QueryWindowSize = TimeSpan.FromMinutes(10),
-                StartFrom = Utc("2026-01-01T00:05:00Z")
+                StartFrom = Utc("2026-01-01T00:05:00Z"),
+                ActivityId = "job.policy.renamed"
             };
-            var renamed = retimed with { ActivityId = "job.policy.renamed" };
 
-            Assert.Empty(ScheduleMutationPolicy.ValidateUpdate(current, retimed, hasStarted: false));
+            Assert.Empty(ScheduleMutationPolicy.ValidateUpdate(current, changed, hasStarted: false));
+        }
 
-            var violations = ScheduleMutationPolicy.ValidateUpdate(current, renamed, hasStarted: false);
-            Assert.Equal(["activityId"], violations.Select(v => v.Field).ToArray());
+        [Fact]
+        public void Id_change_is_rejected_even_when_unstarted()
+        {
+            var current = Job("job.policy", "2026-01-01T00:00:00Z", TimeSpan.FromMinutes(5));
+            var reIded = current with { Id = "22222222222222222222222222222222" };
+
+            var violations = ScheduleMutationPolicy.ValidateUpdate(current, reIded, hasStarted: false);
+
+            Assert.Equal(["id"], violations.Select(v => v.Field).ToArray());
+            Assert.All(violations, v => Assert.Contains("cannot change", v.Message, StringComparison.OrdinalIgnoreCase));
         }
 
         [Fact]
@@ -65,6 +74,7 @@ namespace KoLite.Local.Core.Tests
 
         private static JobDefinition Job(string activityId, string start, TimeSpan window) => new()
         {
+            Id = "11111111111111111111111111111111",
             ActivityId = activityId,
             FunctionName = "PolicyFunction",
             OutputTable = "PolicyOutput",

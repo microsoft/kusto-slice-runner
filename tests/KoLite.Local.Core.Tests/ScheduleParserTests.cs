@@ -134,6 +134,102 @@ namespace KoLite.Local.Core.Tests
             Assert.Contains(result.Errors, e => e.Field == expectedField);
         }
 
+        [Fact]
+        public void Parser_accepts_and_normalizes_top_level_guid_id()
+        {
+            var raw = "6F9619FF-8B86-D011-B42D-00CF4FC964FF";
+
+            var result = ScheduleParser.Parse(WithTopLevel(MinimalSample, $"\"id\": \"{raw}\""));
+
+            Assert.True(result.IsValid, string.Join(Environment.NewLine, result.Errors.Select(e => $"{e.Field}: {e.Message}")));
+            Assert.Equal(Guid.Parse(raw).ToString("N"), result.Definition!.Id);
+        }
+
+        [Theory]
+        [InlineData("not-a-guid")]
+        [InlineData("")]
+        public void Parser_rejects_invalid_top_level_id(string idValue)
+        {
+            var result = ScheduleParser.Parse(WithTopLevel(MinimalSample, $"\"id\": \"{idValue}\""));
+
+            Assert.False(result.IsValid);
+            Assert.Contains(result.Errors, e => e.Field == "id");
+        }
+
+        [Fact]
+        public void Parser_accepts_dependsOn_referenced_by_guid_id()
+        {
+            var upstream = Guid.NewGuid().ToString("N");
+
+            var result = ScheduleParser.Parse(WithTopLevel(MinimalSample, $"\"dependsOn\": [ {{ \"id\": \"{upstream}\" }} ]"));
+
+            Assert.True(result.IsValid, string.Join(Environment.NewLine, result.Errors.Select(e => $"{e.Field}: {e.Message}")));
+            var dependency = Assert.Single(result.Definition!.DependsOn);
+            Assert.Equal(upstream, dependency.Id);
+            Assert.Null(dependency.ActivityId);
+        }
+
+        [Fact]
+        public void Parser_accepts_dependsOn_with_both_id_and_activity_id()
+        {
+            var upstream = Guid.NewGuid().ToString("N");
+
+            var result = ScheduleParser.Parse(WithTopLevel(MinimalSample, $"\"dependsOn\": [ {{ \"id\": \"{upstream}\", \"activityId\": \"demo.upstream\" }} ]"));
+
+            Assert.True(result.IsValid, string.Join(Environment.NewLine, result.Errors.Select(e => $"{e.Field}: {e.Message}")));
+            var dependency = Assert.Single(result.Definition!.DependsOn);
+            Assert.Equal(upstream, dependency.Id);
+            Assert.Equal("demo.upstream", dependency.ActivityId);
+        }
+
+        [Fact]
+        public void Parser_rejects_dependsOn_with_invalid_guid_id()
+        {
+            var result = ScheduleParser.Parse(WithTopLevel(MinimalSample, "\"dependsOn\": [ { \"id\": \"nope\" } ]"));
+
+            Assert.False(result.IsValid);
+            Assert.Contains(result.Errors, e => e.Field == "dependsOn[0].id");
+        }
+
+        [Fact]
+        public void Parser_rejects_dependsOn_entry_without_id_or_activity_id()
+        {
+            var result = ScheduleParser.Parse(WithTopLevel(MinimalSample, "\"dependsOn\": [ { } ]"));
+
+            Assert.False(result.IsValid);
+            Assert.Contains(result.Errors, e => e.Field == "dependsOn[0]");
+        }
+
+        [Fact]
+        public void Parser_rejects_unknown_dependsOn_fields()
+        {
+            var result = ScheduleParser.Parse(WithTopLevel(MinimalSample, "\"dependsOn\": [ { \"activityId\": \"demo.upstream\", \"bogus\": true } ]"));
+
+            Assert.False(result.IsValid);
+            Assert.Contains(result.Errors, e => e.Field == "dependsOn[0].bogus");
+        }
+
+        [Fact]
+        public void Parser_rejects_self_dependency_by_id()
+        {
+            var self = Guid.NewGuid().ToString("N");
+            var json = WithTopLevel(WithTopLevel(MinimalSample, $"\"id\": \"{self}\""), $"\"dependsOn\": [ {{ \"id\": \"{self}\" }} ]");
+
+            var result = ScheduleParser.Parse(json);
+
+            Assert.False(result.IsValid);
+            Assert.Contains(result.Errors, e => e.Field == "dependsOn[0]" && e.Message.Contains("self-dependency", StringComparison.Ordinal));
+        }
+
+        [Fact]
+        public void Parser_rejects_self_dependency_by_activity_id()
+        {
+            var result = ScheduleParser.Parse(WithTopLevel(MinimalSample, "\"dependsOn\": [ { \"activityId\": \"demo.minimal\" } ]"));
+
+            Assert.False(result.IsValid);
+            Assert.Contains(result.Errors, e => e.Field == "dependsOn[0]" && e.Message.Contains("self-dependency", StringComparison.Ordinal));
+        }
+
         public static TheoryData<string, string, int> ValidSamples() => new()
         {
             { MinimalSample, "demo.minimal", 0 },

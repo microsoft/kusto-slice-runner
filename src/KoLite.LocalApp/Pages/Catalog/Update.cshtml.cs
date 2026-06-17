@@ -27,7 +27,6 @@ namespace KoLite.LocalApp.Pages.Catalog
         public IActionResult OnPost(string jobId)
         {
             JobId = jobId;
-            Input.ActivityId = jobId;
             var useRawJson = string.Equals(FormMode, "json", StringComparison.OrdinalIgnoreCase)
                 || (Request.Form.ContainsKey("scheduleJson") && !Request.Form.ContainsKey("Input.ActivityId"));
             var scheduleJson = useRawJson

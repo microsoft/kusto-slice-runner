@@ -163,9 +163,9 @@ namespace KoLite.LocalApp.Tests
             var catalog = new SqliteJobCatalogRepository(sqlite);
             catalog.Create(Schedule("job.health.pool", "HealthFunction", isPaused: false));
             var state = new SqliteSliceStateRepository(sqlite);
-            state.Append("health-pool-queued", "job.health.pool", At(0), At(5), DurableSliceStatus.Queued, expectedVersion: 0);
+            state.Append("health-pool-queued", JobId("job.health.pool"), At(0), At(5), DurableSliceStatus.Queued, expectedVersion: 0);
             var queue = new SqliteWorkQueueRepository(sqlite);
-            queue.Enqueue("job.health.pool", At(0), At(5), "health-pool-work", At(0));
+            queue.Enqueue(JobId("job.health.pool"), At(0), At(5), "health-pool-work", At(0));
             using var runFactory = CreateFactory(
                 enableScheduler: false,
                 workerPoolMaxConcurrency: 3,
@@ -234,20 +234,20 @@ namespace KoLite.LocalApp.Tests
             var detailChartSliceEnd = DateTimeOffset.UtcNow.AddMinutes(-5);
             var detailChartState = new SqliteSliceStateRepository(sqlite);
             var detailChartReadModels = new SqliteOperationalReadModelRepository(sqlite);
-            detailChartState.Append("detail-chart-slice", "job.web", detailChartSliceStart, detailChartSliceEnd, DurableSliceStatus.Completed, expectedVersion: 0);
-            detailChartReadModels.RecordAttempt("detail-chart-attempt", "job.web", detailChartSliceStart, detailChartSliceEnd, 1, "Started", "worker", detailChartSliceStart, null);
-            detailChartReadModels.RecordAttempt("detail-chart-attempt", "job.web", detailChartSliceStart, detailChartSliceEnd, 1, "Succeeded", "worker", null, detailChartSliceEnd);
+            detailChartState.Append("detail-chart-slice", JobId("job.web"), detailChartSliceStart, detailChartSliceEnd, DurableSliceStatus.Completed, expectedVersion: 0);
+            detailChartReadModels.RecordAttempt("detail-chart-attempt", JobId("job.web"), detailChartSliceStart, detailChartSliceEnd, 1, "Started", "worker", detailChartSliceStart, null);
+            detailChartReadModels.RecordAttempt("detail-chart-attempt", JobId("job.web"), detailChartSliceStart, detailChartSliceEnd, 1, "Succeeded", "worker", null, detailChartSliceEnd);
             using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
 
             var dashboard = await client.GetStringAsync("/");
-            var details = await client.GetStringAsync("/jobs/job.web?range=1d");
-            var history = await client.GetStringAsync("/jobs/job.web/history?from=2026-01-01T00%3A00%3A00Z&to=2026-01-01T00%3A15%3A00Z");
-            var boundaryHistory = await client.GetStringAsync("/jobs/job.web/history?from=2026-01-01T00%3A05&to=2026-01-01T00%3A15");
-            var wideHistory = await client.GetStringAsync("/jobs/job.web/history?from=2025-12-31T00%3A00&to=2026-01-02T00%3A00");
-            var hourlyHistory = await client.GetStringAsync("/jobs/job.hourly/history?from=2026-01-01T00%3A00%3A00Z&to=2026-01-03T00%3A00%3A00Z");
-            var multiHourHistory = await client.GetStringAsync("/jobs/job.multihour/history?from=2026-01-01T00%3A00%3A00Z&to=2026-01-03T00%3A00%3A00Z");
-            var pausedHistory = await client.GetStringAsync("/jobs/job.paused/history?from=2026-01-01T00%3A00%3A00Z&to=2026-01-01T00%3A15%3A00Z");
-            var slice = await client.GetStringAsync("/jobs/job.web/slices?start=2026-01-01T00%3A05%3A00Z&end=2026-01-01T00%3A10%3A00Z");
+            var details = await client.GetStringAsync($"/jobs/{JobId("job.web")}?range=1d");
+            var history = await client.GetStringAsync($"/jobs/{JobId("job.web")}/history?from=2026-01-01T00%3A00%3A00Z&to=2026-01-01T00%3A15%3A00Z");
+            var boundaryHistory = await client.GetStringAsync($"/jobs/{JobId("job.web")}/history?from=2026-01-01T00%3A05&to=2026-01-01T00%3A15");
+            var wideHistory = await client.GetStringAsync($"/jobs/{JobId("job.web")}/history?from=2025-12-31T00%3A00&to=2026-01-02T00%3A00");
+            var hourlyHistory = await client.GetStringAsync($"/jobs/{JobId("job.hourly")}/history?from=2026-01-01T00%3A00%3A00Z&to=2026-01-03T00%3A00%3A00Z");
+            var multiHourHistory = await client.GetStringAsync($"/jobs/{JobId("job.multihour")}/history?from=2026-01-01T00%3A00%3A00Z&to=2026-01-03T00%3A00%3A00Z");
+            var pausedHistory = await client.GetStringAsync($"/jobs/{JobId("job.paused")}/history?from=2026-01-01T00%3A00%3A00Z&to=2026-01-01T00%3A15%3A00Z");
+            var slice = await client.GetStringAsync($"/jobs/{JobId("job.web")}/slices?start=2026-01-01T00%3A05%3A00Z&end=2026-01-01T00%3A10%3A00Z");
             var script = await client.GetStringAsync("/js/site.js");
             var css = await client.GetStringAsync("/css/site.css");
 
@@ -263,7 +263,7 @@ namespace KoLite.LocalApp.Tests
             Assert.Contains("class=\"ko-table job-table job-table-dashboard\"", dashboard);
             Assert.Contains("data-dashboard-filter-input=\"true\"", dashboard);
             Assert.Contains("data-dashboard-job-table=\"true\"", dashboard);
-            Assert.Contains("data-dashboard-job-id=\"job.web\"", dashboard);
+            Assert.Contains($"data-dashboard-job-id=\"{JobId("job.web")}\"", dashboard);
             Assert.Contains("data-dashboard-search=\"job.web ", dashboard);
             Assert.Contains("data-dashboard-resizable=\"true\"", dashboard);
             Assert.Contains("class=\"column-resize-handle\"", dashboard);
@@ -272,7 +272,7 @@ namespace KoLite.LocalApp.Tests
             Assert.Contains("<use href=\"#icon-edit\">", dashboard);
             Assert.Contains("<span class=\"visually-hidden\">Edit</span>", dashboard);
             Assert.Contains("aria-label=\"Copy\"", dashboard);
-            Assert.DoesNotContain("/catalog/job.web/export", dashboard);
+            Assert.DoesNotContain($"/catalog/{JobId("job.web")}/export", dashboard);
             Assert.DoesNotContain("aria-label=\"Export\"", dashboard);
             Assert.Contains(">New job</span>", dashboard);
             Assert.DoesNotContain("class=\"success-chart-svg\"", dashboard);
@@ -283,7 +283,7 @@ namespace KoLite.LocalApp.Tests
             Assert.DoesNotContain("Function / Output", dashboard);
             Assert.DoesNotContain("<th>Updated</th>", dashboard);
             Assert.DoesNotContain("<th>Progress</th>", dashboard);
-            Assert.DoesNotContain("/jobs/job.web/history", dashboard);
+            Assert.DoesNotContain($"/jobs/{JobId("job.web")}/history", dashboard);
             Assert.DoesNotContain("Web Folder", dashboard);
             Assert.DoesNotContain(" running,", dashboard);
             Assert.DoesNotContain("KO.Web-style local dashboard backed by SQLite.", dashboard);
@@ -295,7 +295,7 @@ namespace KoLite.LocalApp.Tests
             Assert.Contains("href=\"#change-history\" role=\"tab\" aria-controls=\"change-history\"", details);
             Assert.Contains("id=\"slice-history\" class=\"tab-panel active\" role=\"tabpanel\"", details);
             Assert.Contains("Open full history", details);
-            Assert.Contains("/jobs/job.web/history", details);
+            Assert.Contains($"/jobs/{JobId("job.web")}/history", details);
             Assert.Contains("Query Results by Time of Execution", details);
             Assert.Contains("Successful Query Duration by Time of Execution", details);
             Assert.Contains("LeaseLost is shown in the Error bucket", details);
@@ -306,7 +306,7 @@ namespace KoLite.LocalApp.Tests
             Assert.Contains("Averages include 1 successful execution(s)", details);
             Assert.Contains("no successful executions were missing duration data", details);
             Assert.Contains("\"missingCount\":0", details);
-            Assert.Contains("/jobs/job.web?range=7d#slice-history", details);
+            Assert.Contains($"/jobs/{JobId("job.web")}?range=7d#slice-history", details);
             Assert.Contains("Slice History: job.web", history);
             Assert.Contains("class=\"cell completed\"", history);
             Assert.Contains("class=\"cell completed-after-retry\"", history);
@@ -446,11 +446,11 @@ namespace KoLite.LocalApp.Tests
             catalog.Create(Schedule("job.failed.finished-window", "FailedFunction", isPaused: false, endOn: "2026-01-01T00:30:00Z"));
             catalog.Create(Schedule("job.missing.finished-window", "MissingFunction", isPaused: false, endOn: "2026-01-01T00:30:00Z"));
             catalog.Create(Schedule("job.running.finished-window", "RunningFunction", isPaused: false, endOn: "2026-01-01T00:30:00Z"));
-            state.Append("blocked-completed", "job.blocked.finished-window", At(0), At(5), DurableSliceStatus.Completed, expectedVersion: 0);
-            state.Append("blocked", "job.blocked.finished-window", At(25), At(30), DurableSliceStatus.DependencyBlocked, expectedVersion: 0, reason: "upstream");
-            state.Append("failed", "job.failed.finished-window", At(25), At(30), DurableSliceStatus.Failed, expectedVersion: 0, reason: "boom");
-            state.Append("missing-completed", "job.missing.finished-window", At(25), At(30), DurableSliceStatus.Completed, expectedVersion: 0);
-            state.AcquireLease("running", "job.running.finished-window", At(25), At(30), "worker", TimeSpan.FromMinutes(5), At(120));
+            state.Append("blocked-completed", JobId("job.blocked.finished-window"), At(0), At(5), DurableSliceStatus.Completed, expectedVersion: 0);
+            state.Append("blocked", JobId("job.blocked.finished-window"), At(25), At(30), DurableSliceStatus.DependencyBlocked, expectedVersion: 0, reason: "upstream");
+            state.Append("failed", JobId("job.failed.finished-window"), At(25), At(30), DurableSliceStatus.Failed, expectedVersion: 0, reason: "boom");
+            state.Append("missing-completed", JobId("job.missing.finished-window"), At(25), At(30), DurableSliceStatus.Completed, expectedVersion: 0);
+            state.AcquireLease("running", JobId("job.running.finished-window"), At(25), At(30), "worker", TimeSpan.FromMinutes(5), At(120));
             var query = new DashboardPageQuery(
                 catalog,
                 readModels,
@@ -461,10 +461,10 @@ namespace KoLite.LocalApp.Tests
 
             var data = query.Get(TimeSpan.FromDays(1));
 
-            var blocked = Assert.Single(data.ActiveJobs, job => job.Record.JobId == "job.blocked.finished-window");
-            var failed = Assert.Single(data.ActiveJobs, job => job.Record.JobId == "job.failed.finished-window");
-            var missing = Assert.Single(data.ActiveJobs, job => job.Record.JobId == "job.missing.finished-window");
-            var running = Assert.Single(data.ActiveJobs, job => job.Record.JobId == "job.running.finished-window");
+            var blocked = Assert.Single(data.ActiveJobs, job => job.Record.JobId == JobId("job.blocked.finished-window"));
+            var failed = Assert.Single(data.ActiveJobs, job => job.Record.JobId == JobId("job.failed.finished-window"));
+            var missing = Assert.Single(data.ActiveJobs, job => job.Record.JobId == JobId("job.missing.finished-window"));
+            var running = Assert.Single(data.ActiveJobs, job => job.Record.JobId == JobId("job.running.finished-window"));
             Assert.Empty(data.CompletedJobs);
             Assert.Equal(("DependencyBlocked", "Blocked", false), (blocked.LifecycleStatus, blocked.NextSlice.Text, blocked.IsCompleted));
             Assert.Equal(("Failed", "Attention", false), (failed.LifecycleStatus, failed.NextSlice.Text, failed.IsCompleted));
@@ -479,9 +479,9 @@ namespace KoLite.LocalApp.Tests
             var catalog = new SqliteJobCatalogRepository(sqlite);
             var state = new SqliteSliceStateRepository(sqlite);
             catalog.Create(Schedule("job.complete.finished-window", "CompleteFunction", isPaused: false, endOn: "2026-01-01T00:15:00Z"));
-            state.Append("complete-0", "job.complete.finished-window", At(0), At(5), DurableSliceStatus.Completed, expectedVersion: 0);
-            state.Append("complete-1", "job.complete.finished-window", At(5), At(10), DurableSliceStatus.Completed, expectedVersion: 0);
-            state.Append("complete-2", "job.complete.finished-window", At(10), At(15), DurableSliceStatus.Completed, expectedVersion: 0);
+            state.Append("complete-0", JobId("job.complete.finished-window"), At(0), At(5), DurableSliceStatus.Completed, expectedVersion: 0);
+            state.Append("complete-1", JobId("job.complete.finished-window"), At(5), At(10), DurableSliceStatus.Completed, expectedVersion: 0);
+            state.Append("complete-2", JobId("job.complete.finished-window"), At(10), At(15), DurableSliceStatus.Completed, expectedVersion: 0);
             var query = new DashboardPageQuery(
                 catalog,
                 new SqliteOperationalReadModelRepository(sqlite),
@@ -493,7 +493,7 @@ namespace KoLite.LocalApp.Tests
             var data = query.Get(TimeSpan.FromDays(1));
 
             var completedJob = Assert.Single(data.CompletedJobs);
-            Assert.Equal("job.complete.finished-window", completedJob.Record.JobId);
+            Assert.Equal(JobId("job.complete.finished-window"), completedJob.Record.JobId);
             Assert.Equal("Completed", completedJob.LifecycleStatus);
             Assert.True(completedJob.IsCompleted);
             Assert.Empty(data.ActiveJobs);
@@ -513,10 +513,10 @@ namespace KoLite.LocalApp.Tests
             var sliceStart = DateTimeOffset.UtcNow.AddMinutes(-10);
             var sliceEnd = DateTimeOffset.UtcNow.AddMinutes(-5);
             catalog.Create(Schedule(longJobId, longFunctionName, isPaused: false, outputTable: longOutputTable));
-            state.Append("long-layout-complete-earlier", longJobId, earlierSliceStart, earlierSliceEnd, DurableSliceStatus.Completed, expectedVersion: 0);
-            state.Append("long-layout-complete", longJobId, sliceStart, sliceEnd, DurableSliceStatus.Completed, expectedVersion: 0);
-            readModels.RecordAttempt("long-layout-attempt-earlier", longJobId, earlierSliceStart, earlierSliceEnd, 1, "Succeeded", "worker", earlierSliceStart, earlierSliceEnd);
-            readModels.RecordAttempt("long-layout-attempt-latest", longJobId, sliceStart, sliceEnd, 1, "Succeeded", "worker", sliceStart, sliceEnd);
+            state.Append("long-layout-complete-earlier", JobId(longJobId), earlierSliceStart, earlierSliceEnd, DurableSliceStatus.Completed, expectedVersion: 0);
+            state.Append("long-layout-complete", JobId(longJobId), sliceStart, sliceEnd, DurableSliceStatus.Completed, expectedVersion: 0);
+            readModels.RecordAttempt("long-layout-attempt-earlier", JobId(longJobId), earlierSliceStart, earlierSliceEnd, 1, "Succeeded", "worker", earlierSliceStart, earlierSliceEnd);
+            readModels.RecordAttempt("long-layout-attempt-latest", JobId(longJobId), sliceStart, sliceEnd, 1, "Succeeded", "worker", sliceStart, sliceEnd);
             using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
 
             var dashboard = await client.GetStringAsync("/");
@@ -533,8 +533,8 @@ namespace KoLite.LocalApp.Tests
             Assert.Contains("Inactive jobs", dashboard);
             Assert.Contains("class=\"card disclosure-card inactive-jobs\"", dashboard);
             Assert.DoesNotContain("status-dot", dashboard);
-            Assert.DoesNotContain($"/catalog/{Uri.EscapeDataString(longJobId)}/soft-delete", dashboard);
-            Assert.Contains($"/catalog/{Uri.EscapeDataString(longJobId)}/soft-delete", catalogPage);
+            Assert.DoesNotContain($"/catalog/{Uri.EscapeDataString(JobId(longJobId))}/soft-delete", dashboard);
+            Assert.Contains($"/catalog/{Uri.EscapeDataString(JobId(longJobId))}/soft-delete", catalogPage);
             Assert.Contains("grid-template-columns: minmax(0, 240px) minmax(120px, 1fr) max-content;", css);
             Assert.Contains(".success-chart-canvas-wrap", css);
             Assert.Contains(".success-chart-canvas", css);
@@ -573,15 +573,15 @@ namespace KoLite.LocalApp.Tests
             catalog.Create(Schedule("job.prod.weekly", "WeeklyFunction", isPaused: false, tags: ["prod", "weekly"]));
             catalog.Create(Schedule("job.security", "SecurityFunction", isPaused: false, tags: ["security"]));
             var softDeleted = catalog.Create(Schedule("job.prod.soft", "SoftFunction", isPaused: false, tags: ["prod", "daily"]));
-            new SqliteJobLifecycleService(sqlite, catalog).SoftDelete("job.prod.soft", softDeleted.CatalogVersion, "web-test", "exclude from active charts");
+            new SqliteJobLifecycleService(sqlite, catalog).SoftDelete(JobId("job.prod.soft"), softDeleted.CatalogVersion, "web-test", "exclude from active charts");
             var state = new SqliteSliceStateRepository(sqlite);
             var readModels = new SqliteOperationalReadModelRepository(sqlite);
             var chartStart = DateTimeOffset.UtcNow.AddMinutes(-30);
             var chartEnd = DateTimeOffset.UtcNow.AddMinutes(-25);
             foreach (var jobId in new[] { "job.prod.daily", "job.prod.weekly", "job.security", "job.prod.soft" })
             {
-                state.Append("chart-" + jobId, jobId, chartStart, chartEnd, DurableSliceStatus.Completed, expectedVersion: 0);
-                readModels.RecordAttempt("attempt-" + jobId, jobId, chartStart, chartEnd, 1, "Succeeded", "worker", chartStart, chartEnd);
+                state.Append("chart-" + jobId, JobId(jobId), chartStart, chartEnd, DurableSliceStatus.Completed, expectedVersion: 0);
+                readModels.RecordAttempt("attempt-" + jobId, JobId(jobId), chartStart, chartEnd, 1, "Succeeded", "worker", chartStart, chartEnd);
             }
 
             using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
@@ -608,8 +608,8 @@ namespace KoLite.LocalApp.Tests
             Assert.Contains("job.prod.soft", filteredDashboard);
             Assert.DoesNotContain("job.prod.weekly", filteredDashboard);
             Assert.DoesNotContain("job.security", filteredDashboard);
-            Assert.DoesNotContain("job.prod.soft", dashboardChartSeries);
-            Assert.Equal(["job.prod.daily"], filteredChartSeries);
+            Assert.DoesNotContain(JobId("job.prod.soft"), dashboardChartSeries);
+            Assert.Equal([JobId("job.prod.daily")], filteredChartSeries);
             Assert.Contains("job.prod.weekly", catalogPage);
             Assert.DoesNotContain("job.prod.daily", catalogPage);
             Assert.DoesNotContain("job.security", catalogPage);
@@ -629,47 +629,47 @@ namespace KoLite.LocalApp.Tests
                 ["scheduleJson"] = Schedule("job.catalog", "CatalogFunction", isPaused: false)
             });
             Assert.Equal(HttpStatusCode.Redirect, create.StatusCode);
-            Assert.Equal("/jobs/job.catalog", create.Headers.Location?.OriginalString);
+            Assert.Equal($"/jobs/{JobId("job.catalog")}", create.Headers.Location?.OriginalString);
 
             var catalog = new SqliteJobCatalogRepository(sqlite);
-            Assert.True(catalog.Get("job.catalog")?.IsEnabled);
+            Assert.True(catalog.Get(JobId("job.catalog"))?.IsEnabled);
 
-            var editToken = await ReadFormToken(client, "/catalog/job.catalog/edit");
-            var update = await PostForm(client, "/catalog/job.catalog/update", editToken, new Dictionary<string, string>
+            var editToken = await ReadFormToken(client, $"/catalog/{JobId("job.catalog")}/edit");
+            var update = await PostForm(client, $"/catalog/{JobId("job.catalog")}/update", editToken, new Dictionary<string, string>
             {
                 ["expectedVersion"] = "1",
                 ["scheduleJson"] = Schedule("job.catalog", "CatalogFunctionV2", isPaused: false)
             });
             Assert.Equal(HttpStatusCode.Redirect, update.StatusCode);
-            Assert.Equal("CatalogFunctionV2", catalog.Get("job.catalog")?.QueryRef);
+            Assert.Equal("CatalogFunctionV2", catalog.Get(JobId("job.catalog"))?.QueryRef);
 
-            var disableToken = await ReadFormToken(client, "/catalog/job.catalog/edit");
-            var disable = await PostForm(client, "/catalog/job.catalog/disable", disableToken, new Dictionary<string, string>
+            var disableToken = await ReadFormToken(client, $"/catalog/{JobId("job.catalog")}/edit");
+            var disable = await PostForm(client, $"/catalog/{JobId("job.catalog")}/disable", disableToken, new Dictionary<string, string>
             {
                 ["expectedVersion"] = "2"
             });
             Assert.Equal(HttpStatusCode.Redirect, disable.StatusCode);
-            Assert.False(catalog.Get("job.catalog")?.IsEnabled);
-            var pausedDetails = await client.GetStringAsync("/jobs/job.catalog");
+            Assert.False(catalog.Get(JobId("job.catalog"))?.IsEnabled);
+            var pausedDetails = await client.GetStringAsync($"/jobs/{JobId("job.catalog")}");
             Assert.Contains("class=\"paused-job-indicator\"", pausedDetails);
             Assert.Contains("Scheduling is paused. New slices and queued retries will not run until this job is resumed.", pausedDetails);
 
-            var enableToken = await ReadFormToken(client, "/catalog/job.catalog/edit");
-            var enable = await PostForm(client, "/catalog/job.catalog/enable", enableToken, new Dictionary<string, string>
+            var enableToken = await ReadFormToken(client, $"/catalog/{JobId("job.catalog")}/edit");
+            var enable = await PostForm(client, $"/catalog/{JobId("job.catalog")}/enable", enableToken, new Dictionary<string, string>
             {
                 ["expectedVersion"] = "3"
             });
             Assert.Equal(HttpStatusCode.Redirect, enable.StatusCode);
-            Assert.True(catalog.Get("job.catalog")?.IsEnabled);
+            Assert.True(catalog.Get(JobId("job.catalog"))?.IsEnabled);
 
             var page = await client.GetStringAsync("/catalog");
             Assert.Contains("Job Catalog", page);
             Assert.Contains("job.catalog", page);
             Assert.Contains("<th>Progress</th>", page);
-            Assert.Contains("href=\"/jobs/job.catalog/history\"", page);
+            Assert.Contains($"href=\"/jobs/{JobId("job.catalog")}/history\"", page);
             Assert.Contains("aria-label=\"History\"", page);
 
-            var details = await client.GetStringAsync("/jobs/job.catalog");
+            var details = await client.GetStringAsync($"/jobs/{JobId("job.catalog")}");
             Assert.Contains("Schedule fields", details);
             Assert.Contains("Raw JSON", details);
             Assert.Contains("Slice history", details);
@@ -689,15 +689,15 @@ namespace KoLite.LocalApp.Tests
             Assert.DoesNotContain("<span class=\"stat-label\">Failed/blocked</span>", details);
             Assert.DoesNotContain("Job state history", details);
 
-            var softDeleteToken = await ReadFormToken(client, "/jobs/job.catalog");
-            var softDelete = await PostForm(client, "/catalog/job.catalog/soft-delete", softDeleteToken, new Dictionary<string, string>
+            var softDeleteToken = await ReadFormToken(client, $"/jobs/{JobId("job.catalog")}");
+            var softDelete = await PostForm(client, $"/catalog/{JobId("job.catalog")}/soft-delete", softDeleteToken, new Dictionary<string, string>
             {
                 ["expectedVersion"] = "4",
                 ["reason"] = "test soft delete"
             });
             Assert.Equal(HttpStatusCode.Redirect, softDelete.StatusCode);
-            Assert.False(catalog.Get("job.catalog")?.IsEnabled);
-            var softDeletedDetails = await client.GetStringAsync("/jobs/job.catalog");
+            Assert.False(catalog.Get(JobId("job.catalog"))?.IsEnabled);
+            var softDeletedDetails = await client.GetStringAsync($"/jobs/{JobId("job.catalog")}");
             Assert.DoesNotContain("class=\"paused-job-indicator\"", softDeletedDetails);
 
             var softDeletedPage = await client.GetStringAsync("/");
@@ -706,41 +706,41 @@ namespace KoLite.LocalApp.Tests
             Assert.Contains("job.catalog", softDeletedPage);
 
             var restoreToken = await ReadFormToken(client, "/");
-            var restore = await PostForm(client, "/catalog/job.catalog/restore", restoreToken, new Dictionary<string, string>
+            var restore = await PostForm(client, $"/catalog/{JobId("job.catalog")}/restore", restoreToken, new Dictionary<string, string>
             {
                 ["expectedVersion"] = "5",
                 ["reason"] = "test restore"
             });
             Assert.Equal(HttpStatusCode.Redirect, restore.StatusCode);
-            Assert.True(catalog.Get("job.catalog")?.IsEnabled);
+            Assert.True(catalog.Get(JobId("job.catalog"))?.IsEnabled);
 
-            var softDeleteAgainToken = await ReadFormToken(client, "/jobs/job.catalog");
-            var softDeleteAgain = await PostForm(client, "/catalog/job.catalog/soft-delete", softDeleteAgainToken, new Dictionary<string, string>
+            var softDeleteAgainToken = await ReadFormToken(client, $"/jobs/{JobId("job.catalog")}");
+            var softDeleteAgain = await PostForm(client, $"/catalog/{JobId("job.catalog")}/soft-delete", softDeleteAgainToken, new Dictionary<string, string>
             {
                 ["expectedVersion"] = "6",
                 ["reason"] = "test hard-delete precondition"
             });
             Assert.Equal(HttpStatusCode.Redirect, softDeleteAgain.StatusCode);
 
-            var hardDeleteToken = await ReadFormToken(client, "/catalog/job.catalog/hard-delete");
-            var blockedHardDelete = await PostForm(client, "/catalog/job.catalog/hard-delete", hardDeleteToken, new Dictionary<string, string>
+            var hardDeleteToken = await ReadFormToken(client, $"/catalog/{JobId("job.catalog")}/hard-delete");
+            var blockedHardDelete = await PostForm(client, $"/catalog/{JobId("job.catalog")}/hard-delete", hardDeleteToken, new Dictionary<string, string>
             {
                 ["confirmation"] = "DELETE wrong.job",
                 ["reason"] = "bad confirmation"
             });
             Assert.Equal(HttpStatusCode.BadRequest, blockedHardDelete.StatusCode);
-            Assert.NotNull(catalog.Get("job.catalog"));
+            Assert.NotNull(catalog.Get(JobId("job.catalog")));
 
-            hardDeleteToken = await ReadFormToken(client, "/catalog/job.catalog/hard-delete");
-            var hardDelete = await PostForm(client, "/catalog/job.catalog/hard-delete", hardDeleteToken, new Dictionary<string, string>
+            hardDeleteToken = await ReadFormToken(client, $"/catalog/{JobId("job.catalog")}/hard-delete");
+            var hardDelete = await PostForm(client, $"/catalog/{JobId("job.catalog")}/hard-delete", hardDeleteToken, new Dictionary<string, string>
             {
-                ["confirmation"] = "DELETE job.catalog",
+                ["confirmation"] = $"DELETE {JobId("job.catalog")}",
                 ["reason"] = "test hard delete"
             });
             var hardDeleteBody = await hardDelete.Content.ReadAsStringAsync();
             Assert.Equal(HttpStatusCode.OK, hardDelete.StatusCode);
             Assert.Contains("Hard delete completed", hardDeleteBody);
-            Assert.Null(catalog.Get("job.catalog"));
+            Assert.Null(catalog.Get(JobId("job.catalog")));
         }
 
         [Fact]
@@ -752,11 +752,11 @@ namespace KoLite.LocalApp.Tests
 
             var dashboard = await client.GetStringAsync("/");
             Assert.Contains("data-dashboard-toggle=\"true\"", dashboard);
-            Assert.Contains("data-toggle-base=\"/catalog/job.toggle\"", dashboard);
+            Assert.Contains($"data-toggle-base=\"/catalog/{JobId("job.toggle")}\"", dashboard);
 
             var token = await ReadFormToken(client, "/");
 
-            var pause = await PostFormAjax(client, "/catalog/job.toggle/disable", token, new Dictionary<string, string>
+            var pause = await PostFormAjax(client, $"/catalog/{JobId("job.toggle")}/disable", token, new Dictionary<string, string>
             {
                 ["expectedVersion"] = "1"
             });
@@ -771,9 +771,9 @@ namespace KoLite.LocalApp.Tests
                 Assert.Equal("badge-warning", root.GetProperty("statusCss").GetString());
                 Assert.False(root.GetProperty("conflict").GetBoolean());
             }
-            Assert.False(catalog.Get("job.toggle")?.IsEnabled);
+            Assert.False(catalog.Get(JobId("job.toggle"))?.IsEnabled);
 
-            var resume = await PostFormAjax(client, "/catalog/job.toggle/enable", token, new Dictionary<string, string>
+            var resume = await PostFormAjax(client, $"/catalog/{JobId("job.toggle")}/enable", token, new Dictionary<string, string>
             {
                 ["expectedVersion"] = "2"
             });
@@ -785,9 +785,9 @@ namespace KoLite.LocalApp.Tests
                 Assert.Equal(3, root.GetProperty("version").GetInt64());
                 Assert.Equal("Healthy", root.GetProperty("statusText").GetString());
             }
-            Assert.True(catalog.Get("job.toggle")?.IsEnabled);
+            Assert.True(catalog.Get(JobId("job.toggle"))?.IsEnabled);
 
-            var conflict = await PostFormAjax(client, "/catalog/job.toggle/disable", token, new Dictionary<string, string>
+            var conflict = await PostFormAjax(client, $"/catalog/{JobId("job.toggle")}/disable", token, new Dictionary<string, string>
             {
                 ["expectedVersion"] = "1"
             });
@@ -799,7 +799,7 @@ namespace KoLite.LocalApp.Tests
                 Assert.True(root.GetProperty("enabled").GetBoolean());
                 Assert.Equal(3, root.GetProperty("version").GetInt64());
             }
-            Assert.True(catalog.Get("job.toggle")?.IsEnabled);
+            Assert.True(catalog.Get(JobId("job.toggle"))?.IsEnabled);
         }
 
         [Fact]
@@ -808,19 +808,19 @@ namespace KoLite.LocalApp.Tests
             var catalog = new SqliteJobCatalogRepository(sqlite);
             catalog.Create(Schedule("job.readonly", "ReadOnlyFunction", isPaused: false));
             var state = new SqliteSliceStateRepository(sqlite);
-            state.Append("readonly-started", "job.readonly", At(0), At(5), DurableSliceStatus.Queued, expectedVersion: 0);
+            state.Append("readonly-started", JobId("job.readonly"), At(0), At(5), DurableSliceStatus.Queued, expectedVersion: 0);
             using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
 
-            var edit = await client.GetStringAsync("/catalog/job.readonly/edit");
+            var edit = await client.GetStringAsync($"/catalog/{JobId("job.readonly")}/edit");
 
-            Assert.Matches("name=\"Input\\.ActivityId\"[^>]*readonly", edit);
+            Assert.DoesNotMatch("name=\"Input\\.ActivityId\"[^>]* readonly", edit);
             Assert.Matches("name=\"Input\\.QueryWindowSize\"[^>]*readonly", edit);
             Assert.Matches("name=\"Input\\.StartFrom\"[^>]*readonly", edit);
             Assert.DoesNotContain("These fields are read-only because this job has execution history", edit);
             Assert.DoesNotContain("Raw JSON changes to read-only fields are rejected server-side", edit);
 
-            var token = await ReadFormToken(client, "/catalog/job.readonly/edit");
-            var tampered = await PostForm(client, "/catalog/job.readonly/update", token, new Dictionary<string, string>
+            var token = await ReadFormToken(client, $"/catalog/{JobId("job.readonly")}/edit");
+            var tampered = await PostForm(client, $"/catalog/{JobId("job.readonly")}/update", token, new Dictionary<string, string>
             {
                 ["expectedVersion"] = "1",
                 ["scheduleJson"] = Schedule("job.readonly", "ReadOnlyFunction", isPaused: false)
@@ -830,7 +830,7 @@ namespace KoLite.LocalApp.Tests
 
             Assert.Equal(HttpStatusCode.BadRequest, tampered.StatusCode);
             Assert.Contains("queryWindowSize", body);
-            var stored = catalog.Get("job.readonly")!;
+            var stored = catalog.Get(JobId("job.readonly"))!;
             Assert.Equal(1, stored.CatalogVersion);
             Assert.Equal(TimeSpan.FromMinutes(5), stored.Definition.QueryWindowSize);
         }
@@ -857,10 +857,10 @@ namespace KoLite.LocalApp.Tests
             Assert.Equal(HttpStatusCode.OK, pasted.StatusCode);
             Assert.Contains("Imported 2 jobs: 1 created, 1 updated. No jobs were deleted.", pastedBody);
             Assert.Contains("0 deleted", pastedBody);
-            Assert.Equal("ExistingFunctionV2", catalog.Get("job.existing")?.QueryRef);
-            Assert.False(catalog.Get("job.existing")?.IsEnabled);
-            Assert.NotNull(catalog.Get("job.new"));
-            Assert.Equal("OmittedFunction", catalog.Get("job.omitted")?.QueryRef);
+            Assert.Equal("ExistingFunctionV2", catalog.Get(JobId("job.existing"))?.QueryRef);
+            Assert.False(catalog.Get(JobId("job.existing"))?.IsEnabled);
+            Assert.NotNull(catalog.Get(JobId("job.new")));
+            Assert.Equal("OmittedFunction", catalog.Get(JobId("job.omitted"))?.QueryRef);
 
             var fileToken = await ReadFormToken(client, "/catalog/import");
             var fileImport = await PostMultipart(client, "/catalog/import", fileToken, "[" + Schedule("job.file-a", "FileFunctionA", isPaused: false) + "," + Schedule("job.file-b", "FileFunctionB", isPaused: false) + "]", "jobs.json");
@@ -869,9 +869,9 @@ namespace KoLite.LocalApp.Tests
             Assert.Equal(HttpStatusCode.OK, fileImport.StatusCode);
             Assert.Contains("job.file-a", fileBody);
             Assert.Contains("job.file-b", fileBody);
-            Assert.NotNull(catalog.Get("job.file-a"));
-            Assert.NotNull(catalog.Get("job.file-b"));
-            Assert.NotNull(catalog.Get("job.omitted"));
+            Assert.NotNull(catalog.Get(JobId("job.file-a")));
+            Assert.NotNull(catalog.Get(JobId("job.file-b")));
+            Assert.NotNull(catalog.Get(JobId("job.omitted")));
         }
 
         [Fact]
@@ -881,7 +881,7 @@ namespace KoLite.LocalApp.Tests
             catalog.Create(Schedule("job.active", "ActiveFunction", isPaused: false));
             catalog.Create(Schedule("job.disabled", "DisabledFunction", isPaused: true));
             var softDeleted = catalog.Create(Schedule("job.soft", "SoftDeletedFunction", isPaused: false));
-            new SqliteJobLifecycleService(sqlite, catalog).SoftDelete("job.soft", softDeleted.CatalogVersion, "web-test", "exclude from export all");
+            new SqliteJobLifecycleService(sqlite, catalog).SoftDelete(JobId("job.soft"), softDeleted.CatalogVersion, "web-test", "exclude from export all");
             using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
 
             var dashboard = await client.GetStringAsync("/");
@@ -905,7 +905,7 @@ namespace KoLite.LocalApp.Tests
             var catalog = new SqliteJobCatalogRepository(sqlite);
             catalog.Create(Schedule("job.alpha", "AlphaFunction", isPaused: false));
             var soft = catalog.Create(Schedule("job.soft", "SoftFunction", isPaused: false));
-            new SqliteJobLifecycleService(sqlite, catalog).SoftDelete("job.soft", soft.CatalogVersion, "web-test", "exclude");
+            new SqliteJobLifecycleService(sqlite, catalog).SoftDelete(JobId("job.soft"), soft.CatalogVersion, "web-test", "exclude");
             using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
 
             var dashboard = await client.GetStringAsync("/");
@@ -913,7 +913,7 @@ namespace KoLite.LocalApp.Tests
 
             Assert.Contains("data-bulk-bar", dashboard);
             Assert.Contains("data-bulk-select-all data-bulk-section=\"active\"", dashboard);
-            Assert.Contains("data-bulk-select value=\"job.alpha\" data-expected-version=\"1\"", dashboard);
+            Assert.Contains($"data-bulk-select value=\"{JobId("job.alpha")}\" data-expected-version=\"1\"", dashboard);
             Assert.Contains("aria-label=\"Select job.alpha\"", dashboard);
             Assert.Contains("formaction=\"/catalog/bulk/pause\"", dashboard);
             Assert.Contains("formaction=\"/catalog/bulk/resume\"", dashboard);
@@ -928,7 +928,7 @@ namespace KoLite.LocalApp.Tests
                 dashboard.IndexOf("data-bulk-bar", StringComparison.Ordinal) < dashboard.IndexOf("data-dashboard-filter-root", StringComparison.Ordinal),
                 "The bulk action bar should render before (outside) the jobs grid.");
             // The soft-deleted section must not offer bulk selection.
-            Assert.DoesNotContain("data-bulk-select value=\"job.soft\"", dashboard);
+            Assert.DoesNotContain($"data-bulk-select value=\"{JobId("job.soft")}\"", dashboard);
             // The catalog page does not get the bulk experience at all.
             Assert.DoesNotContain("data-bulk-bar", catalogPage);
             Assert.DoesNotContain("data-bulk-select-all", catalogPage);
@@ -941,23 +941,23 @@ namespace KoLite.LocalApp.Tests
             catalog.Create(Schedule("job.one", "OneFunction", isPaused: false));
             catalog.Create(Schedule("job.two", "TwoFunction", isPaused: false));
             var soft = catalog.Create(Schedule("job.soft", "SoftFunction", isPaused: false));
-            new SqliteJobLifecycleService(sqlite, catalog).SoftDelete("job.soft", soft.CatalogVersion, "web-test", "exclude");
+            new SqliteJobLifecycleService(sqlite, catalog).SoftDelete(JobId("job.soft"), soft.CatalogVersion, "web-test", "exclude");
             using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
             var token = await ReadFormToken(client, "/");
 
             var response = await PostFormValues(client, "/catalog/bulk/pause", token,
             [
-                new("jobIds", "job.one"), new("expectedVersions", "1"),
-                new("jobIds", "job.two"), new("expectedVersions", "1"),
-                new("jobIds", "job.soft"), new("expectedVersions", "2")
+                new("jobIds", JobId("job.one")), new("expectedVersions", "1"),
+                new("jobIds", JobId("job.two")), new("expectedVersions", "1"),
+                new("jobIds", JobId("job.soft")), new("expectedVersions", "2")
             ]);
 
             Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
             Assert.Equal("/", response.Headers.Location?.OriginalString);
-            Assert.False(catalog.Get("job.one")?.IsEnabled);
-            Assert.False(catalog.Get("job.two")?.IsEnabled);
+            Assert.False(catalog.Get(JobId("job.one"))?.IsEnabled);
+            Assert.False(catalog.Get(JobId("job.two"))?.IsEnabled);
             // Soft-deleted job is skipped, so no further catalog-version bump beyond the soft delete (version 2).
-            Assert.Equal(2, catalog.Get("job.soft")?.CatalogVersion);
+            Assert.Equal(2, catalog.Get(JobId("job.soft"))?.CatalogVersion);
         }
 
         [Fact]
@@ -971,13 +971,13 @@ namespace KoLite.LocalApp.Tests
 
             var response = await PostFormValues(client, "/catalog/bulk/resume", token,
             [
-                new("jobIds", "job.one"), new("expectedVersions", "1"),
-                new("jobIds", "job.two"), new("expectedVersions", "1")
+                new("jobIds", JobId("job.one")), new("expectedVersions", "1"),
+                new("jobIds", JobId("job.two")), new("expectedVersions", "1")
             ]);
 
             Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
-            Assert.True(catalog.Get("job.one")?.IsEnabled);
-            Assert.True(catalog.Get("job.two")?.IsEnabled);
+            Assert.True(catalog.Get(JobId("job.one"))?.IsEnabled);
+            Assert.True(catalog.Get(JobId("job.two"))?.IsEnabled);
         }
 
         [Fact]
@@ -991,14 +991,14 @@ namespace KoLite.LocalApp.Tests
 
             var response = await PostFormValues(client, "/catalog/bulk/soft-delete", token,
             [
-                new("jobIds", "job.one"), new("expectedVersions", "1"),
-                new("jobIds", "job.two"), new("expectedVersions", "1")
+                new("jobIds", JobId("job.one")), new("expectedVersions", "1"),
+                new("jobIds", JobId("job.two")), new("expectedVersions", "1")
             ]);
 
             Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
             var states = new LifecycleReadModel(sqlite).GetLatestStates();
-            Assert.True(states["job.one"].IsSoftDeleted);
-            Assert.True(states["job.two"].IsSoftDeleted);
+            Assert.True(states[JobId("job.one")].IsSoftDeleted);
+            Assert.True(states[JobId("job.two")].IsSoftDeleted);
         }
 
         [Fact]
@@ -1013,8 +1013,8 @@ namespace KoLite.LocalApp.Tests
 
             using var response = await PostFormValues(client, "/catalog/bulk/export", token,
             [
-                new("jobIds", "job.b"),
-                new("jobIds", "job.a")
+                new("jobIds", JobId("job.b")),
+                new("jobIds", JobId("job.a"))
             ]);
             var body = await response.Content.ReadAsStringAsync();
             using var document = JsonDocument.Parse(body);
@@ -1036,26 +1036,26 @@ namespace KoLite.LocalApp.Tests
             catalog.Create(Schedule("job.already", "AlreadyFunction", isPaused: false));
             catalog.Create(Schedule("job.conflict", "ConflictFunction", isPaused: false));
             // Bump job.conflict to version 3 while leaving it enabled, so an expectedVersion of 1 is stale.
-            catalog.SetEnabled("job.conflict", enabled: false, expectedVersion: 1);
-            catalog.SetEnabled("job.conflict", enabled: true, expectedVersion: 2);
+            catalog.SetEnabled(JobId("job.conflict"), enabled: false, expectedVersion: 1);
+            catalog.SetEnabled(JobId("job.conflict"), enabled: true, expectedVersion: 2);
             using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
             var token = await ReadFormToken(client, "/");
 
             var response = await PostFormValues(client, "/catalog/bulk/pause", token,
             [
-                new("jobIds", "job.already"), new("expectedVersions", "1"),
-                new("jobIds", "job.already"), new("expectedVersions", "1"),
-                new("jobIds", "job.conflict"), new("expectedVersions", "1"),
-                new("jobIds", "job.missing"), new("expectedVersions", "1")
+                new("jobIds", JobId("job.already")), new("expectedVersions", "1"),
+                new("jobIds", JobId("job.already")), new("expectedVersions", "1"),
+                new("jobIds", JobId("job.conflict")), new("expectedVersions", "1"),
+                new("jobIds", JobId("job.missing")), new("expectedVersions", "1")
             ]);
 
             Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
             // job.already paused exactly once (version 1 -> 2), despite the duplicate id.
-            Assert.False(catalog.Get("job.already")?.IsEnabled);
-            Assert.Equal(2, catalog.Get("job.already")?.CatalogVersion);
+            Assert.False(catalog.Get(JobId("job.already"))?.IsEnabled);
+            Assert.Equal(2, catalog.Get(JobId("job.already"))?.CatalogVersion);
             // job.conflict left untouched because the submitted version was stale.
-            Assert.True(catalog.Get("job.conflict")?.IsEnabled);
-            Assert.Equal(3, catalog.Get("job.conflict")?.CatalogVersion);
+            Assert.True(catalog.Get(JobId("job.conflict"))?.IsEnabled);
+            Assert.Equal(3, catalog.Get(JobId("job.conflict"))?.CatalogVersion);
 
             var dashboard = await client.GetStringAsync("/");
             Assert.Contains("bulk-summary-banner", dashboard);
@@ -1075,11 +1075,11 @@ namespace KoLite.LocalApp.Tests
 
             var noToken = await client.PostAsync("/catalog/bulk/pause", new FormUrlEncodedContent(new[]
             {
-                new KeyValuePair<string, string>("jobIds", "job.safe"),
+                new KeyValuePair<string, string>("jobIds", JobId("job.safe")),
                 new KeyValuePair<string, string>("expectedVersions", "1")
             }));
             Assert.Equal(HttpStatusCode.BadRequest, noToken.StatusCode);
-            Assert.True(new SqliteJobCatalogRepository(sqlite).Get("job.safe")?.IsEnabled);
+            Assert.True(new SqliteJobCatalogRepository(sqlite).Get(JobId("job.safe"))?.IsEnabled);
         }
 
         [Fact]
@@ -1093,7 +1093,7 @@ namespace KoLite.LocalApp.Tests
             var response = await PostFormValues(client, "/catalog/bulk/pause", token, Array.Empty<KeyValuePair<string, string>>());
 
             Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
-            Assert.True(catalog.Get("job.one")?.IsEnabled);
+            Assert.True(catalog.Get(JobId("job.one"))?.IsEnabled);
         }
 
         [Fact]
@@ -1114,8 +1114,8 @@ namespace KoLite.LocalApp.Tests
             Assert.Contains("[1].unknownField", body);
             Assert.Contains("[1].outputTable", body);
             Assert.Contains("<form method=\"post\" action=\"/catalog/import\"", body);
-            Assert.Null(new SqliteJobCatalogRepository(sqlite).Get("job.valid"));
-            Assert.Null(new SqliteJobCatalogRepository(sqlite).Get("job.bad"));
+            Assert.Null(new SqliteJobCatalogRepository(sqlite).Get(JobId("job.valid")));
+            Assert.Null(new SqliteJobCatalogRepository(sqlite).Get(JobId("job.bad")));
         }
 
         [Fact]
@@ -1124,8 +1124,8 @@ namespace KoLite.LocalApp.Tests
             SeedOperationalData();
             using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
 
-            var slice = await client.GetStringAsync("/jobs/job.web/slices?start=2026-01-01T00%3A00%3A00Z&end=2026-01-01T00%3A05%3A00Z");
-            var previewPath = "/jobs/job.web/rerun?start=2026-01-01T00%3A00&end=2026-01-01T00%3A05&reason=web%20rerun";
+            var slice = await client.GetStringAsync($"/jobs/{JobId("job.web")}/slices?start=2026-01-01T00%3A00%3A00Z&end=2026-01-01T00%3A05%3A00Z");
+            var previewPath = $"/jobs/{JobId("job.web")}/rerun?start=2026-01-01T00%3A00&end=2026-01-01T00%3A05&reason=web%20rerun";
             var preview = await client.GetStringAsync(previewPath);
             var createToken = await ReadFormToken(client, previewPath);
 
@@ -1135,7 +1135,7 @@ namespace KoLite.LocalApp.Tests
             Assert.Contains("StartTime &lt; datetime(2026-01-01T00:05:00.0000000Z)", preview);
             Assert.Contains("Create rerun batch", preview);
 
-            var create = await PostForm(client, "/jobs/job.web/rerun", createToken, new Dictionary<string, string>
+            var create = await PostForm(client, $"/jobs/{JobId("job.web")}/rerun", createToken, new Dictionary<string, string>
             {
                 ["start"] = "2026-01-01T00:00",
                 ["end"] = "2026-01-01T00:05",
@@ -1158,10 +1158,10 @@ namespace KoLite.LocalApp.Tests
             Assert.Equal(HttpStatusCode.Redirect, execute.StatusCode);
 
             var state = new SqliteSliceStateRepository(sqlite);
-            Assert.Equal(DurableSliceStatus.Missing, state.Get("job.web", At(0), At(5)).Status);
+            Assert.Equal(DurableSliceStatus.Missing, state.Get(JobId("job.web"), At(0), At(5)).Status);
 
             var completedBatch = await client.GetStringAsync(rerunPath);
-            var resetSlice = await client.GetStringAsync("/jobs/job.web/slices?start=2026-01-01T00%3A00%3A00Z&end=2026-01-01T00%3A05%3A00Z");
+            var resetSlice = await client.GetStringAsync($"/jobs/{JobId("job.web")}/slices?start=2026-01-01T00%3A00%3A00Z&end=2026-01-01T00%3A05%3A00Z");
             Assert.Contains("Archived previous local details", completedBatch);
             Assert.Contains("attempt-s0", completedBatch);
             Assert.Contains("No attempts recorded.", resetSlice);
@@ -1183,14 +1183,14 @@ namespace KoLite.LocalApp.Tests
 
             var state = new SqliteSliceStateRepository(sqlite);
             var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
-            while (DateTimeOffset.UtcNow < deadline && state.Get("job.runner", At(0), At(5))?.Status != DurableSliceStatus.Completed)
+            while (DateTimeOffset.UtcNow < deadline && state.Get(JobId("job.runner"), At(0), At(5))?.Status != DurableSliceStatus.Completed)
             {
                 await Task.Delay(50);
             }
 
-            Assert.Equal(DurableSliceStatus.Completed, state.Get("job.runner", At(0), At(5)).Status);
+            Assert.Equal(DurableSliceStatus.Completed, state.Get(JobId("job.runner"), At(0), At(5)).Status);
 
-            var history = await client.GetStringAsync("/jobs/job.runner/history?from=2026-01-01T00%3A00%3A00Z&to=2026-01-01T00%3A05%3A00Z");
+            var history = await client.GetStringAsync($"/jobs/{JobId("job.runner")}/history?from=2026-01-01T00%3A00%3A00Z&to=2026-01-01T00%3A05%3A00Z");
             Assert.Contains("class=\"cell completed\"", history);
         }
 
@@ -1287,12 +1287,12 @@ namespace KoLite.LocalApp.Tests
                 await client.GetStringAsync("/");
                 await executor.WaitForBlockedStartsAsync(1, TimeSpan.FromSeconds(5));
                 await WaitUntilAsync(
-                    () => state.Get("job.fast.refill", At(5), At(10)).Status == DurableSliceStatus.Completed,
+                    () => state.Get(JobId("job.fast.refill"), At(5), At(10)).Status == DurableSliceStatus.Completed,
                     TimeSpan.FromSeconds(5));
 
-                Assert.Equal(DurableSliceStatus.Running, state.Get("job.slow.blocking", At(0), At(5)).Status);
-                Assert.Equal(DurableSliceStatus.Completed, state.Get("job.fast.refill", At(0), At(5)).Status);
-                Assert.Equal(DurableSliceStatus.Completed, state.Get("job.fast.refill", At(5), At(10)).Status);
+                Assert.Equal(DurableSliceStatus.Running, state.Get(JobId("job.slow.blocking"), At(0), At(5)).Status);
+                Assert.Equal(DurableSliceStatus.Completed, state.Get(JobId("job.fast.refill"), At(0), At(5)).Status);
+                Assert.Equal(DurableSliceStatus.Completed, state.Get(JobId("job.fast.refill"), At(5), At(10)).Status);
                 Assert.True(executor.FastSucceededCount >= 2);
             }
             finally
@@ -1320,23 +1320,23 @@ namespace KoLite.LocalApp.Tests
             await executor.WaitForStartsAsync(TimeSpan.FromSeconds(5));
 
             var state = new SqliteSliceStateRepository(sqlite);
-            Assert.Equal(DurableSliceStatus.Running, state.Get("job.parallel", At(0), At(5)).Status);
-            Assert.Equal(DurableSliceStatus.Running, state.Get("job.parallel", At(5), At(10)).Status);
+            Assert.Equal(DurableSliceStatus.Running, state.Get(JobId("job.parallel"), At(0), At(5)).Status);
+            Assert.Equal(DurableSliceStatus.Running, state.Get(JobId("job.parallel"), At(5), At(10)).Status);
 
-            var runningHistory = await client.GetStringAsync("/jobs/job.parallel/history?from=2026-01-01T00%3A00%3A00Z&to=2026-01-01T00%3A10%3A00Z");
+            var runningHistory = await client.GetStringAsync($"/jobs/{JobId("job.parallel")}/history?from=2026-01-01T00%3A00%3A00Z&to=2026-01-01T00%3A10%3A00Z");
             Assert.Equal(2, Regex.Matches(runningHistory, "class=\"cell running\"").Count);
 
             executor.Release();
             var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
             while (DateTimeOffset.UtcNow < deadline &&
-                   (state.Get("job.parallel", At(0), At(5)).Status != DurableSliceStatus.Completed ||
-                    state.Get("job.parallel", At(5), At(10)).Status != DurableSliceStatus.Completed))
+                   (state.Get(JobId("job.parallel"), At(0), At(5)).Status != DurableSliceStatus.Completed ||
+                    state.Get(JobId("job.parallel"), At(5), At(10)).Status != DurableSliceStatus.Completed))
             {
                 await Task.Delay(50);
             }
 
-            Assert.Equal(DurableSliceStatus.Completed, state.Get("job.parallel", At(0), At(5)).Status);
-            Assert.Equal(DurableSliceStatus.Completed, state.Get("job.parallel", At(5), At(10)).Status);
+            Assert.Equal(DurableSliceStatus.Completed, state.Get(JobId("job.parallel"), At(0), At(5)).Status);
+            Assert.Equal(DurableSliceStatus.Completed, state.Get(JobId("job.parallel"), At(5), At(10)).Status);
         }
 
         [Fact]
@@ -1364,10 +1364,10 @@ namespace KoLite.LocalApp.Tests
             var state = new SqliteSliceStateRepository(sqlite);
             var runningCount = new[]
             {
-                state.Get("job.global.one", At(0), At(5)).Status,
-                state.Get("job.global.one", At(5), At(10)).Status,
-                state.Get("job.global.two", At(0), At(5)).Status,
-                state.Get("job.global.two", At(5), At(10)).Status
+                state.Get(JobId("job.global.one"), At(0), At(5)).Status,
+                state.Get(JobId("job.global.one"), At(5), At(10)).Status,
+                state.Get(JobId("job.global.two"), At(0), At(5)).Status,
+                state.Get(JobId("job.global.two"), At(5), At(10)).Status
             }.Count(status => status == DurableSliceStatus.Running);
             Assert.Equal(2, executor.StartedCount);
             Assert.Equal(2, runningCount);
@@ -1389,10 +1389,10 @@ namespace KoLite.LocalApp.Tests
             await WaitUntilAsync(
                 () => new[]
                 {
-                    state.Get("job.global.one", At(0), At(5)).Status,
-                    state.Get("job.global.one", At(5), At(10)).Status,
-                    state.Get("job.global.two", At(0), At(5)).Status,
-                    state.Get("job.global.two", At(5), At(10)).Status
+                    state.Get(JobId("job.global.one"), At(0), At(5)).Status,
+                    state.Get(JobId("job.global.one"), At(5), At(10)).Status,
+                    state.Get(JobId("job.global.two"), At(0), At(5)).Status,
+                    state.Get(JobId("job.global.two"), At(5), At(10)).Status
                 }.All(status => status != DurableSliceStatus.Running),
                 TimeSpan.FromSeconds(5));
         }
@@ -1425,12 +1425,12 @@ namespace KoLite.LocalApp.Tests
 
             executor.Release();
             await WaitUntilAsync(
-                () => state.Get("job.drain", At(0), At(5)).Status == DurableSliceStatus.Completed,
+                () => state.Get(JobId("job.drain"), At(0), At(5)).Status == DurableSliceStatus.Completed,
                 TimeSpan.FromSeconds(5));
 
             Assert.Equal(1, executor.StartedCount);
             Assert.False(executor.CancellationWasRequestedBeforeRelease);
-            Assert.NotEqual(DurableSliceStatus.Completed, state.Get("job.drain", At(5), At(10)).Status);
+            Assert.NotEqual(DurableSliceStatus.Completed, state.Get(JobId("job.drain"), At(5), At(10)).Status);
         }
 
         [Fact]
@@ -1459,12 +1459,12 @@ namespace KoLite.LocalApp.Tests
 
             executor.Release();
             await WaitUntilAsync(
-                () => state.Get("job.drain.retry", At(0), At(5)).Status == DurableSliceStatus.Failed,
+                () => state.Get(JobId("job.drain.retry"), At(0), At(5)).Status == DurableSliceStatus.Failed,
                 TimeSpan.FromSeconds(5));
             await Task.Delay(250);
 
             Assert.Equal(1, executor.StartedCount);
-            var item = Assert.Single(queue.List("job.drain.retry"));
+            var item = Assert.Single(queue.List(JobId("job.drain.retry")));
             Assert.Equal(DurableWorkQueueState.Queued, item.State);
             Assert.Equal(1, item.Attempts);
         }
@@ -1474,9 +1474,9 @@ namespace KoLite.LocalApp.Tests
         {
             new SqliteJobCatalogRepository(sqlite).Create(Schedule("job.concurrent.paused", "PausedFunction", isPaused: true));
             var state = new SqliteSliceStateRepository(sqlite);
-            state.Append("paused-concurrent-queued", "job.concurrent.paused", At(0), At(5), DurableSliceStatus.Queued, expectedVersion: 0);
+            state.Append("paused-concurrent-queued", JobId("job.concurrent.paused"), At(0), At(5), DurableSliceStatus.Queued, expectedVersion: 0);
             var queue = new SqliteWorkQueueRepository(sqlite);
-            var item = queue.Enqueue("job.concurrent.paused", At(0), At(5), "paused-concurrent-work", At(0));
+            var item = queue.Enqueue(JobId("job.concurrent.paused"), At(0), At(5), "paused-concurrent-work", At(0));
             var executor = new CountingSliceOutputExecutor();
             using var runFactory = CreateFactory(
                 enableScheduler: true,
@@ -1515,7 +1515,7 @@ namespace KoLite.LocalApp.Tests
             Assert.Contains("unknownField", body);
             Assert.Contains("<form method=\"post\" action=\"/catalog/create\">", body);
             Assert.Contains("<textarea name=\"scheduleJson\"", body);
-            Assert.Null(new SqliteJobCatalogRepository(sqlite).Get("job.bad"));
+            Assert.Null(new SqliteJobCatalogRepository(sqlite).Get(JobId("job.bad")));
         }
 
         [Fact]
@@ -1544,16 +1544,16 @@ namespace KoLite.LocalApp.Tests
             using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
 
             Assert.Equal(HttpStatusCode.MethodNotAllowed, (await client.GetAsync("/catalog/create")).StatusCode);
-            Assert.Equal(HttpStatusCode.MethodNotAllowed, (await client.GetAsync("/catalog/job.safe/update")).StatusCode);
-            Assert.Equal(HttpStatusCode.MethodNotAllowed, (await client.GetAsync("/catalog/job.safe/enable")).StatusCode);
-            Assert.Equal(HttpStatusCode.MethodNotAllowed, (await client.GetAsync("/catalog/job.safe/disable")).StatusCode);
+            Assert.Equal(HttpStatusCode.MethodNotAllowed, (await client.GetAsync($"/catalog/{JobId("job.safe")}/update")).StatusCode);
+            Assert.Equal(HttpStatusCode.MethodNotAllowed, (await client.GetAsync($"/catalog/{JobId("job.safe")}/enable")).StatusCode);
+            Assert.Equal(HttpStatusCode.MethodNotAllowed, (await client.GetAsync($"/catalog/{JobId("job.safe")}/disable")).StatusCode);
 
-            var noToken = await client.PostAsync("/catalog/job.safe/disable", new FormUrlEncodedContent(new Dictionary<string, string>
+            var noToken = await client.PostAsync($"/catalog/{JobId("job.safe")}/disable", new FormUrlEncodedContent(new Dictionary<string, string>
             {
                 ["expectedVersion"] = "1"
             }));
             Assert.Equal(HttpStatusCode.BadRequest, noToken.StatusCode);
-            Assert.True(new SqliteJobCatalogRepository(sqlite).Get("job.safe")?.IsEnabled);
+            Assert.True(new SqliteJobCatalogRepository(sqlite).Get(JobId("job.safe"))?.IsEnabled);
         }
 
         public void Dispose()
@@ -1609,30 +1609,30 @@ namespace KoLite.LocalApp.Tests
             var readModels = new SqliteOperationalReadModelRepository(sqlite);
 
             catalog.Create(Schedule("job.web", "WebFunction", isPaused: false, folder: "Web Folder"));
-            state.Append("s0", "job.web", At(0), At(5), DurableSliceStatus.Completed, expectedVersion: 0);
-            state.Append("s1", "job.web", At(5), At(10), DurableSliceStatus.Failed, expectedVersion: 0, reason: "boom");
-            state.Append("s2", "job.web", At(10), At(15), DurableSliceStatus.Queued, expectedVersion: 0);
-            state.AcquireLease("s3", "job.web", At(15), At(20), "worker", TimeSpan.FromMinutes(5), At(16));
-            state.Append("s5", "job.web", At(25), At(30), DurableSliceStatus.Failed, expectedVersion: 0, reason: "terminal boom");
-            state.Append("s6", "job.web", At(30), At(35), DurableSliceStatus.Completed, expectedVersion: 0);
-            state.Append("s7", "job.web", At(35), At(40), DurableSliceStatus.DependencyBlocked, expectedVersion: 0, reason: "upstream");
-            queue.Enqueue("job.web", At(5), At(10), "queue-s1", At(0));
-            queue.Enqueue("job.web", At(10), At(15), "queue-s2", At(0));
-            readModels.RecordAttempt("attempt-s0", "job.web", At(0), At(5), 1, "Succeeded", "worker", At(0), At(1));
-            readModels.RecordAttempt("attempt-s6-1", "job.web", At(30), At(35), 1, "FailedRetryable", "worker", At(30), At(31));
-            readModels.RecordAttempt("attempt-s6-2", "job.web", At(30), At(35), 2, "Succeeded", "worker", At(32), At(33));
+            state.Append("s0", JobId("job.web"), At(0), At(5), DurableSliceStatus.Completed, expectedVersion: 0);
+            state.Append("s1", JobId("job.web"), At(5), At(10), DurableSliceStatus.Failed, expectedVersion: 0, reason: "boom");
+            state.Append("s2", JobId("job.web"), At(10), At(15), DurableSliceStatus.Queued, expectedVersion: 0);
+            state.AcquireLease("s3", JobId("job.web"), At(15), At(20), "worker", TimeSpan.FromMinutes(5), At(16));
+            state.Append("s5", JobId("job.web"), At(25), At(30), DurableSliceStatus.Failed, expectedVersion: 0, reason: "terminal boom");
+            state.Append("s6", JobId("job.web"), At(30), At(35), DurableSliceStatus.Completed, expectedVersion: 0);
+            state.Append("s7", JobId("job.web"), At(35), At(40), DurableSliceStatus.DependencyBlocked, expectedVersion: 0, reason: "upstream");
+            queue.Enqueue(JobId("job.web"), At(5), At(10), "queue-s1", At(0));
+            queue.Enqueue(JobId("job.web"), At(10), At(15), "queue-s2", At(0));
+            readModels.RecordAttempt("attempt-s0", JobId("job.web"), At(0), At(5), 1, "Succeeded", "worker", At(0), At(1));
+            readModels.RecordAttempt("attempt-s6-1", JobId("job.web"), At(30), At(35), 1, "FailedRetryable", "worker", At(30), At(31));
+            readModels.RecordAttempt("attempt-s6-2", JobId("job.web"), At(30), At(35), 2, "Succeeded", "worker", At(32), At(33));
 
             catalog.Create(Schedule("job.hourly", "HourlyFunction", isPaused: false, queryWindowSize: "01:00:00"));
-            state.Append("hourly-s0", "job.hourly", At(0), At(60), DurableSliceStatus.Completed, expectedVersion: 0);
-            state.Append("hourly-s1", "job.hourly", At(24 * 60), At(25 * 60), DurableSliceStatus.Completed, expectedVersion: 0);
+            state.Append("hourly-s0", JobId("job.hourly"), At(0), At(60), DurableSliceStatus.Completed, expectedVersion: 0);
+            state.Append("hourly-s1", JobId("job.hourly"), At(24 * 60), At(25 * 60), DurableSliceStatus.Completed, expectedVersion: 0);
 
             catalog.Create(Schedule("job.multihour", "MultiHourFunction", isPaused: false, queryWindowSize: "06:00:00"));
-            state.Append("multihour-s0", "job.multihour", At(0), At(6 * 60), DurableSliceStatus.Completed, expectedVersion: 0);
-            state.Append("multihour-s1", "job.multihour", At(24 * 60), At(30 * 60), DurableSliceStatus.Failed, expectedVersion: 0, reason: "multi-hour boom");
+            state.Append("multihour-s0", JobId("job.multihour"), At(0), At(6 * 60), DurableSliceStatus.Completed, expectedVersion: 0);
+            state.Append("multihour-s1", JobId("job.multihour"), At(24 * 60), At(30 * 60), DurableSliceStatus.Failed, expectedVersion: 0, reason: "multi-hour boom");
 
             catalog.Create(Schedule("job.paused", "PausedFunction", isPaused: true));
-            state.Append("paused-s0", "job.paused", At(0), At(5), DurableSliceStatus.Queued, expectedVersion: 0);
-            queue.Enqueue("job.paused", At(0), At(5), "paused-queue-s0", At(0));
+            state.Append("paused-s0", JobId("job.paused"), At(0), At(5), DurableSliceStatus.Queued, expectedVersion: 0);
+            queue.Enqueue(JobId("job.paused"), At(0), At(5), "paused-queue-s0", At(0));
         }
 
         private async Task<FormToken> ReadFormToken(HttpClient client, string path)
@@ -1711,7 +1711,7 @@ namespace KoLite.LocalApp.Tests
             using var document = JsonDocument.Parse(match.Groups["json"].Value);
             return document.RootElement.GetProperty("series")
                 .EnumerateArray()
-                .Select(series => series.GetProperty("name").GetString() ?? string.Empty)
+                .Select(series => series.GetProperty("jobId").GetString() ?? string.Empty)
                 .ToArray();
         }
 
@@ -1751,10 +1751,17 @@ namespace KoLite.LocalApp.Tests
                 }
             });
 
+        private static string JobId(string activityId)
+        {
+            var bytes = System.Security.Cryptography.MD5.HashData(System.Text.Encoding.UTF8.GetBytes(activityId));
+            return new Guid(bytes).ToString("N");
+        }
+
         private static string Schedule(string activityId, string functionName, bool isPaused, string outputTable = "Output", int maxParallelism = 1, string queryWindowSize = "00:05:00", string? folder = null, IReadOnlyList<string>? tags = null, string? endOn = null)
         {
             var schedule = $$"""
             {
+              "id": "{{JobId(activityId)}}",
               "activityId": "{{activityId}}",
               "functionName": "{{functionName}}",
               "outputTable": "{{outputTable}}",

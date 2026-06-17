@@ -169,6 +169,33 @@ Rerun is blocked while any affected slice is queued, leased, or running.
 
 Back up the SQLite database before service upgrades, hard deletes, repair experiments, or large reruns.
 
+## GUID identity upgrade (schema v6)
+
+Schema v6 is a one-time, in-place re-key that makes each job's permanent identity an opaque GUID
+(`job_definitions.job_id`) and turns `activityId` into a mutable, unique display label. No jobs are
+deleted or recreated; existing rows are migrated in place when the app next opens the database.
+
+Run the upgrade with the app **stopped and gracefully drained** so no slices are in-flight:
+
+1. **Drain and stop** the running instance with `scripts\Stop-KoLiteApp.ps1` (graceful drain — lets
+   active slices record final state). Do not hard-kill; an in-flight slice that ingested but did not
+   complete could re-execute after the re-key.
+2. **Back up** the SQLite file (copy it, or `VACUUM INTO` a dated copy).
+3. **Rehearse first on a copy**: point a throwaway instance/connection at the backup copy and confirm
+   the migration applies and the verification queries pass (per-table row counts unchanged except the
+   re-keyed columns; no orphan foreign keys; no NULL `activity_id`).
+4. **Apply** to the real database by starting the app (or running the migrator) once; verify again.
+5. **Restart** KO Lite normally.
+
+The upgrade is one-way: to roll back, restore the pre-migration backup.
+
+**Kusto idempotency note.** The re-key changes the `ingestIfNotExists`/`ingest-by` tag basis from
+`activityId` to the GUID. Output already in Kusto keeps its old activityId-based extent tag, which the
+SQLite migration cannot rewrite. Draining before the upgrade removes the crash-retry path. The one
+remaining case to avoid: a **repair with the `ExecuteNoCleanup` strategy on a slice that completed
+before the upgrade** can double-ingest, because the new GUID-based tag will not match the old extent.
+For such slices use `CleanSliceOutputThenExecute` or the rerun cleanup flow instead.
+
 ## Troubleshooting
 
 - **Port in use:** add `--KoLite:Urls=http://127.0.0.1:5058`.

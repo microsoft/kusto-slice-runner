@@ -102,6 +102,31 @@ namespace KoLite.LocalApp
                 }
             });
 
+            // Bookmark continuity after the activityId -> GUID re-key: a GET to /jobs/{x} or
+            // /catalog/{x}/... where {x} is not a known job id but matches a job's activityId
+            // redirects to the canonical GUID URL.
+            app.Use(async (context, next) =>
+            {
+                var path = context.Request.Path.Value;
+                if (HttpMethods.IsGet(context.Request.Method) && path is not null)
+                {
+                    var segments = path.Split('/');
+                    if (segments.Length >= 3 && (segments[1] == "jobs" || segments[1] == "catalog") && segments[2].Length > 0)
+                    {
+                        var candidate = Uri.UnescapeDataString(segments[2]);
+                        var catalog = context.RequestServices.GetRequiredService<SqliteJobCatalogRepository>();
+                        if (catalog.Get(candidate) is null && catalog.GetByActivityId(candidate) is { } resolved)
+                        {
+                            segments[2] = Uri.EscapeDataString(resolved.JobId);
+                            context.Response.Redirect(string.Join('/', segments) + context.Request.QueryString.Value, permanent: false);
+                            return;
+                        }
+                    }
+                }
+
+                await next(context);
+            });
+
             app.UseStaticFiles();
 
             app.MapGet("/status/health", (
@@ -547,8 +572,8 @@ namespace KoLite.LocalApp
         public void RecordStarted(LocalWorkerProgressEvent progress)
         {
             logger.LogInformation(
-                "Job slice started for activity {ActivityId}: slice {SliceStartUtc:O} to {SliceEndUtc:O}, attempt {Attempt}.",
-                progress.ActivityId,
+                "Job slice started for job {JobId}: slice {SliceStartUtc:O} to {SliceEndUtc:O}, attempt {Attempt}.",
+                progress.JobId,
                 progress.SliceStartUtc,
                 progress.SliceEndUtc,
                 progress.Attempt);
@@ -559,8 +584,8 @@ namespace KoLite.LocalApp
             if (progress.Status == LocalWorkerProgressStatus.Succeeded)
             {
                 logger.LogInformation(
-                    "Job slice finished for activity {ActivityId}: slice {SliceStartUtc:O} to {SliceEndUtc:O}, attempt {Attempt}, status {CompletionStatus}.",
-                    progress.ActivityId,
+                    "Job slice finished for job {JobId}: slice {SliceStartUtc:O} to {SliceEndUtc:O}, attempt {Attempt}, status {CompletionStatus}.",
+                    progress.JobId,
                     progress.SliceStartUtc,
                     progress.SliceEndUtc,
                     progress.Attempt,
@@ -571,8 +596,8 @@ namespace KoLite.LocalApp
             if (progress.Status == LocalWorkerProgressStatus.DeadLettered)
             {
                 logger.LogError(
-                    "Job slice finished for activity {ActivityId}: slice {SliceStartUtc:O} to {SliceEndUtc:O}, attempt {Attempt}, status {CompletionStatus}, error {ErrorCode}: {ErrorMessage}.",
-                    progress.ActivityId,
+                    "Job slice finished for job {JobId}: slice {SliceStartUtc:O} to {SliceEndUtc:O}, attempt {Attempt}, status {CompletionStatus}, error {ErrorCode}: {ErrorMessage}.",
+                    progress.JobId,
                     progress.SliceStartUtc,
                     progress.SliceEndUtc,
                     progress.Attempt,
@@ -583,8 +608,8 @@ namespace KoLite.LocalApp
             }
 
             logger.LogWarning(
-                "Job slice finished for activity {ActivityId}: slice {SliceStartUtc:O} to {SliceEndUtc:O}, attempt {Attempt}, status {CompletionStatus}, error {ErrorCode}: {ErrorMessage}.",
-                progress.ActivityId,
+                "Job slice finished for job {JobId}: slice {SliceStartUtc:O} to {SliceEndUtc:O}, attempt {Attempt}, status {CompletionStatus}, error {ErrorCode}: {ErrorMessage}.",
+                progress.JobId,
                 progress.SliceStartUtc,
                 progress.SliceEndUtc,
                 progress.Attempt,

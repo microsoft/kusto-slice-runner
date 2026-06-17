@@ -41,7 +41,7 @@ For targeted changes, run the narrow relevant test project first, then decide wh
 - Treat local SQLite files as durable user runtime state. Do not reset or delete them unless the user explicitly requests it and the existing code path requires confirmation.
 - The local app should use the real Kusto output writer for user-facing execution. Test projects may use in-memory or fake executors where they already exist.
 - Scheduler enqueue behavior and worker claim/execution behavior are separate. Preserve per-job `maxParallelism`, global worker concurrency, visibility/query timeout leases, pause/delete state, and dependency readiness semantics.
-- Schedule JSON import/export accepts a single schedule object or an array. The parser rejects unknown top-level fields, unknown `target` fields, and unknown `dependsOn` entry fields.
+- Schedule JSON import/export accepts a single schedule object or an array. The parser rejects unknown top-level fields, unknown `target` fields, and unknown `dependsOn` entry fields. A job's permanent identity is an opaque GUID `id` (server-assigned, immutable); `activityId` is a mutable, unique display label. Imports match by `id` when present (enabling rename = same `id`, new `activityId`), else by `activityId`. `dependsOn` entries reference an upstream by `id` and/or `activityId` and are stored by GUID.
 - For `.csl` and `.kql`, follow `.github\instructions\kusto.instructions.md`.
 
 ## Kusto safety

@@ -9,13 +9,13 @@ namespace KoLite.Local.Core.Schedules
     {
         private static readonly HashSet<string> AllowedTopLevel = new(StringComparer.Ordinal)
         {
-            "activityId", "functionName", "outputTable", "queryWindowSize", "delayFromUtcNow",
+            "id", "activityId", "functionName", "outputTable", "queryWindowSize", "delayFromUtcNow",
             "maxParallelism", "queryTimeout", "isPaused", "startFrom", "endOn", "folder",
             "tags", "dependsOn", "jobSettings", "target"
         };
 
         private static readonly HashSet<string> AllowedTargetFields = new(StringComparer.Ordinal) { "clusterUri", "database" };
-        private static readonly HashSet<string> AllowedDependencyFields = new(StringComparer.Ordinal) { "activityId" };
+        private static readonly HashSet<string> AllowedDependencyFields = new(StringComparer.Ordinal) { "id", "activityId" };
 
         private static readonly JsonSerializerOptions JsonOptions = new()
         {
@@ -75,7 +75,8 @@ namespace KoLite.Local.Core.Schedules
                 }
 
                 var tags = ParseTags(doc.RootElement, activityId, errors);
-                var dependencies = ParseDependencies(doc.RootElement, dto, activityId, errors);
+                var id = ParseId(doc.RootElement, activityId, errors);
+                var dependencies = ParseDependencies(doc.RootElement, dto, id, activityId, errors);
                 var startFrom = ParseUtcIso8601(dto.StartFrom, "startFrom", activityId, errors);
                 var endOn = ParseUtcIso8601(dto.EndOn, "endOn", activityId, errors, required: false);
                 ValidateDto(dto, activityId, errors);
@@ -86,7 +87,7 @@ namespace KoLite.Local.Core.Schedules
                 }
 
                 return errors.Count == 0
-                    ? ScheduleValidationResult.Success(Map(dto, tags, dependencies, startFrom!.Value, endOn))
+                    ? ScheduleValidationResult.Success(Map(dto, id, tags, dependencies, startFrom!.Value, endOn))
                     : ScheduleValidationResult.Failed(errors);
             }
         }
@@ -154,7 +155,41 @@ namespace KoLite.Local.Core.Schedules
             return result;
         }
 
-        private static List<DependentJob> ParseDependencies(JsonElement root, ScheduleJsonDto dto, string? activityId, List<ScheduleValidationError> errors)
+        private static string? ParseId(JsonElement root, string? activityId, List<ScheduleValidationError> errors)
+        {
+            if (!root.TryGetProperty("id", out var id) || id.ValueKind == JsonValueKind.Null)
+            {
+                return null;
+            }
+
+            if (id.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(id.GetString()))
+            {
+                errors.Add(new ScheduleValidationError(activityId, "id", "id must be a non-empty GUID string when present."));
+                return null;
+            }
+
+            if (!TryNormalizeGuid(id.GetString(), out var normalized))
+            {
+                errors.Add(new ScheduleValidationError(activityId, "id", $"id must be a valid GUID; got '{id.GetString()}'."));
+                return null;
+            }
+
+            return normalized;
+        }
+
+        private static bool TryNormalizeGuid(string? raw, out string normalized)
+        {
+            if (!string.IsNullOrWhiteSpace(raw) && Guid.TryParse(raw, out var guid))
+            {
+                normalized = guid.ToString("N");
+                return true;
+            }
+
+            normalized = string.Empty;
+            return false;
+        }
+
+        private static List<DependentJob> ParseDependencies(JsonElement root, ScheduleJsonDto dto, string? selfId, string? activityId, List<ScheduleValidationError> errors)
         {
             var result = new List<DependentJob>();
             if (!root.TryGetProperty("dependsOn", out var deps) || deps.ValueKind == JsonValueKind.Null)
@@ -187,20 +222,46 @@ namespace KoLite.Local.Core.Schedules
                     }
                 }
 
-                var depActivityId = entry.TryGetProperty("activityId", out var id) && id.ValueKind == JsonValueKind.String ? id.GetString() : null;
-                if (string.IsNullOrWhiteSpace(depActivityId))
+                var depRawId = entry.TryGetProperty("id", out var idEl) && idEl.ValueKind == JsonValueKind.String ? idEl.GetString() : null;
+                var depActivityId = entry.TryGetProperty("activityId", out var actEl) && actEl.ValueKind == JsonValueKind.String ? actEl.GetString() : null;
+                var hasId = !string.IsNullOrWhiteSpace(depRawId);
+                var hasActivityId = !string.IsNullOrWhiteSpace(depActivityId);
+
+                if (!hasId && !hasActivityId)
                 {
-                    errors.Add(new ScheduleValidationError(activityId, $"{path}.activityId", $"{path}.activityId is required and must be a non-empty string."));
-                }
-                else if (string.Equals(depActivityId, dto.ActivityId, StringComparison.Ordinal))
-                {
-                    errors.Add(new ScheduleValidationError(activityId, path, $"{path} declares self-dependency on '{dto.ActivityId}'."));
-                }
-                else
-                {
-                    result.Add(new DependentJob { ActivityId = depActivityId });
+                    errors.Add(new ScheduleValidationError(activityId, path, $"{path} must specify an upstream 'id' or 'activityId'."));
+                    index++;
+                    continue;
                 }
 
+                string? depId = null;
+                if (hasId)
+                {
+                    if (!TryNormalizeGuid(depRawId, out var normalizedDepId))
+                    {
+                        errors.Add(new ScheduleValidationError(activityId, $"{path}.id", $"{path}.id must be a valid GUID; got '{depRawId}'."));
+                        index++;
+                        continue;
+                    }
+
+                    depId = normalizedDepId;
+                }
+
+                if (depId is not null && selfId is not null && string.Equals(depId, selfId, StringComparison.Ordinal))
+                {
+                    errors.Add(new ScheduleValidationError(activityId, path, $"{path} declares self-dependency on id '{selfId}'."));
+                    index++;
+                    continue;
+                }
+
+                if (hasActivityId && string.Equals(depActivityId, dto.ActivityId, StringComparison.Ordinal))
+                {
+                    errors.Add(new ScheduleValidationError(activityId, path, $"{path} declares self-dependency on '{dto.ActivityId}'."));
+                    index++;
+                    continue;
+                }
+
+                result.Add(new DependentJob { Id = depId, ActivityId = hasActivityId ? depActivityId : null });
                 index++;
             }
 
@@ -273,8 +334,9 @@ namespace KoLite.Local.Core.Schedules
             if (Blank(target.Database)) errors.Add(new ScheduleValidationError(activityId, "target.database", "target.database is required and must be a non-empty string."));
         }
 
-        private static JobDefinition Map(ScheduleJsonDto dto, IReadOnlyList<string> tags, IReadOnlyList<DependentJob> dependencies, DateTimeOffset startFrom, DateTimeOffset? endOn) => new()
+        private static JobDefinition Map(ScheduleJsonDto dto, string? id, IReadOnlyList<string> tags, IReadOnlyList<DependentJob> dependencies, DateTimeOffset startFrom, DateTimeOffset? endOn) => new()
         {
+            Id = id,
             ActivityId = dto.ActivityId!,
             FunctionName = dto.FunctionName!,
             OutputTable = dto.OutputTable!,

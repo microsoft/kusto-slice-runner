@@ -15,11 +15,13 @@ authoring skill `ko-lite-schedule-json` does not upload.
   cleanup, or repair surface.
 - **Validated path.** Every write goes through the same
   `SqliteJobCatalogRepository.Import` path the dashboard import uses, so strict
-  schedule parsing, started-job mutation policy (immutable `activityId`,
-  `queryWindowSize`, `startFrom`), catalog versioning, audit events, and tag
-  normalization all apply, inside one transaction.
-- **Additive and update-only.** Matching `activityId`s are updated, new ones are
-  created, and omitted jobs are never deleted.
+  schedule parsing, started-job mutation policy (immutable permanent `id`;
+  `queryWindowSize`/`startFrom` read-only after a job starts; `activityId` is a
+  mutable display label), catalog versioning, audit events, and tag normalization
+  all apply, inside one transaction.
+- **Additive and update-only.** An item matches an existing job by `id` when present
+  (a **rename** is same `id`, new `activityId`), else by `activityId`; new ones are
+  created (a supplied `id` is preserved, else minted); omitted jobs are never deleted.
 - **Loopback-only.** Every `/api` route is restricted to loopback callers. The
   app also binds `http://127.0.0.1:5057` by default. There is no auth token; the
   loopback boundary is the control.
@@ -33,8 +35,8 @@ Base URL defaults to `http://127.0.0.1:5057`.
 
 | Method | Route | Purpose |
 | --- | --- | --- |
-| GET | `/api/jobs` | `{ "jobs": [ ... ] }` of summaries: `jobId`, `displayName`, `isEnabled`, `isSoftDeleted`, `hasStarted`, `isPaused`, `tags`, `target { clusterUri, database }`, `catalogVersion`, `createdAtUtc`, `updatedAtUtc`. |
-| GET | `/api/jobs/{jobId}` | `{ "job": { ...summary }, "schedule": { ...canonical import-compatible object } }`. `404` with `{ "error" }` when the job does not exist. |
+| GET | `/api/jobs` | `{ "jobs": [ ... ] }` of summaries: `jobId` (permanent GUID), `displayName` (the activityId label), `isEnabled`, `isSoftDeleted`, `hasStarted`, `isPaused`, `tags`, `target { clusterUri, database }`, `catalogVersion`, `createdAtUtc`, `updatedAtUtc`. |
+| GET | `/api/jobs/{jobId}` | `{ "job": { ...summary }, "schedule": { ...canonical import-compatible object, including its `id` } }`. `{jobId}` is the permanent GUID. `404` with `{ "error" }` when the job does not exist. |
 | GET | `/api/jobs/export` | Import-compatible JSON **array** of every non-soft-deleted job (same payload as the dashboard **Export all**). |
 | POST | `/api/jobs/import` | Body is schedule JSON (single object **or** array). Returns `{ "created", "updated", "total", "items": [ { "jobId", "action", "catalogVersion" } ] }`. `400` with `{ "error" }` on JSON, validation, or mutation-policy failure. |
 

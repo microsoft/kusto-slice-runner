@@ -12,7 +12,7 @@ namespace KoLite.LocalApp.Ui
         public string BucketLabel => BucketStartUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
     }
 
-    public sealed record SuccessRateSeries(string Name, IReadOnlyList<SuccessRatePoint> Points)
+    public sealed record SuccessRateSeries(string JobId, string Name, IReadOnlyList<SuccessRatePoint> Points)
     {
         public SuccessRatePoint? LatestPoint => Points.LastOrDefault(p => p.Denominator > 0);
     }
@@ -141,6 +141,7 @@ namespace KoLite.LocalApp.Ui
             var since = AlignDown(clock.UtcNow.Subtract(range), bucketSize);
             var includedJobIds = jobIds?.ToHashSet(StringComparer.Ordinal);
             var chartJobIds = GetJobIds(includedJobIds);
+            var labels = GetJobLabels();
             var buckets = EnumerateBuckets(since, until, bucketSize);
 
             var attemptCounts = InitializeCounts(chartJobIds, buckets.Count);
@@ -156,8 +157,8 @@ namespace KoLite.LocalApp.Ui
             }
 
             return new DashboardCharts(
-                BuildChart("Success Rate By Function", chartJobIds, buckets, attemptCounts, since, until, bucketSize),
-                BuildChart("Success Rate After Retries by function", chartJobIds, buckets, finalCounts, since, until, bucketSize));
+                BuildChart("Success Rate By Function", chartJobIds, labels, buckets, attemptCounts, since, until, bucketSize),
+                BuildChart("Success Rate After Retries by function", chartJobIds, labels, buckets, finalCounts, since, until, bucketSize));
         }
 
         public JobDetailsCharts GetJobDetailsCharts(string jobId, TimeSpan range)
@@ -200,6 +201,21 @@ namespace KoLite.LocalApp.Ui
             }
 
             return results;
+        }
+
+        private IReadOnlyDictionary<string, string> GetJobLabels()
+        {
+            using var connection = connectionFactory.OpenConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = "SELECT job_id, activity_id FROM job_definitions;";
+            using var reader = command.ExecuteReader();
+            var labels = new Dictionary<string, string>(StringComparer.Ordinal);
+            while (reader.Read())
+            {
+                labels[reader.GetString(0)] = reader.IsDBNull(1) ? reader.GetString(0) : reader.GetString(1);
+            }
+
+            return labels;
         }
 
         private JobAttemptResultChart BuildJobAttemptResultChart(string jobId, IReadOnlyList<DateTimeOffset> buckets, DateTimeOffset since, DateTimeOffset until, TimeSpan bucketSize)
@@ -550,6 +566,7 @@ namespace KoLite.LocalApp.Ui
         private static SuccessRateChart BuildChart(
             string title,
             IReadOnlyList<string> jobIds,
+            IReadOnlyDictionary<string, string> labels,
             IReadOnlyList<DateTimeOffset> buckets,
             IReadOnlyDictionary<string, BucketCounts[]> counts,
             DateTimeOffset since,
@@ -559,6 +576,7 @@ namespace KoLite.LocalApp.Ui
             var series = jobIds
                 .Select(jobId => new SuccessRateSeries(
                     jobId,
+                    labels.TryGetValue(jobId, out var label) ? label : jobId,
                     buckets.Select((bucket, index) => new SuccessRatePoint(bucket, counts[jobId][index].Numerator, counts[jobId][index].Denominator)).ToArray()))
                 .ToArray();
             return new SuccessRateChart(title, series, since, until, bucketSize);

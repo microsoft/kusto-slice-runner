@@ -31,20 +31,23 @@ namespace KoLite.LocalApp.Tests
         public void Retry_success_counts_as_half_attempt_success_and_full_final_success()
         {
             catalog.Create(Schedule("job.chart"));
-            state.Append("queued-chart", "job.chart", At(60), At(65), DurableSliceStatus.Queued, expectedVersion: 0);
-            var firstLease = state.AcquireLease("lease-chart-1", "job.chart", At(60), At(65), "worker", TimeSpan.FromMinutes(10), At(66));
+            state.Append("queued-chart", JobId("job.chart"), At(60), At(65), DurableSliceStatus.Queued, expectedVersion: 0);
+            var firstLease = state.AcquireLease("lease-chart-1", JobId("job.chart"), At(60), At(65), "worker", TimeSpan.FromMinutes(10), At(66));
             Assert.NotNull(firstLease);
-            Assert.True(state.FailLease("fail-chart-1", "job.chart", At(60), At(65), "worker", firstLease.LeaseToken!, At(67), "transient"));
-            var retryLease = state.AcquireLease("lease-chart-2", "job.chart", At(60), At(65), "worker", TimeSpan.FromMinutes(10), At(68));
+            Assert.True(state.FailLease("fail-chart-1", JobId("job.chart"), At(60), At(65), "worker", firstLease.LeaseToken!, At(67), "transient"));
+            var retryLease = state.AcquireLease("lease-chart-2", JobId("job.chart"), At(60), At(65), "worker", TimeSpan.FromMinutes(10), At(68));
             Assert.NotNull(retryLease);
-            Assert.True(state.CompleteLease("complete-chart-2", "job.chart", At(60), At(65), "worker", retryLease.LeaseToken!, At(69)));
-            readModels.RecordAttempt("attempt-chart-1", "job.chart", At(60), At(65), 1, "FailedRetryable", "worker", At(66), At(67), "Transient", "try again");
-            readModels.RecordAttempt("attempt-chart-2", "job.chart", At(60), At(65), 2, "Succeeded", "worker", At(68), At(69));
+            Assert.True(state.CompleteLease("complete-chart-2", JobId("job.chart"), At(60), At(65), "worker", retryLease.LeaseToken!, At(69)));
+            readModels.RecordAttempt("attempt-chart-1", JobId("job.chart"), At(60), At(65), 1, "FailedRetryable", "worker", At(66), At(67), "Transient", "try again");
+            readModels.RecordAttempt("attempt-chart-2", JobId("job.chart"), At(60), At(65), 2, "Succeeded", "worker", At(68), At(69));
             var query = new JobChartQuery(factory, new ManualClock(At(120)));
 
             var charts = query.GetDashboardCharts(TimeSpan.FromDays(1));
-            var attemptPoint = charts.FirstAttemptSuccess.Series.Single(s => s.Name == "job.chart").Points.Single(p => p.Denominator == 2);
-            var finalPoint = charts.SuccessAfterRetries.Series.Single(s => s.Name == "job.chart").Points.Single(p => p.Denominator == 1);
+            var attemptPoint = charts.FirstAttemptSuccess.Series.Single(s => s.JobId == JobId("job.chart")).Points.Single(p => p.Denominator == 2);
+            var finalPoint = charts.SuccessAfterRetries.Series.Single(s => s.JobId == JobId("job.chart")).Points.Single(p => p.Denominator == 1);
+
+            // The series correlates by GUID but is labelled with the friendly activityId.
+            Assert.Equal("job.chart", charts.FirstAttemptSuccess.Series.Single(s => s.JobId == JobId("job.chart")).Name);
 
             Assert.Equal(1, attemptPoint.Numerator);
             Assert.Equal(50.0, attemptPoint.Percent);
@@ -57,16 +60,17 @@ namespace KoLite.LocalApp.Tests
         {
             catalog.Create(Schedule("job.chart.selected"));
             catalog.Create(Schedule("job.chart.other"));
-            state.Append("slice-selected", "job.chart.selected", At(60), At(65), DurableSliceStatus.Completed, expectedVersion: 0);
-            state.Append("slice-other", "job.chart.other", At(60), At(65), DurableSliceStatus.Completed, expectedVersion: 0);
-            readModels.RecordAttempt("attempt-selected", "job.chart.selected", At(60), At(65), 1, "Succeeded", "worker", At(60), At(61));
-            readModels.RecordAttempt("attempt-other", "job.chart.other", At(60), At(65), 1, "Succeeded", "worker", At(60), At(61));
+            state.Append("slice-selected", JobId("job.chart.selected"), At(60), At(65), DurableSliceStatus.Completed, expectedVersion: 0);
+            state.Append("slice-other", JobId("job.chart.other"), At(60), At(65), DurableSliceStatus.Completed, expectedVersion: 0);
+            readModels.RecordAttempt("attempt-selected", JobId("job.chart.selected"), At(60), At(65), 1, "Succeeded", "worker", At(60), At(61));
+            readModels.RecordAttempt("attempt-other", JobId("job.chart.other"), At(60), At(65), 1, "Succeeded", "worker", At(60), At(61));
             var query = new JobChartQuery(factory, new ManualClock(At(120)));
 
-            var charts = query.GetDashboardCharts(TimeSpan.FromDays(1), ["job.chart.selected"]);
+            var charts = query.GetDashboardCharts(TimeSpan.FromDays(1), [JobId("job.chart.selected")]);
 
+            Assert.Equal([JobId("job.chart.selected")], charts.FirstAttemptSuccess.Series.Select(series => series.JobId).ToArray());
+            Assert.Equal([JobId("job.chart.selected")], charts.SuccessAfterRetries.Series.Select(series => series.JobId).ToArray());
             Assert.Equal(["job.chart.selected"], charts.FirstAttemptSuccess.Series.Select(series => series.Name).ToArray());
-            Assert.Equal(["job.chart.selected"], charts.SuccessAfterRetries.Series.Select(series => series.Name).ToArray());
             Assert.True(charts.FirstAttemptSuccess.HasData);
         }
 
@@ -88,19 +92,19 @@ namespace KoLite.LocalApp.Tests
         {
             catalog.Create(Schedule("job.chart"));
             catalog.Create(Schedule("job.other"));
-            state.Append("result-slice", "job.chart", At(60), At(65), DurableSliceStatus.Completed, expectedVersion: 0);
-            state.Append("other-result-slice", "job.other", At(60), At(65), DurableSliceStatus.Completed, expectedVersion: 0);
-            readModels.RecordAttempt("result-success", "job.chart", At(60), At(65), 1, "Succeeded", "worker", At(60), At(61));
-            readModels.RecordAttempt("result-retry", "job.chart", At(60), At(65), 2, "FailedRetryable", "worker", At(61), At(62));
-            readModels.RecordAttempt("result-failed", "job.chart", At(60), At(65), 3, "Failed", "worker", At(62), At(63));
-            readModels.RecordAttempt("result-deadletter", "job.chart", At(60), At(65), 4, "DeadLettered", "worker", At(63), At(64));
-            readModels.RecordAttempt("result-lease-lost", "job.chart", At(60), At(65), 5, "LeaseLost", "worker", At(64), At(65));
-            readModels.RecordAttempt("result-started", "job.chart", At(60), At(65), 6, "Started", "worker", At(65), null);
-            readModels.RecordAttempt("result-unknown", "job.chart", At(60), At(65), 7, "Unexpected", "worker", At(65), At(66));
-            readModels.RecordAttempt("other-success", "job.other", At(60), At(65), 1, "Succeeded", "worker", At(60), At(61));
+            state.Append("result-slice", JobId("job.chart"), At(60), At(65), DurableSliceStatus.Completed, expectedVersion: 0);
+            state.Append("other-result-slice", JobId("job.other"), At(60), At(65), DurableSliceStatus.Completed, expectedVersion: 0);
+            readModels.RecordAttempt("result-success", JobId("job.chart"), At(60), At(65), 1, "Succeeded", "worker", At(60), At(61));
+            readModels.RecordAttempt("result-retry", JobId("job.chart"), At(60), At(65), 2, "FailedRetryable", "worker", At(61), At(62));
+            readModels.RecordAttempt("result-failed", JobId("job.chart"), At(60), At(65), 3, "Failed", "worker", At(62), At(63));
+            readModels.RecordAttempt("result-deadletter", JobId("job.chart"), At(60), At(65), 4, "DeadLettered", "worker", At(63), At(64));
+            readModels.RecordAttempt("result-lease-lost", JobId("job.chart"), At(60), At(65), 5, "LeaseLost", "worker", At(64), At(65));
+            readModels.RecordAttempt("result-started", JobId("job.chart"), At(60), At(65), 6, "Started", "worker", At(65), null);
+            readModels.RecordAttempt("result-unknown", JobId("job.chart"), At(60), At(65), 7, "Unexpected", "worker", At(65), At(66));
+            readModels.RecordAttempt("other-success", JobId("job.other"), At(60), At(65), 1, "Succeeded", "worker", At(60), At(61));
             var query = new JobChartQuery(factory, new ManualClock(At(120)));
 
-            var charts = query.GetJobDetailsCharts("job.chart", TimeSpan.FromDays(1));
+            var charts = query.GetJobDetailsCharts(JobId("job.chart"), TimeSpan.FromDays(1));
             var point = charts.AttemptResults.Points.Single(p => p.TotalCount > 0);
 
             Assert.Equal("Query Results by Time of Execution", charts.AttemptResults.Title);
@@ -115,14 +119,14 @@ namespace KoLite.LocalApp.Tests
         public void Per_job_duration_chart_uses_metrics_then_started_completed_fallback()
         {
             catalog.Create(Schedule("job.chart"));
-            state.Append("duration-slice", "job.chart", At(60), At(65), DurableSliceStatus.Completed, expectedVersion: 0);
-            readModels.RecordAttempt("duration-metric", "job.chart", At(60), At(65), 1, "Succeeded", "worker", At(60), At(65), metricsJson: "{\"queryDurationMs\":120000}");
-            readModels.RecordAttempt("duration-fallback", "job.chart", At(60), At(65), 2, "Started", "worker", At(70), null);
-            readModels.RecordAttempt("duration-fallback", "job.chart", At(60), At(65), 2, "Succeeded", "worker", null, At(75));
-            readModels.RecordAttempt("duration-retry", "job.chart", At(60), At(65), 3, "FailedRetryable", "worker", At(75), At(76));
+            state.Append("duration-slice", JobId("job.chart"), At(60), At(65), DurableSliceStatus.Completed, expectedVersion: 0);
+            readModels.RecordAttempt("duration-metric", JobId("job.chart"), At(60), At(65), 1, "Succeeded", "worker", At(60), At(65), metricsJson: "{\"queryDurationMs\":120000}");
+            readModels.RecordAttempt("duration-fallback", JobId("job.chart"), At(60), At(65), 2, "Started", "worker", At(70), null);
+            readModels.RecordAttempt("duration-fallback", JobId("job.chart"), At(60), At(65), 2, "Succeeded", "worker", null, At(75));
+            readModels.RecordAttempt("duration-retry", JobId("job.chart"), At(60), At(65), 3, "FailedRetryable", "worker", At(75), At(76));
             var query = new JobChartQuery(factory, new ManualClock(At(120)));
 
-            var charts = query.GetJobDetailsCharts("job.chart", TimeSpan.FromDays(1));
+            var charts = query.GetJobDetailsCharts(JobId("job.chart"), TimeSpan.FromDays(1));
             var point = charts.SuccessfulDurations.Points.Single(p => p.Count > 0);
 
             Assert.Equal("Successful Query Duration by Time of Execution", charts.SuccessfulDurations.Title);
@@ -141,15 +145,15 @@ namespace KoLite.LocalApp.Tests
         public void Per_job_duration_chart_recovers_started_time_from_running_state_events_and_counts_missing_samples()
         {
             catalog.Create(Schedule("job.chart"));
-            var recoveredLease = state.AcquireLease("recover-running", "job.chart", At(60), At(65), "worker", TimeSpan.FromMinutes(10), At(70));
+            var recoveredLease = state.AcquireLease("recover-running", JobId("job.chart"), At(60), At(65), "worker", TimeSpan.FromMinutes(10), At(70));
             Assert.NotNull(recoveredLease);
-            Assert.True(state.CompleteLease("recover-complete", "job.chart", At(60), At(65), "worker", recoveredLease.LeaseToken!, At(75)));
-            readModels.RecordAttempt("duration-recovered", "job.chart", At(60), At(65), 1, "Succeeded", "worker", null, At(75));
-            state.Append("missing-duration-complete", "job.chart", At(80), At(85), DurableSliceStatus.Completed, expectedVersion: 0);
-            readModels.RecordAttempt("duration-missing", "job.chart", At(80), At(85), 1, "Succeeded", "worker", null, At(85));
+            Assert.True(state.CompleteLease("recover-complete", JobId("job.chart"), At(60), At(65), "worker", recoveredLease.LeaseToken!, At(75)));
+            readModels.RecordAttempt("duration-recovered", JobId("job.chart"), At(60), At(65), 1, "Succeeded", "worker", null, At(75));
+            state.Append("missing-duration-complete", JobId("job.chart"), At(80), At(85), DurableSliceStatus.Completed, expectedVersion: 0);
+            readModels.RecordAttempt("duration-missing", JobId("job.chart"), At(80), At(85), 1, "Succeeded", "worker", null, At(85));
             var query = new JobChartQuery(factory, new ManualClock(At(120)));
 
-            var charts = query.GetJobDetailsCharts("job.chart", TimeSpan.FromDays(1));
+            var charts = query.GetJobDetailsCharts(JobId("job.chart"), TimeSpan.FromDays(1));
             var point = charts.SuccessfulDurations.Points.Single(p => p.Count > 0 || p.MissingDurationCount > 0);
 
             Assert.True(charts.SuccessfulDurations.HasData);
@@ -169,7 +173,7 @@ namespace KoLite.LocalApp.Tests
             catalog.Create(Schedule("job.chart"));
             var query = new JobChartQuery(factory, new ManualClock(At(120)));
 
-            var charts = query.GetJobDetailsCharts("job.chart", TimeSpan.FromHours(1));
+            var charts = query.GetJobDetailsCharts(JobId("job.chart"), TimeSpan.FromHours(1));
 
             Assert.False(charts.AttemptResults.HasData);
             Assert.False(charts.SuccessfulDurations.HasData);
@@ -185,8 +189,15 @@ namespace KoLite.LocalApp.Tests
 
         private static DateTimeOffset At(int minutes) => new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero).AddMinutes(minutes);
 
+        private static string JobId(string activityId)
+        {
+            var bytes = System.Security.Cryptography.MD5.HashData(System.Text.Encoding.UTF8.GetBytes(activityId));
+            return new Guid(bytes).ToString("N");
+        }
+
         private static string Schedule(string activityId) => $$"""
         {
+          "id": "{{JobId(activityId)}}",
           "activityId": "{{activityId}}",
           "functionName": "ChartFunction",
           "outputTable": "ChartOutput",

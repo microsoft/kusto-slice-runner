@@ -46,6 +46,7 @@ namespace KoLite.Local.Core.Schedules
             var items = new List<ScheduleImportItem>();
             var errors = new List<ScheduleValidationError>();
             var seenActivityIds = new Dictionary<string, int>(StringComparer.Ordinal);
+            var seenIds = new Dictionary<string, int>(StringComparer.Ordinal);
             var index = 0;
 
             foreach (var element in root.EnumerateArray())
@@ -66,6 +67,16 @@ namespace KoLite.Local.Core.Schedules
                     continue;
                 }
 
+                if (parsed.Definition.Id is { } id && seenIds.TryGetValue(id, out var firstIdIndex))
+                {
+                    errors.Add(new ScheduleValidationError(
+                        parsed.Definition.ActivityId,
+                        $"[{index}].id",
+                        $"Duplicate id '{id}' in import payload; first seen at item [{firstIdIndex}]."));
+                    index++;
+                    continue;
+                }
+
                 if (seenActivityIds.TryGetValue(parsed.Definition.ActivityId, out var firstIndex))
                 {
                     errors.Add(new ScheduleValidationError(
@@ -74,6 +85,11 @@ namespace KoLite.Local.Core.Schedules
                         $"Duplicate activityId '{parsed.Definition.ActivityId}' in import payload; first seen at item [{firstIndex}]."));
                     index++;
                     continue;
+                }
+
+                if (parsed.Definition.Id is { } definedId)
+                {
+                    seenIds.Add(definedId, index);
                 }
 
                 seenActivityIds.Add(parsed.Definition.ActivityId, index);

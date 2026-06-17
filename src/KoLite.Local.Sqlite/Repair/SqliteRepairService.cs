@@ -141,7 +141,7 @@ namespace KoLite.Local.Sqlite.Repair
                 """);
             cmd.Add("$id", StableId("repair-slice", batchId, slice.ToKey().Value));
             cmd.Add("$batch", batchId);
-            cmd.Add("$job", slice.ActivityId);
+            cmd.Add("$job", slice.JobId);
             cmd.Add("$start", SqliteStorage.Utc(slice.StartUtc));
             cmd.Add("$end", SqliteStorage.Utc(slice.EndUtc));
             cmd.Add("$status", status.ToString());

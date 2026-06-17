@@ -88,8 +88,9 @@ You are the KO Lite maintainer for this repository. Use this agent for KO Lite i
 
 ### Schedule JSON and catalog behavior
 
-- Preserve import/export compatibility: a single schedule object or an array is valid.
-- Respect immutable started-job fields such as `activityId`, `queryWindowSize`, and `startFrom`.
+- Preserve import/export compatibility: a single schedule object or an array is valid. Imports match an existing job by `id` when present (this is how a rename is applied — same `id`, new `activityId`), else by `activityId`, else create (preserving a supplied `id`, otherwise minting one).
+- The job's permanent identity is the opaque GUID `id` (immutable). `activityId` is a mutable, unique display label that can be renamed; `queryWindowSize` and `startFrom` remain read-only after a job has started.
+- Dependencies are stored by upstream GUID; `dependsOn` entries may reference the upstream by `activityId` and/or `id`, resolved to the GUID at create/import.
 - Preserve additive/update-only import behavior unless the user explicitly asks for replacement or deletion semantics.
 
 ## Validation

@@ -65,63 +65,63 @@ namespace KoLite.LocalApp.Tests
         {
             using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
 
-            await ImportSchedule(client, Schedule("e2e.downstream", maxParallelism: 10, dependsOn: "e2e.upstream"));
             await ImportSchedule(client, Schedule("e2e.upstream", maxParallelism: 10));
-            Assert.NotNull(catalog.Get("e2e.downstream"));
-            Assert.NotNull(catalog.Get("e2e.upstream"));
+            await ImportSchedule(client, Schedule("e2e.downstream", maxParallelism: 10, dependsOn: "e2e.upstream"));
+            Assert.NotNull(catalog.Get(JobId("e2e.downstream")));
+            Assert.NotNull(catalog.Get(JobId("e2e.upstream")));
 
             var scheduler = new SqliteLocalScheduler(catalog, state, queue, readModels, clock, new LocalSchedulerOptions(MaxSlicesPerTick: 20));
             var firstTick = scheduler.Tick();
             Assert.Equal(3, firstTick.DependencyBlocked);
-            Assert.Equal(DurableSliceStatus.DependencyBlocked, state.Get("e2e.downstream", At(0), At(5)).Status);
+            Assert.Equal(DurableSliceStatus.DependencyBlocked, state.Get(JobId("e2e.downstream"), At(0), At(5)).Status);
 
             var executor = new RecordingExecutor();
             var worker = new SqliteLocalWorker(catalog, state, queue, readModels, executor, clock, new LocalWorkerOptions(WorkerId: "e2e-test-worker"));
             await DrainWorker(worker);
             Assert.Equal(3, executor.Requests.Count);
-            Assert.All(executor.Requests, r => Assert.Equal("e2e.upstream", r.ActivityId));
-            Assert.Equal(DurableSliceStatus.Completed, state.Get("e2e.upstream", At(10), At(15)).Status);
+            Assert.All(executor.Requests, r => Assert.Equal(JobId("e2e.upstream"), r.JobId));
+            Assert.Equal(DurableSliceStatus.Completed, state.Get(JobId("e2e.upstream"), At(10), At(15)).Status);
 
             var secondTick = scheduler.Tick();
             Assert.Equal(3, secondTick.Enqueued);
             await DrainWorker(worker);
             Assert.Equal(6, executor.Requests.Count);
-            Assert.Equal(DurableSliceStatus.Completed, state.Get("e2e.downstream", At(0), At(5)).Status);
+            Assert.Equal(DurableSliceStatus.Completed, state.Get(JobId("e2e.downstream"), At(0), At(5)).Status);
 
             var dashboard = await client.GetStringAsync("/");
-            var history = await client.GetStringAsync("/jobs/e2e.downstream/history?from=2026-01-01T00%3A00%3A00Z&to=2026-01-01T00%3A15%3A00Z");
+            var history = await client.GetStringAsync($"/jobs/{JobId("e2e.downstream")}/history?from=2026-01-01T00%3A00%3A00Z&to=2026-01-01T00%3A15%3A00Z");
             Assert.Contains("KO Lite Local Dashboard", dashboard);
             Assert.Contains("e2e.downstream", dashboard);
             Assert.Contains("Slice History: e2e.downstream", history);
             Assert.Contains("class=\"cell completed\"", history);
 
             catalog.Create(Schedule("e2e.repair", maxParallelism: 10));
-            state.Append("repair-failed", "e2e.repair", At(5), At(10), DurableSliceStatus.Failed, expectedVersion: 0, reason: "test failure");
+            state.Append("repair-failed", JobId("e2e.repair"), At(5), At(10), DurableSliceStatus.Failed, expectedVersion: 0, reason: "test failure");
             var repair = new SqliteRepairService(sqlite, catalog, state, queue, clock);
-            var repairPlan = repair.PlanAndEnqueue(new RepairPlanRequest("e2e.repair", At(0), At(10), "e2e-test", "test repair execution"));
+            var repairPlan = repair.PlanAndEnqueue(new RepairPlanRequest(JobId("e2e.repair"), At(0), At(10), "e2e-test", "test repair execution"));
             Assert.Equal(2, repairPlan.Queued);
             await DrainWorker(worker);
-            Assert.Equal(DurableSliceStatus.Completed, state.Get("e2e.repair", At(0), At(5)).Status);
-            Assert.Equal(DurableSliceStatus.Completed, state.Get("e2e.repair", At(5), At(10)).Status);
-            Assert.Contains(executor.Requests, r => r.ActivityId == "e2e.repair");
+            Assert.Equal(DurableSliceStatus.Completed, state.Get(JobId("e2e.repair"), At(0), At(5)).Status);
+            Assert.Equal(DurableSliceStatus.Completed, state.Get(JobId("e2e.repair"), At(5), At(10)).Status);
+            Assert.Contains(executor.Requests, r => r.JobId == JobId("e2e.repair"));
 
             var lifecycle = new SqliteJobLifecycleService(sqlite, catalog);
             var life = catalog.Create(Schedule("e2e.lifecycle", maxParallelism: 1));
-            var softDeleted = lifecycle.SoftDelete("e2e.lifecycle", life.CatalogVersion, "e2e-test", "dry-run lifecycle safety");
+            var softDeleted = lifecycle.SoftDelete(JobId("e2e.lifecycle"), life.CatalogVersion, "e2e-test", "dry-run lifecycle safety");
             Assert.False(softDeleted.IsEnabled);
-            var restored = lifecycle.Restore("e2e.lifecycle", softDeleted.CatalogVersion, "e2e-test", "restore before purge");
+            var restored = lifecycle.Restore(JobId("e2e.lifecycle"), softDeleted.CatalogVersion, "e2e-test", "restore before purge");
             Assert.True(restored.IsEnabled);
-            var disabled = lifecycle.SoftDelete("e2e.lifecycle", restored.CatalogVersion, "e2e-test", "disable before hard-delete");
-            var purged = lifecycle.HardDelete("e2e.lifecycle", "DELETE e2e.lifecycle", "e2e-test", "local hard-delete safety path");
+            var disabled = lifecycle.SoftDelete(JobId("e2e.lifecycle"), restored.CatalogVersion, "e2e-test", "disable before hard-delete");
+            var purged = lifecycle.HardDelete(JobId("e2e.lifecycle"), $"DELETE {JobId("e2e.lifecycle")}", "e2e-test", "local hard-delete safety path");
             Assert.False(disabled.IsEnabled);
             Assert.Equal(1, purged.DeletedJobs);
-            Assert.Null(catalog.Get("e2e.lifecycle"));
+            Assert.Null(catalog.Get(JobId("e2e.lifecycle")));
             Assert.Equal(1, catalog.Create(Schedule("e2e.lifecycle", maxParallelism: 1)).CatalogVersion);
 
             catalog.Create(Schedule("e2e.summary", maxParallelism: 1));
-            state.Append("summary-failed", "e2e.summary", At(0), At(5), DurableSliceStatus.Failed, expectedVersion: 0, reason: "test summary failure");
+            state.Append("summary-failed", JobId("e2e.summary"), At(0), At(5), DurableSliceStatus.Failed, expectedVersion: 0, reason: "test summary failure");
             var runner = new CapturingFailureSummaryRunner();
-            var summary = await new SqliteFailureSummaryService(sqlite, runner).SummarizeRecentFailuresAsync("e2e.summary");
+            var summary = await new SqliteFailureSummaryService(sqlite, runner).SummarizeRecentFailuresAsync(JobId("e2e.summary"));
             Assert.Equal("Completed", summary.Status);
             Assert.Contains("Fake e2e failure summary", summary.SummaryMarkdown);
             Assert.Single(runner.Prompts);
@@ -200,8 +200,15 @@ namespace KoLite.LocalApp.Tests
 
         private static DateTimeOffset At(int minutes) => new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero).AddMinutes(minutes);
 
+        private static string JobId(string activityId)
+        {
+            var bytes = System.Security.Cryptography.MD5.HashData(System.Text.Encoding.UTF8.GetBytes(activityId));
+            return new Guid(bytes).ToString("N");
+        }
+
         private static string Schedule(string activityId, int maxParallelism, string? dependsOn = null) => $$"""
         {
+          "id": "{{JobId(activityId)}}",
           "activityId": "{{activityId}}",
           "functionName": "E2ETestFunction",
           "outputTable": "E2ETestOutput",

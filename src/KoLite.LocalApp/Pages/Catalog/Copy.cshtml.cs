@@ -34,6 +34,7 @@ namespace KoLite.LocalApp.Pages.Catalog
         private static string CopySchedule(string scheduleJson)
         {
             var node = JsonNode.Parse(scheduleJson)!.AsObject();
+            node.Remove("id");
             var activityId = node["activityId"]?.GetValue<string>() ?? "copied.job";
             node["activityId"] = $"{activityId}.copy";
             if (node["outputTable"] is not null)

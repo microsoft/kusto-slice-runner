@@ -23,11 +23,17 @@ The schedule contract is intentionally strict. Unknown top-level fields, unknown
 }
 ```
 
+A job's permanent identity is an opaque GUID `id` that KO Lite assigns. You normally omit `id`
+when authoring a new job (KO Lite mints one); exports always include it. `activityId` is a
+mutable, unique, human-facing label (a display name) — it can be renamed without affecting the
+durable `id`, dependency edges, slice history, or output idempotency.
+
 ## Fields
 
 | Field | Required | Notes |
 | --- | --- | --- |
-| `activityId` | Yes | Stable job identity. After execution history exists, this field is read-only. |
+| `id` | No | Opaque GUID permanent identity. Omit when creating (KO Lite mints one); preserved on export so export→import round-trips and matches an existing job for rename. Immutable once assigned. |
+| `activityId` | Yes | Mutable, unique, human-facing display label. May be renamed at any time. Used as a dependency alias and import match key when `id` is absent. |
 | `functionName` | Yes | Kusto function to invoke for each slice. Must be a safe Kusto identifier when executed. |
 | `outputTable` | Yes | Kusto table appended by `.set-or-append`. Must be a safe Kusto identifier when executed. |
 | `queryWindowSize` | Yes | Positive `TimeSpan`; each slice covers this window size. |
@@ -39,7 +45,7 @@ The schedule contract is intentionally strict. Unknown top-level fields, unknown
 | `endOn` | No | Optional UTC ISO-8601 timestamp. Must be greater than `startFrom` when present. |
 | `folder` | No | Existing output/Kusto-oriented metadata. It is not a UI grouping tag. |
 | `tags` | No | Optional array of job organization tags. Tags are trimmed, normalized to lowercase, deduplicated, and used by dashboard/catalog filters. |
-| `dependsOn` | No | Array of dependency objects with `activityId`. Self-dependencies are rejected. |
+| `dependsOn` | No | Array of dependency objects, each referencing an upstream by `id` (GUID) and/or `activityId`. KO Lite resolves `activityId` to the upstream's GUID and stores edges by `id`, so renames don't break dependencies. Self-dependencies are rejected. |
 | `jobSettings` | No | Optional JSON value passed as the third function argument when non-empty. |
 | `target.clusterUri` | Yes | Absolute HTTPS Kusto cluster URI. |
 | `target.database` | Yes | Kusto database name. |
@@ -56,7 +62,13 @@ The schedule contract is intentionally strict. Unknown top-level fields, unknown
 ]
 ```
 
-Dependencies block downstream slice readiness until the corresponding upstream slice is complete. Dependency objects only support `activityId`.
+Dependencies block downstream slice readiness until the corresponding upstream slice is complete.
+A dependency entry may reference the upstream by `activityId` (human-friendly), by `id` (the
+upstream's GUID, rename-safe and usable as a forward reference), or both. KO Lite resolves each
+entry to the upstream's GUID and **stores the edge by `id`**, so renaming an upstream does not
+break downstream dependencies. Referencing an upstream by `activityId` requires that upstream to
+already exist (in the catalog or the same import batch); otherwise reference it by `id`. Exports
+render each edge as `{ "id": ..., "activityId": ... }` for readability.
 
 ## Tags
 
@@ -68,6 +80,13 @@ Tags are local UI/catalog metadata for organizing jobs. They are separate from K
 
 ## Import/export behavior
 
-The import page accepts a single schedule object or an array of schedule objects. Imports are additive and update-only: matching `activityId` values are updated, missing jobs are created, and omitted jobs are left untouched.
+The import page accepts a single schedule object or an array of schedule objects. Imports are
+additive and update-only: an item matches an existing job by `id` when present (which is how a
+**rename** is applied — same `id`, new `activityId`), otherwise by `activityId`; unmatched items
+are created (a supplied `id` is preserved, else KO Lite mints one). Omitted jobs are left
+untouched. `activityId` uniqueness is enforced across the catalog.
 
-Exports are import-compatible. Export all emits every non-soft-deleted job; row/detail export emits one job. Multi-job exports (export all and bulk/selected export) are emitted as a JSON array sorted in ascending `activityId` (job id) order, so the output is deterministic and produces stable diffs regardless of insertion order.
+Exports are import-compatible and always include `id`. Export all emits every non-soft-deleted
+job; row/detail export emits one job. Multi-job exports are emitted as a JSON array sorted in
+ascending `activityId` (then `id`) order, so the output is deterministic and produces stable
+diffs regardless of insertion order.

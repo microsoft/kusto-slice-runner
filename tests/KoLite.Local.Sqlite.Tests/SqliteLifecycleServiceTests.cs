@@ -33,79 +33,79 @@ namespace KoLite.Local.Sqlite.Tests
         public void Soft_delete_hides_from_active_catalog_and_restore_reenables_with_history_intact()
         {
             var created = catalog.Create(Schedule("job.life"));
-            state.Append("complete", "job.life", At(0), At(5), DurableSliceStatus.Completed, expectedVersion: 0);
+            state.Append("complete", JobId("job.life"), At(0), At(5), DurableSliceStatus.Completed, expectedVersion: 0);
 
-            var deleted = Service().SoftDelete("job.life", created.CatalogVersion, "tester", "hide");
+            var deleted = Service().SoftDelete(JobId("job.life"), created.CatalogVersion, "tester", "hide");
             Assert.False(deleted.IsEnabled);
-            Assert.DoesNotContain(catalog.List(enabledOnly: true), j => j.JobId == "job.life");
+            Assert.DoesNotContain(catalog.List(enabledOnly: true), j => j.JobId == JobId("job.life"));
 
-            var restored = Service().Restore("job.life", deleted.CatalogVersion, "tester", "bring back");
+            var restored = Service().Restore(JobId("job.life"), deleted.CatalogVersion, "tester", "bring back");
 
             Assert.True(restored.IsEnabled);
-            Assert.Contains(catalog.List(enabledOnly: true), j => j.JobId == "job.life");
-            Assert.Equal(DurableSliceStatus.Completed, state.Get("job.life", At(0), At(5)).Status);
-            Assert.Contains(catalog.History("job.life"), e => e.EventType == "Disabled");
-            Assert.Contains(ReadScalarTexts("SELECT event_type FROM job_lifecycle_events WHERE job_id='job.life' ORDER BY recorded_at_utc;"), e => e == "SoftDeleted");
-            Assert.Contains(ReadScalarTexts("SELECT event_type FROM job_lifecycle_events WHERE job_id='job.life' ORDER BY recorded_at_utc;"), e => e == "Restored");
+            Assert.Contains(catalog.List(enabledOnly: true), j => j.JobId == JobId("job.life"));
+            Assert.Equal(DurableSliceStatus.Completed, state.Get(JobId("job.life"), At(0), At(5)).Status);
+            Assert.Contains(catalog.History(JobId("job.life")), e => e.EventType == "Disabled");
+            Assert.Contains(ReadScalarTexts($"SELECT event_type FROM job_lifecycle_events WHERE job_id='{JobId("job.life")}' ORDER BY recorded_at_utc;"), e => e == "SoftDeleted");
+            Assert.Contains(ReadScalarTexts($"SELECT event_type FROM job_lifecycle_events WHERE job_id='{JobId("job.life")}' ORDER BY recorded_at_utc;"), e => e == "Restored");
         }
 
         [Fact]
         public void Hard_delete_requires_confirmation_purges_local_rows_and_records_external_audit()
         {
             var created = catalog.Create(Schedule("job.purge"));
-            state.Append("queued", "job.purge", At(0), At(5), DurableSliceStatus.Queued, expectedVersion: 0);
-            queue.Enqueue("job.purge", At(0), At(5), "purge-queue", At(0));
-            readModels.RecordAttempt("attempt", "job.purge", At(0), At(5), 1, "Started", "worker", At(0), null);
-            readModels.RecordLog("Error", "boom", "test", "job.purge", At(0), At(5));
+            state.Append("queued", JobId("job.purge"), At(0), At(5), DurableSliceStatus.Queued, expectedVersion: 0);
+            queue.Enqueue(JobId("job.purge"), At(0), At(5), "purge-queue", At(0));
+            readModels.RecordAttempt("attempt", JobId("job.purge"), At(0), At(5), 1, "Started", "worker", At(0), null);
+            readModels.RecordLog("Error", "boom", "test", JobId("job.purge"), At(0), At(5));
 
-            Assert.Throws<InvalidOperationException>(() => Service().HardDelete("job.purge", "job.purge", "tester", "remove all local state"));
-            Assert.Throws<InvalidOperationException>(() => Service().HardDelete("job.purge", "DELETE job.purge", "tester", "remove all local state"));
+            Assert.Throws<InvalidOperationException>(() => Service().HardDelete(JobId("job.purge"), JobId("job.purge"), "tester", "remove all local state"));
+            Assert.Throws<InvalidOperationException>(() => Service().HardDelete(JobId("job.purge"), $"DELETE {JobId("job.purge")}", "tester", "remove all local state"));
             var leased = queue.Claim("default", "purge-test-worker", TimeSpan.FromMinutes(5), At(1));
             Assert.NotNull(leased);
-            Service().SoftDelete("job.purge", created.CatalogVersion, "tester", "disable before purge");
+            Service().SoftDelete(JobId("job.purge"), created.CatalogVersion, "tester", "disable before purge");
             queue.Complete(leased.QueueItemId, "purge-test-worker");
-            var result = Service().HardDelete("job.purge", "DELETE job.purge", "tester", "remove all local state");
+            var result = Service().HardDelete(JobId("job.purge"), $"DELETE {JobId("job.purge")}", "tester", "remove all local state");
 
             Assert.Equal(1, result.DeletedJobs);
-            Assert.Null(catalog.Get("job.purge"));
-            Assert.Empty(queue.List("job.purge"));
-            Assert.Equal(DurableSliceStatus.Missing, state.Get("job.purge", At(0), At(5)).Status);
-            Assert.Empty(ReadScalarTexts("SELECT attempt_id FROM slice_attempts WHERE job_id='job.purge';"));
-            Assert.Contains(ReadScalarTexts("SELECT action FROM system_audit WHERE subject_id='job.purge';"), a => a == "HardDeleted");
+            Assert.Null(catalog.Get(JobId("job.purge")));
+            Assert.Empty(queue.List(JobId("job.purge")));
+            Assert.Equal(DurableSliceStatus.Missing, state.Get(JobId("job.purge"), At(0), At(5)).Status);
+            Assert.Empty(ReadScalarTexts($"SELECT attempt_id FROM slice_attempts WHERE job_id='{JobId("job.purge")}';"));
+            Assert.Contains(ReadScalarTexts($"SELECT action FROM system_audit WHERE subject_id='{JobId("job.purge")}';"), a => a == "HardDeleted");
             Assert.Contains(ReadScalarTexts("SELECT status FROM purge_runs;"), s => s == "Completed");
 
             var recreated = catalog.Create(Schedule("job.purge"));
             Assert.Equal(1, recreated.CatalogVersion);
-            Assert.Equal(DurableSliceStatus.Missing, state.Get("job.purge", At(0), At(5)).Status);
+            Assert.Equal(DurableSliceStatus.Missing, state.Get(JobId("job.purge"), At(0), At(5)).Status);
         }
 
         [Fact]
         public void Hard_delete_fails_when_disabled_job_has_active_work_or_running_slices()
         {
             var queued = catalog.Create(Schedule("job.active.queued"));
-            state.Append("queued-active", "job.active.queued", At(0), At(5), DurableSliceStatus.Queued, expectedVersion: 0);
-            queue.Enqueue("job.active.queued", At(0), At(5), "active-queued", At(0));
-            Service().SoftDelete("job.active.queued", queued.CatalogVersion, "tester", "disable");
+            state.Append("queued-active", JobId("job.active.queued"), At(0), At(5), DurableSliceStatus.Queued, expectedVersion: 0);
+            queue.Enqueue(JobId("job.active.queued"), At(0), At(5), "active-queued", At(0));
+            Service().SoftDelete(JobId("job.active.queued"), queued.CatalogVersion, "tester", "disable");
 
-            Assert.Throws<InvalidOperationException>(() => Service().HardDelete("job.active.queued", "DELETE job.active.queued", "tester", "purge"));
-            Assert.NotNull(catalog.Get("job.active.queued"));
+            Assert.Throws<InvalidOperationException>(() => Service().HardDelete(JobId("job.active.queued"), $"DELETE {JobId("job.active.queued")}", "tester", "purge"));
+            Assert.NotNull(catalog.Get(JobId("job.active.queued")));
 
             var leased = catalog.Create(Schedule("job.active.leased"));
-            state.Append("leased-active", "job.active.leased", At(0), At(5), DurableSliceStatus.Queued, expectedVersion: 0);
-            queue.Enqueue("job.active.leased", At(0), At(5), "active-leased", At(0));
+            state.Append("leased-active", JobId("job.active.leased"), At(0), At(5), DurableSliceStatus.Queued, expectedVersion: 0);
+            queue.Enqueue(JobId("job.active.leased"), At(0), At(5), "active-leased", At(0));
             var item = queue.Claim("default", "lease-test-worker", TimeSpan.FromMinutes(5), At(1));
             Assert.NotNull(item);
-            Service().SoftDelete("job.active.leased", leased.CatalogVersion, "tester", "disable");
+            Service().SoftDelete(JobId("job.active.leased"), leased.CatalogVersion, "tester", "disable");
 
-            Assert.Throws<InvalidOperationException>(() => Service().HardDelete("job.active.leased", "DELETE job.active.leased", "tester", "purge"));
-            Assert.NotNull(catalog.Get("job.active.leased"));
+            Assert.Throws<InvalidOperationException>(() => Service().HardDelete(JobId("job.active.leased"), $"DELETE {JobId("job.active.leased")}", "tester", "purge"));
+            Assert.NotNull(catalog.Get(JobId("job.active.leased")));
 
             var running = catalog.Create(Schedule("job.active.running"));
-            state.Append("running", "job.active.running", At(0), At(5), DurableSliceStatus.Running, expectedVersion: 0);
-            Service().SoftDelete("job.active.running", running.CatalogVersion, "tester", "disable");
+            state.Append("running", JobId("job.active.running"), At(0), At(5), DurableSliceStatus.Running, expectedVersion: 0);
+            Service().SoftDelete(JobId("job.active.running"), running.CatalogVersion, "tester", "disable");
 
-            Assert.Throws<InvalidOperationException>(() => Service().HardDelete("job.active.running", "DELETE job.active.running", "tester", "purge"));
-            Assert.NotNull(catalog.Get("job.active.running"));
+            Assert.Throws<InvalidOperationException>(() => Service().HardDelete(JobId("job.active.running"), $"DELETE {JobId("job.active.running")}", "tester", "purge"));
+            Assert.NotNull(catalog.Get(JobId("job.active.running")));
         }
 
         public void Dispose()
@@ -128,8 +128,16 @@ namespace KoLite.Local.Sqlite.Tests
         }
 
         private static DateTimeOffset At(int minutes) => new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero).AddMinutes(minutes);
+
+        private static string JobId(string activityId)
+        {
+            var bytes = System.Security.Cryptography.MD5.HashData(System.Text.Encoding.UTF8.GetBytes(activityId));
+            return new Guid(bytes).ToString("N");
+        }
+
         private static string Schedule(string activityId) => $$"""
         {
+          "id": "{{JobId(activityId)}}",
           "activityId": "{{activityId}}",
           "functionName": "LifecycleFunction",
           "outputTable": "Output",

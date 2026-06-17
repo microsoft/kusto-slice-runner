@@ -25,6 +25,16 @@ KO Lite runs as a local ASP.NET Core Razor Pages app with hosted background serv
 6. Slice state, queue state, attempts, events, and operational logs are updated in SQLite.
 7. Dashboard read models query SQLite to show job status, history, failures, and worker/scheduler health.
 
+## Job identity model
+
+Each job has an opaque, permanent **GUID `id`** (`job_definitions.job_id`, the primary key and
+the foreign key used by every slice/queue/state/event/repair/rerun row, and the first segment of
+every slice key and idempotency key). `activityId` is a separate, mutable, unique **display
+label**; renaming it does not touch the durable `id`, slice history, dependency edges, or Kusto
+output idempotency. Dependencies are stored by upstream `id`. Schedule JSON carries the `id`
+(server-assigned); imports match by `id` first (which is how a rename is applied) then by
+`activityId`. URLs are canonical on the `id` with an `activityId`→`id` redirect for usability.
+
 ## Local durability model
 
 SQLite files are local runtime state and are not source artifacts. The main database plus sidecars such as `*.db-wal` and `*.db-shm` should be backed up before destructive operations and ignored by source control.

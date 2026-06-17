@@ -6,11 +6,11 @@ namespace KoLite.Local.Core.Scheduling
     public static class SliceEnumerator
     {
         public static IReadOnlyList<SliceRange> EnumerateEligible(JobDefinition job, IClock clock) =>
-            Enumerate(job.ActivityId, job.StartFrom, EligibleEnd(job, clock.UtcNow), job.QueryWindowSize).ToArray();
+            Enumerate(RequireJobId(job), job.StartFrom, EligibleEnd(job, clock.UtcNow), job.QueryWindowSize).ToArray();
 
-        public static IEnumerable<SliceRange> Enumerate(string activityId, DateTimeOffset startFromUtc, DateTimeOffset eligibleEndUtc, TimeSpan queryWindowSize)
+        public static IEnumerable<SliceRange> Enumerate(string jobId, DateTimeOffset startFromUtc, DateTimeOffset eligibleEndUtc, TimeSpan queryWindowSize)
         {
-            if (string.IsNullOrWhiteSpace(activityId)) throw new ArgumentException("Activity id is required.", nameof(activityId));
+            if (string.IsNullOrWhiteSpace(jobId)) throw new ArgumentException("Job id is required.", nameof(jobId));
             if (queryWindowSize <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(queryWindowSize), "Query window size must be positive.");
             startFromUtc = startFromUtc.ToUniversalTime();
             eligibleEndUtc = eligibleEndUtc.ToUniversalTime();
@@ -20,9 +20,14 @@ namespace KoLite.Local.Core.Scheduling
             var alignedEnd = startFromUtc + TimeSpan.FromTicks(wholeWindowCount * queryWindowSize.Ticks);
             for (var cursor = startFromUtc; cursor < alignedEnd; cursor += queryWindowSize)
             {
-                yield return new SliceRange(activityId, cursor, cursor + queryWindowSize);
+                yield return new SliceRange(jobId, cursor, cursor + queryWindowSize);
             }
         }
+
+        private static string RequireJobId(JobDefinition job) =>
+            string.IsNullOrWhiteSpace(job.Id)
+                ? throw new InvalidOperationException($"Job '{job.ActivityId}' has no durable id; slices cannot be enumerated.")
+                : job.Id!;
 
         private static DateTimeOffset EligibleEnd(JobDefinition job, DateTimeOffset utcNow)
         {

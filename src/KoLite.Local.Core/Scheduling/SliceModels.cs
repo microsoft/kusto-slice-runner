@@ -4,11 +4,11 @@ namespace KoLite.Local.Core.Scheduling
 {
     public readonly record struct SliceKey(string Value) : IComparable<SliceKey>
     {
-        public static SliceKey Create(string activityId, DateTimeOffset startUtc, DateTimeOffset endUtc)
+        public static SliceKey Create(string jobId, DateTimeOffset startUtc, DateTimeOffset endUtc)
         {
-            if (string.IsNullOrWhiteSpace(activityId)) throw new ArgumentException("Activity id is required.", nameof(activityId));
+            if (string.IsNullOrWhiteSpace(jobId)) throw new ArgumentException("Job id is required.", nameof(jobId));
             if (endUtc <= startUtc) throw new ArgumentOutOfRangeException(nameof(endUtc), "Slice end must be after slice start.");
-            return new SliceKey($"{activityId}|{Format(startUtc)}|{Format(endUtc)}");
+            return new SliceKey($"{jobId}|{Format(startUtc)}|{Format(endUtc)}");
         }
 
         public static bool TryParse(string value, out SliceKey key, out SliceRange range)
@@ -35,9 +35,9 @@ namespace KoLite.Local.Core.Scheduling
         private static string Format(DateTimeOffset value) => value.ToUniversalTime().UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ", CultureInfo.InvariantCulture);
     }
 
-    public sealed record SliceRange(string ActivityId, DateTimeOffset StartUtc, DateTimeOffset EndUtc)
+    public sealed record SliceRange(string JobId, DateTimeOffset StartUtc, DateTimeOffset EndUtc)
     {
-        public SliceKey ToKey() => SliceKey.Create(ActivityId, StartUtc, EndUtc);
+        public SliceKey ToKey() => SliceKey.Create(JobId, StartUtc, EndUtc);
         public bool Overlaps(DateTimeOffset startUtc, DateTimeOffset endUtc) => StartUtc < endUtc && EndUtc > startUtc;
     }
 }

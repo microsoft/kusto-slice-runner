@@ -248,7 +248,7 @@ namespace KoLite.LocalApp.Ui
             var attempt = DisplayAttempt(status, activeQueueItem);
             var css = AppFormatting.StateCss(state);
             var statusLabel = AppFormatting.StatusLabel(state);
-            var url = $"/jobs/{Uri.EscapeDataString(definition.ActivityId)}/slices?start={Uri.EscapeDataString(AppFormatting.Iso(sliceStart))}&end={Uri.EscapeDataString(AppFormatting.Iso(sliceEnd))}";
+            var url = $"/jobs/{Uri.EscapeDataString(definition.Id!)}/slices?start={Uri.EscapeDataString(AppFormatting.Iso(sliceStart))}&end={Uri.EscapeDataString(AppFormatting.Iso(sliceEnd))}";
             var tooltipLines = BuildTooltipLines(sliceStart, sliceEnd, statusLabel, attempt, activeQueueItem);
             return new SliceHistoryCell(sliceStart, sliceEnd, state, attempt, css, statusLabel, url, tooltipLines);
         }

@@ -54,9 +54,9 @@ namespace KoLite.Local.Sqlite.Tests
 
             Assert.Equal(2, tick.Enqueued);
             Assert.Equal(2, executor.Requests.Count);
-            Assert.Equal(DurableSliceStatus.Completed, state.Get("job.happy", At(0), At(5)).Status);
-            Assert.Equal(DurableSliceStatus.Completed, state.Get("job.happy", At(5), At(10)).Status);
-            Assert.All(queue.List("job.happy"), item => Assert.Equal(DurableWorkQueueState.Completed, item.State));
+            Assert.Equal(DurableSliceStatus.Completed, state.Get(JobId("job.happy"), At(0), At(5)).Status);
+            Assert.Equal(DurableSliceStatus.Completed, state.Get(JobId("job.happy"), At(5), At(10)).Status);
+            Assert.All(queue.List(JobId("job.happy")), item => Assert.Equal(DurableWorkQueueState.Completed, item.State));
         }
 
         [Fact]
@@ -64,14 +64,14 @@ namespace KoLite.Local.Sqlite.Tests
         {
             var localClock = new ManualClock(At(10));
             catalog.Create(Schedule("job.backfill", maxParallelism: 10));
-            state.Append("later-completed", "job.backfill", At(5), At(10), DurableSliceStatus.Completed, expectedVersion: 0);
+            state.Append("later-completed", JobId("job.backfill"), At(5), At(10), DurableSliceStatus.Completed, expectedVersion: 0);
 
             var tick = Scheduler(maxSlicesPerTick: 10, localClock).Tick();
 
             Assert.Equal(1, tick.Enqueued);
-            Assert.Equal(DurableSliceStatus.Queued, state.Get("job.backfill", At(0), At(5)).Status);
-            Assert.Equal(DurableSliceStatus.Completed, state.Get("job.backfill", At(5), At(10)).Status);
-            Assert.Single(queue.List("job.backfill"));
+            Assert.Equal(DurableSliceStatus.Queued, state.Get(JobId("job.backfill"), At(0), At(5)).Status);
+            Assert.Equal(DurableSliceStatus.Completed, state.Get(JobId("job.backfill"), At(5), At(10)).Status);
+            Assert.Single(queue.List(JobId("job.backfill")));
         }
 
         [Fact]
@@ -79,15 +79,15 @@ namespace KoLite.Local.Sqlite.Tests
         {
             catalog.Create(Schedule("upstream", maxParallelism: 10));
             catalog.Create(Schedule("downstream", maxParallelism: 10, dependsOn: "upstream"));
-            state.Append("u-0", "upstream", At(0), At(5), DurableSliceStatus.Completed, expectedVersion: 0);
-            state.Append("u-5", "upstream", At(5), At(10), DurableSliceStatus.Failed, expectedVersion: 0, reason: "boom");
-            state.Append("u-10", "upstream", At(10), At(15), DurableSliceStatus.Completed, expectedVersion: 0);
+            state.Append("u-0", JobId("upstream"), At(0), At(5), DurableSliceStatus.Completed, expectedVersion: 0);
+            state.Append("u-5", JobId("upstream"), At(5), At(10), DurableSliceStatus.Failed, expectedVersion: 0, reason: "boom");
+            state.Append("u-10", JobId("upstream"), At(10), At(15), DurableSliceStatus.Completed, expectedVersion: 0);
 
             var tick = Scheduler(maxSlicesPerTick: 20).Tick();
 
-            Assert.Equal(DurableSliceStatus.Queued, state.Get("downstream", At(0), At(5)).Status);
-            Assert.Equal(DurableSliceStatus.DependencyBlocked, state.Get("downstream", At(5), At(10)).Status);
-            Assert.Equal(DurableSliceStatus.Queued, state.Get("downstream", At(10), At(15)).Status);
+            Assert.Equal(DurableSliceStatus.Queued, state.Get(JobId("downstream"), At(0), At(5)).Status);
+            Assert.Equal(DurableSliceStatus.DependencyBlocked, state.Get(JobId("downstream"), At(5), At(10)).Status);
+            Assert.Equal(DurableSliceStatus.Queued, state.Get(JobId("downstream"), At(10), At(15)).Status);
             Assert.Equal(1, tick.DependencyBlocked);
         }
 
@@ -102,8 +102,8 @@ namespace KoLite.Local.Sqlite.Tests
 
             Assert.Equal(1, first.Enqueued);
             Assert.Equal(0, second.Enqueued);
-            Assert.Single(queue.List("job.idempotent"));
-            Assert.Equal(1, queue.CountActive("job.idempotent", "default"));
+            Assert.Single(queue.List(JobId("job.idempotent")));
+            Assert.Equal(1, queue.CountActive(JobId("job.idempotent"), "default"));
             Assert.True(first.SkippedMaxParallelism > 0 || second.SkippedMaxParallelism > 0);
         }
 
@@ -116,16 +116,16 @@ namespace KoLite.Local.Sqlite.Tests
             scheduler.Tick();
             var claimed = queue.Claim("default", "worker-completed", TimeSpan.FromMinutes(5), localClock.UtcNow);
             Assert.NotNull(claimed);
-            var lease = state.AcquireLease("lease-completed-state", "job.completed-state", At(0), At(5), "worker-completed", TimeSpan.FromMinutes(5), localClock.UtcNow);
+            var lease = state.AcquireLease("lease-completed-state", JobId("job.completed-state"), At(0), At(5), "worker-completed", TimeSpan.FromMinutes(5), localClock.UtcNow);
             Assert.NotNull(lease);
-            Assert.True(state.CompleteLease("complete-completed-state", "job.completed-state", At(0), At(5), "worker-completed", lease.LeaseToken!, localClock.UtcNow));
+            Assert.True(state.CompleteLease("complete-completed-state", JobId("job.completed-state"), At(0), At(5), "worker-completed", lease.LeaseToken!, localClock.UtcNow));
             Assert.True(queue.Complete(claimed.QueueItemId, "worker-completed"));
 
             var later = scheduler.Tick();
 
             Assert.Equal(0, later.Enqueued);
-            Assert.Equal(DurableSliceStatus.Completed, state.Get("job.completed-state", At(0), At(5)).Status);
-            Assert.Single(queue.List("job.completed-state"));
+            Assert.Equal(DurableSliceStatus.Completed, state.Get(JobId("job.completed-state"), At(0), At(5)).Status);
+            Assert.Single(queue.List(JobId("job.completed-state")));
         }
 
         [Fact]
@@ -137,13 +137,13 @@ namespace KoLite.Local.Sqlite.Tests
             scheduler.Tick();
             var claimed = queue.Claim("default", "worker-running", TimeSpan.FromMinutes(5), localClock.UtcNow);
             Assert.NotNull(claimed);
-            Assert.NotNull(state.AcquireLease("lease-running-state", "job.running-state", At(0), At(5), "worker-running", TimeSpan.FromMinutes(5), localClock.UtcNow));
+            Assert.NotNull(state.AcquireLease("lease-running-state", JobId("job.running-state"), At(0), At(5), "worker-running", TimeSpan.FromMinutes(5), localClock.UtcNow));
 
             var later = scheduler.Tick();
 
             Assert.Equal(0, later.Enqueued);
-            Assert.Equal(DurableSliceStatus.Running, state.Get("job.running-state", At(0), At(5)).Status);
-            Assert.Single(queue.List("job.running-state"));
+            Assert.Equal(DurableSliceStatus.Running, state.Get(JobId("job.running-state"), At(0), At(5)).Status);
+            Assert.Single(queue.List(JobId("job.running-state")));
         }
 
         [Fact]
@@ -152,13 +152,13 @@ namespace KoLite.Local.Sqlite.Tests
             var localClock = new ManualClock(At(5));
             catalog.Create(Schedule("upstream.ready", maxParallelism: 10));
             catalog.Create(Schedule("downstream.missing", maxParallelism: 10, dependsOn: "upstream.ready"));
-            state.Append("upstream-ready", "upstream.ready", At(0), At(5), DurableSliceStatus.Completed, expectedVersion: 0);
+            state.Append("upstream-ready", JobId("upstream.ready"), At(0), At(5), DurableSliceStatus.Completed, expectedVersion: 0);
 
             var tick = Scheduler(maxSlicesPerTick: 10, localClock).Tick();
 
             Assert.Equal(1, tick.Enqueued);
-            Assert.Equal(DurableSliceStatus.Queued, state.Get("downstream.missing", At(0), At(5)).Status);
-            Assert.Single(queue.List("downstream.missing"));
+            Assert.Equal(DurableSliceStatus.Queued, state.Get(JobId("downstream.missing"), At(0), At(5)).Status);
+            Assert.Single(queue.List(JobId("downstream.missing")));
         }
 
         [Fact]
@@ -179,28 +179,28 @@ namespace KoLite.Local.Sqlite.Tests
             Assert.True(first.Executed);
             Assert.False(first.DeadLettered);
             Assert.True(second.DeadLettered);
-            Assert.Equal(DurableSliceStatus.DeadLettered, state.Get("job.retry", At(0), At(5)).Status);
-            Assert.Equal(DurableWorkQueueState.DeadLettered, queue.List("job.retry").Single().State);
-            Assert.Equal(2, queue.List("job.retry").Single().Attempts);
-            Assert.Single(observability.GetRecentFailures(), f => f.JobId == "job.retry" && f.Status == "DeadLettered");
+            Assert.Equal(DurableSliceStatus.DeadLettered, state.Get(JobId("job.retry"), At(0), At(5)).Status);
+            Assert.Equal(DurableWorkQueueState.DeadLettered, queue.List(JobId("job.retry")).Single().State);
+            Assert.Equal(2, queue.List(JobId("job.retry")).Single().Attempts);
+            Assert.Single(observability.GetRecentFailures(), f => f.JobId == JobId("job.retry") && f.Status == "DeadLettered");
             Assert.Collection(progress.Started,
                 firstStart =>
                 {
                     Assert.Equal(LocalWorkerProgressStatus.Started, firstStart.Status);
-                    Assert.Equal("job.retry", firstStart.ActivityId);
+                    Assert.Equal(JobId("job.retry"), firstStart.JobId);
                     Assert.Equal(1, firstStart.Attempt);
                 },
                 secondStart =>
                 {
                     Assert.Equal(LocalWorkerProgressStatus.Started, secondStart.Status);
-                    Assert.Equal("job.retry", secondStart.ActivityId);
+                    Assert.Equal(JobId("job.retry"), secondStart.JobId);
                     Assert.Equal(2, secondStart.Attempt);
                 });
             Assert.Collection(progress.Finished,
                 failed =>
                 {
                     Assert.Equal(LocalWorkerProgressStatus.FailedRetryable, failed.Status);
-                    Assert.Equal("job.retry", failed.ActivityId);
+                    Assert.Equal(JobId("job.retry"), failed.JobId);
                     Assert.Equal(At(0), failed.SliceStartUtc);
                     Assert.Equal(At(5), failed.SliceEndUtc);
                     Assert.Equal(1, failed.Attempt);
@@ -230,7 +230,7 @@ namespace KoLite.Local.Sqlite.Tests
             var worker = Worker(executor, new LocalWorkerOptions(MaxAttempts: 2, InitialRetryDelay: TimeSpan.FromMinutes(1), VisibilityTimeout: TimeSpan.FromMinutes(5)), progress);
 
             var first = await worker.RunOnceAsync();
-            var disabled = catalog.SetEnabled("job.retry.pause", enabled: false, expectedVersion: created.CatalogVersion);
+            var disabled = catalog.SetEnabled(JobId("job.retry.pause"), enabled: false, expectedVersion: created.CatalogVersion);
             clock.Advance(TimeSpan.FromMinutes(1));
             var whilePaused = await worker.RunOnceAsync();
 
@@ -238,21 +238,21 @@ namespace KoLite.Local.Sqlite.Tests
             Assert.False(first.DeadLettered);
             Assert.False(whilePaused.ClaimedWork);
             Assert.Single(executor.Requests);
-            var pausedQueueItem = queue.List("job.retry.pause").Single();
+            var pausedQueueItem = queue.List(JobId("job.retry.pause")).Single();
             Assert.Equal(DurableWorkQueueState.Queued, pausedQueueItem.State);
             Assert.Equal(1, pausedQueueItem.Attempts);
-            Assert.Equal(DurableSliceStatus.Failed, state.Get("job.retry.pause", At(0), At(5)).Status);
+            Assert.Equal(DurableSliceStatus.Failed, state.Get(JobId("job.retry.pause"), At(0), At(5)).Status);
 
-            catalog.SetEnabled("job.retry.pause", enabled: true, expectedVersion: disabled.CatalogVersion);
+            catalog.SetEnabled(JobId("job.retry.pause"), enabled: true, expectedVersion: disabled.CatalogVersion);
             var afterResume = await worker.RunOnceAsync();
 
             Assert.True(afterResume.Executed);
             Assert.True(afterResume.Succeeded);
             Assert.Equal(2, executor.Requests.Count);
-            var completedQueueItem = queue.List("job.retry.pause").Single();
+            var completedQueueItem = queue.List(JobId("job.retry.pause")).Single();
             Assert.Equal(DurableWorkQueueState.Completed, completedQueueItem.State);
             Assert.Equal(2, completedQueueItem.Attempts);
-            Assert.Equal(DurableSliceStatus.Completed, state.Get("job.retry.pause", At(0), At(5)).Status);
+            Assert.Equal(DurableSliceStatus.Completed, state.Get(JobId("job.retry.pause"), At(0), At(5)).Status);
             Assert.Collection(progress.Started,
                 firstStart => Assert.Equal(1, firstStart.Attempt),
                 retryStart => Assert.Equal(2, retryStart.Attempt));
@@ -271,7 +271,7 @@ namespace KoLite.Local.Sqlite.Tests
             Assert.True(run.Succeeded);
             var started = Assert.Single(progress.Started);
             Assert.Equal(LocalWorkerProgressStatus.Started, started.Status);
-            Assert.Equal("job.progress", started.ActivityId);
+            Assert.Equal(JobId("job.progress"), started.JobId);
             Assert.Equal(At(0), started.SliceStartUtc);
             Assert.Equal(At(5), started.SliceEndUtc);
             Assert.Equal(1, started.Attempt);
@@ -298,9 +298,9 @@ namespace KoLite.Local.Sqlite.Tests
             var run = worker.RunOnceAsync();
             await executor.WaitUntilExecutingAsync();
 
-            var queueItem = Assert.Single(queue.List("job.long-lease"));
+            var queueItem = Assert.Single(queue.List(JobId("job.long-lease")));
             Assert.Equal(At(27), queueItem.LockedUntilUtc);
-            var sliceState = state.Get("job.long-lease", At(0), At(5));
+            var sliceState = state.Get(JobId("job.long-lease"), At(0), At(5));
             Assert.Equal(At(27), sliceState.LeaseExpiresAtUtc);
 
             executor.Complete(LocalSliceOutputResult.Success("test://long-lease"));
@@ -318,9 +318,9 @@ namespace KoLite.Local.Sqlite.Tests
             var run = worker.RunOnceAsync();
             await executor.WaitUntilExecutingAsync();
 
-            var queueItem = Assert.Single(queue.List("job.visibility-floor"));
+            var queueItem = Assert.Single(queue.List(JobId("job.visibility-floor")));
             Assert.Equal(At(25), queueItem.LockedUntilUtc);
-            var sliceState = state.Get("job.visibility-floor", At(0), At(5));
+            var sliceState = state.Get(JobId("job.visibility-floor"), At(0), At(5));
             Assert.Equal(At(25), sliceState.LeaseExpiresAtUtc);
 
             executor.Complete(LocalSliceOutputResult.Success("test://visibility-floor"));
@@ -350,7 +350,7 @@ namespace KoLite.Local.Sqlite.Tests
             Assert.False(run.Succeeded);
             Assert.Equal("Queue lease lost before execution.", run.Reason);
             Assert.Empty(executor.Requests);
-            Assert.Equal(DurableSliceStatus.Queued, state.Get("job.extension-lost", At(0), At(5)).Status);
+            Assert.Equal(DurableSliceStatus.Queued, state.Get(JobId("job.extension-lost"), At(0), At(5)).Status);
         }
 
         [Fact]
@@ -367,10 +367,10 @@ namespace KoLite.Local.Sqlite.Tests
             var result = await worker.RunOnceAsync();
 
             Assert.True(result.Succeeded);
-            var item = queue.List("job.lease").Single();
+            var item = queue.List(JobId("job.lease")).Single();
             Assert.Equal(2, item.Attempts);
             Assert.Equal(DurableWorkQueueState.Completed, item.State);
-            Assert.Equal(DurableSliceStatus.Completed, state.Get("job.lease", At(0), At(5)).Status);
+            Assert.Equal(DurableSliceStatus.Completed, state.Get(JobId("job.lease"), At(0), At(5)).Status);
         }
 
         [Fact]
@@ -382,7 +382,7 @@ namespace KoLite.Local.Sqlite.Tests
             var claimed = queue.Claim("default", "stale-worker", TimeSpan.FromMinutes(1), clock.UtcNow);
             Assert.NotNull(claimed);
             Assert.Equal(0, scheduler.Tick().Enqueued);
-            Assert.Single(queue.List("job.claimed.crash"));
+            Assert.Single(queue.List(JobId("job.claimed.crash")));
 
             clock.Advance(TimeSpan.FromMinutes(2));
             var executor = new RecordingExecutor();
@@ -391,10 +391,10 @@ namespace KoLite.Local.Sqlite.Tests
 
             Assert.True(result.Succeeded);
             Assert.Single(executor.Requests);
-            var item = Assert.Single(queue.List("job.claimed.crash"));
+            var item = Assert.Single(queue.List(JobId("job.claimed.crash")));
             Assert.Equal(2, item.Attempts);
             Assert.Equal(DurableWorkQueueState.Completed, item.State);
-            Assert.Equal(DurableSliceStatus.Completed, state.Get("job.claimed.crash", At(0), At(5)).Status);
+            Assert.Equal(DurableSliceStatus.Completed, state.Get(JobId("job.claimed.crash"), At(0), At(5)).Status);
         }
 
         [Fact]
@@ -408,12 +408,12 @@ namespace KoLite.Local.Sqlite.Tests
             var staleRun = staleWorker.RunOnceAsync();
             await blockedExecutor.WaitUntilExecutingAsync();
 
-            Assert.Equal(DurableSliceStatus.Running, state.Get("job.running.crash", At(0), At(5)).Status);
-            var leasedItem = Assert.Single(queue.List("job.running.crash"));
+            Assert.Equal(DurableSliceStatus.Running, state.Get(JobId("job.running.crash"), At(0), At(5)).Status);
+            var leasedItem = Assert.Single(queue.List(JobId("job.running.crash")));
             Assert.Equal(DurableWorkQueueState.Leased, leasedItem.State);
             Assert.Equal(1, leasedItem.Attempts);
             Assert.Equal(0, scheduler.Tick().Enqueued);
-            Assert.Single(queue.List("job.running.crash"));
+            Assert.Single(queue.List(JobId("job.running.crash")));
 
             clock.Advance(TimeSpan.FromMinutes(4));
             var recoveryExecutor = new RecordingExecutor();
@@ -422,10 +422,10 @@ namespace KoLite.Local.Sqlite.Tests
 
             Assert.True(recovered.Succeeded);
             Assert.Single(recoveryExecutor.Requests);
-            var completedItem = Assert.Single(queue.List("job.running.crash"));
+            var completedItem = Assert.Single(queue.List(JobId("job.running.crash")));
             Assert.Equal(2, completedItem.Attempts);
             Assert.Equal(DurableWorkQueueState.Completed, completedItem.State);
-            Assert.Equal(DurableSliceStatus.Completed, state.Get("job.running.crash", At(0), At(5)).Status);
+            Assert.Equal(DurableSliceStatus.Completed, state.Get(JobId("job.running.crash"), At(0), At(5)).Status);
 
             blockedExecutor.Complete(LocalSliceOutputResult.Success("test://stale-worker-finished-late"));
             var staleResult = await staleRun;
@@ -441,9 +441,9 @@ namespace KoLite.Local.Sqlite.Tests
             Scheduler(maxSlicesPerTick: 1).Tick();
             var claimed = queue.Claim("default", "stale-worker", TimeSpan.FromMinutes(1), clock.UtcNow);
             Assert.NotNull(claimed);
-            var lease = state.AcquireLease("lease-before-queue-completion-crash", "job.complete.crash", At(0), At(5), "stale-worker", TimeSpan.FromMinutes(1), clock.UtcNow);
+            var lease = state.AcquireLease("lease-before-queue-completion-crash", JobId("job.complete.crash"), At(0), At(5), "stale-worker", TimeSpan.FromMinutes(1), clock.UtcNow);
             Assert.NotNull(lease);
-            Assert.True(state.CompleteLease("complete-before-queue-completion-crash", "job.complete.crash", At(0), At(5), "stale-worker", lease.LeaseToken!, clock.UtcNow));
+            Assert.True(state.CompleteLease("complete-before-queue-completion-crash", JobId("job.complete.crash"), At(0), At(5), "stale-worker", lease.LeaseToken!, clock.UtcNow));
 
             clock.Advance(TimeSpan.FromMinutes(2));
             var executor = new RecordingExecutor();
@@ -454,10 +454,10 @@ namespace KoLite.Local.Sqlite.Tests
             Assert.False(result.Executed);
             Assert.True(result.Succeeded);
             Assert.Empty(executor.Requests);
-            var item = Assert.Single(queue.List("job.complete.crash"));
+            var item = Assert.Single(queue.List(JobId("job.complete.crash")));
             Assert.Equal(2, item.Attempts);
             Assert.Equal(DurableWorkQueueState.Completed, item.State);
-            Assert.Equal(DurableSliceStatus.Completed, state.Get("job.complete.crash", At(0), At(5)).Status);
+            Assert.Equal(DurableSliceStatus.Completed, state.Get(JobId("job.complete.crash"), At(0), At(5)).Status);
         }
 
         private SqliteLocalScheduler Scheduler(int maxSlicesPerTick, IClock? schedulerClock = null) => new(catalog, state, queue, observability, schedulerClock ?? clock, new LocalSchedulerOptions(MaxSlicesPerTick: maxSlicesPerTick));
@@ -465,8 +465,15 @@ namespace KoLite.Local.Sqlite.Tests
 
         private static DateTimeOffset At(int minutes) => new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero).AddMinutes(minutes);
 
+        private static string JobId(string activityId)
+        {
+            var bytes = System.Security.Cryptography.MD5.HashData(System.Text.Encoding.UTF8.GetBytes(activityId));
+            return new Guid(bytes).ToString("N");
+        }
+
         private static string Schedule(string activityId, int maxParallelism, string? dependsOn = null, string queryTimeout = "00:01:00") => $$"""
         {
+          "id": "{{JobId(activityId)}}",
           "activityId": "{{activityId}}",
           "functionName": "LocalFunction",
           "outputTable": "LocalOutput",

@@ -192,8 +192,9 @@ namespace KoLite.Local.Sqlite.Rerun
                 {
                     foreach (var dependency in downstream.Definition.DependsOn)
                     {
-                        if (!affected.TryGetValue(dependency.ActivityId, out var upstreamSlices) ||
-                            !jobs.TryGetValue(dependency.ActivityId, out var upstream))
+                        if (dependency.Id is not { } upstreamId ||
+                            !affected.TryGetValue(upstreamId, out var upstreamSlices) ||
+                            !jobs.TryGetValue(upstreamId, out var upstream))
                         {
                             continue;
                         }
@@ -230,7 +231,7 @@ namespace KoLite.Local.Sqlite.Rerun
 
             for (var cursor = start; cursor < upstreamSlice.EndUtc; cursor = cursor.Add(downstream.QueryWindowSize))
             {
-                var candidate = new SliceRange(downstream.ActivityId, cursor, cursor.Add(downstream.QueryWindowSize));
+                var candidate = new SliceRange(downstream.Id!, cursor, cursor.Add(downstream.QueryWindowSize));
                 if (candidate.EndUtc <= upstreamSlice.StartUtc || candidate.StartUtc >= upstreamSlice.EndUtc)
                 {
                     continue;

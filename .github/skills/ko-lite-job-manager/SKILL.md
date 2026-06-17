@@ -40,10 +40,13 @@ dashboard; do not attempt a workaround.
 Every write goes to `POST /api/jobs/import`, which calls the same
 `SqliteJobCatalogRepository.Import` path as the dashboard. That gives you, for
 free: strict schedule parsing (unknown fields rejected), started-job mutation
-policy (immutable `activityId`, `queryWindowSize`, `startFrom`), catalog
-versioning, audit events, and tag normalization - all in one transaction. Import
-is **additive and update-only**: matching `activityId`s are updated, new ones are
-created, and omitted jobs are never deleted.
+policy (immutable permanent `id`; `queryWindowSize` and `startFrom` read-only
+once a job has started; `activityId` is a mutable display label that may be
+renamed), catalog versioning, audit events, and tag normalization - all in one
+transaction. Import is **additive and update-only**: an item matches an existing
+job by `id` when present (this is how a **rename** is applied — same `id`, new
+`activityId`), else by `activityId`; new ones are created (a supplied `id` is
+preserved, else minted); omitted jobs are never deleted.
 
 The API is **loopback-only** and intended for same-machine use.
 
@@ -70,8 +73,8 @@ with `"isPaused": true`.
 
 | Method | Route | Purpose |
 | --- | --- | --- |
-| GET | `/api/jobs` | Array of job summaries (`jobId`, `displayName`, `isEnabled`, `isSoftDeleted`, `hasStarted`, `isPaused`, `tags`, `target`, `catalogVersion`, timestamps). |
-| GET | `/api/jobs/{jobId}` | One summary plus `schedule` (the canonical, import-compatible schedule object). 404 if missing. |
+| GET | `/api/jobs` | Array of job summaries (`jobId` = permanent GUID, `displayName` = the activityId label, `isEnabled`, `isSoftDeleted`, `hasStarted`, `isPaused`, `tags`, `target`, `catalogVersion`, timestamps). To find a job by its human `activityId`, match `displayName`. |
+| GET | `/api/jobs/{jobId}` | One summary plus `schedule` (the canonical, import-compatible schedule object, including its `id`). `{jobId}` is the permanent GUID. 404 if missing. |
 | GET | `/api/jobs/export` | Import-compatible JSON array of all non-soft-deleted jobs. |
 | POST | `/api/jobs/import` | Body is schedule JSON (single object or array). Returns `{ created, updated, total, items[] }`. 400 with `{ error }` on validation/mutation failure. |
 
@@ -85,11 +88,14 @@ detailed field-by-field guide. Key points:
 - Required: `activityId`, `functionName`, `outputTable`, `queryWindowSize`,
   `delayFromUtcNow`, `maxParallelism`, `queryTimeout`, `startFrom`, `target`
   (`clusterUri` + `database`).
-- Optional: `endOn`, `isPaused`, `folder`, `tags`, `dependsOn`, `jobSettings`.
-- Unknown top-level, `target`, or `dependsOn` fields are rejected.
-- For an **update**, fetch the current job first (`Get-Job`), edit its `schedule`
-  object, and re-import it. Never change `activityId`, `queryWindowSize`, or
-  `startFrom` on a job whose `hasStarted` is `true` - the import will be rejected.
+- Optional: `id` (GUID permanent identity — omit when creating; KO Lite mints it),
+  `endOn`, `isPaused`, `folder`, `tags`, `dependsOn`, `jobSettings`.
+- Unknown top-level, `target`, or `dependsOn` fields are rejected. `dependsOn`
+  entries reference an upstream by `id` and/or `activityId`.
+- For an **update**, fetch the current job first (`Get-Job`), keep its `id`, edit
+  the `schedule` object, and re-import it. Never change `id`; `queryWindowSize` and
+  `startFrom` are rejected on a job whose `hasStarted` is `true`. To **rename**,
+  keep the same `id` and change `activityId` (allowed even after the job started).
 
 ## Workflow
 
@@ -145,8 +151,9 @@ unreachable it tells you to start it.
   directly.
 - **Validate before writing.** Always validate the JSON locally before POSTing
   (the Import action does this by default).
-- **Respect immutable started-job fields.** Do not change `activityId`,
-  `queryWindowSize`, or `startFrom` on started jobs.
+- **Respect the identity model.** Never change the permanent `id`. `queryWindowSize`
+  and `startFrom` are read-only on started jobs. `activityId` is a mutable display
+  label and may be renamed (keep the same `id`).
 - **No secrets.** The JSON describes a job, not credentials.
 - **Confirm before writing.** Summarize the exact create/update you will apply and
   get the user's go-ahead before importing.
@@ -155,9 +162,11 @@ unreachable it tells you to start it.
 
 - The KO Lite app is not reachable and the user has not provided a `-BaseUrl`.
 - The requested action is outside scope (enable/disable, delete, Kusto, rerun).
-- An update would change an immutable field on a started job.
-- `activityId` collides with an existing job and the intent (rename vs. edit vs.
-  supersede) is unclear.
+- An update would change the permanent `id`, or change `queryWindowSize`/`startFrom`
+  on a started job.
+- `activityId` collides with an existing job. A **rename** (same `id`, new
+  `activityId`) is supported; stop only if the intent (rename vs. a distinct new job
+  vs. editing the existing one) is unclear.
 - A requested schedule field is not in the supported contract.
 
 ## Related

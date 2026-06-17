@@ -7,7 +7,7 @@ using Microsoft.Data.Sqlite;
 
 namespace KoLite.Local.Sqlite.Catalog
 {
-    public sealed record JobCatalogRecord(string JobId, string DisplayName, string? Description, string? QueryRef, string ScheduleJson, string ParametersJson, bool IsEnabled, long CatalogVersion, DateTimeOffset CreatedAtUtc, DateTimeOffset UpdatedAtUtc)
+    public sealed record JobCatalogRecord(string JobId, string ActivityId, string DisplayName, string? Description, string? QueryRef, string ScheduleJson, string ParametersJson, bool IsEnabled, long CatalogVersion, DateTimeOffset CreatedAtUtc, DateTimeOffset UpdatedAtUtc)
     {
         public JobDefinition Definition => ScheduleParser.Parse(ScheduleJson).Definition ?? throw new InvalidOperationException($"Stored schedule for '{JobId}' is invalid.");
     }
@@ -32,26 +32,34 @@ namespace KoLite.Local.Sqlite.Catalog
             var (definition, canonical) = Validate(scheduleJson);
             using var connection = connectionFactory.OpenConnection();
             using var transaction = connection.BeginTransaction();
-            if (Exists(connection, transaction, definition.ActivityId)) throw new InvalidOperationException($"Job '{definition.ActivityId}' already exists.");
+            var jobId = definition.Id ?? Guid.NewGuid().ToString("N");
+            if (Exists(connection, transaction, jobId)) throw new InvalidOperationException($"Job '{jobId}' already exists.");
+            EnsureActivityIdAvailable(connection, transaction, definition.ActivityId, excludingJobId: null);
+            var deps = ResolveDependencies(connection, transaction, definition, batch: null);
+            var storageJson = CatalogScheduleJson.WriteStorageJson(canonical, jobId, deps);
             var now = DateTimeOffset.UtcNow;
-            InsertJob(connection, transaction, definition, canonical, catalogVersion: 1, now);
-            InsertEvent(connection, transaction, eventId ?? Guid.NewGuid().ToString("N"), definition.ActivityId, 1, "Created", canonical, actor);
+            InsertJob(connection, transaction, jobId, definition, storageJson, catalogVersion: 1, now);
+            InsertEvent(connection, transaction, eventId ?? Guid.NewGuid().ToString("N"), jobId, 1, "Created", storageJson, actor);
             transaction.Commit();
-            return Get(definition.ActivityId)!;
+            return Get(jobId)!;
         }
 
         public JobCatalogRecord Update(string jobId, string scheduleJson, long expectedVersion, string? actor = null, string? eventId = null)
         {
             var (definition, canonical) = Validate(scheduleJson);
-            if (!StringComparer.Ordinal.Equals(jobId, definition.ActivityId)) throw new InvalidOperationException("Updated schedule activityId must match the target job id.");
+            if (definition.Id is { } suppliedId && !StringComparer.Ordinal.Equals(suppliedId, jobId)) throw new InvalidOperationException($"Updated schedule id '{suppliedId}' must match the target job id '{jobId}'.");
             using var connection = connectionFactory.OpenConnection();
             using var transaction = connection.BeginTransaction();
             var current = Get(connection, transaction, jobId) ?? throw new InvalidOperationException($"Job '{jobId}' does not exist.");
             if (current.CatalogVersion != expectedVersion) throw new InvalidOperationException($"Catalog version conflict for '{jobId}'. Expected {expectedVersion}, found {current.CatalogVersion}.");
-            EnsureMutationAllowed(current, definition, HasStarted(connection, transaction, jobId));
+            var proposed = definition with { Id = jobId };
+            EnsureMutationAllowed(current, proposed, HasStarted(connection, transaction, jobId));
+            if (!StringComparer.Ordinal.Equals(current.ActivityId, proposed.ActivityId)) EnsureActivityIdAvailable(connection, transaction, proposed.ActivityId, excludingJobId: jobId);
+            var deps = ResolveDependencies(connection, transaction, proposed, batch: null);
+            var storageJson = CatalogScheduleJson.WriteStorageJson(canonical, jobId, deps);
             var newVersion = current.CatalogVersion + 1;
-            UpdateJob(connection, transaction, jobId, definition, canonical, newVersion, expectedVersion, DateTimeOffset.UtcNow);
-            InsertEvent(connection, transaction, eventId ?? Guid.NewGuid().ToString("N"), jobId, newVersion, "Updated", canonical, actor);
+            UpdateJob(connection, transaction, jobId, proposed, storageJson, newVersion, expectedVersion, DateTimeOffset.UtcNow);
+            InsertEvent(connection, transaction, eventId ?? Guid.NewGuid().ToString("N"), jobId, newVersion, "Updated", storageJson, actor);
             transaction.Commit();
             return Get(jobId)!;
         }
@@ -94,20 +102,34 @@ namespace KoLite.Local.Sqlite.Catalog
 
             using var connection = connectionFactory.OpenConnection();
             using var transaction = connection.BeginTransaction();
-            var itemResults = new List<JobCatalogImportItemResult>();
-            var created = 0;
-            var updated = 0;
-            var currentItems = new List<(int Index, JobDefinition Definition, string CanonicalJson, JobCatalogRecord? Current)>();
-            var mutationErrors = new List<ScheduleValidationError>();
 
+            // Resolve every item to a target job id (match existing by id, else by activityId, else
+            // create — preserving a supplied id so export/import round-trips). Resolving up front
+            // gives a stable batch map for dependency resolution and final-state validation.
+            var plans = new List<ImportPlan>();
             foreach (var item in validatedItems)
             {
-                var current = Get(connection, transaction, item.Definition.ActivityId);
-                currentItems.Add((item.Index, item.Definition, item.CanonicalJson, current));
-                if (current is not null)
-                {
-                    mutationErrors.AddRange(MutationErrors(current, item.Definition, HasStarted(connection, transaction, current.JobId), $"[{item.Index}]."));
-                }
+                var existing = item.Definition.Id is { } id
+                    ? Get(connection, transaction, id)
+                    : GetByActivityId(connection, transaction, item.Definition.ActivityId);
+                var targetId = existing?.JobId ?? item.Definition.Id ?? Guid.NewGuid().ToString("N");
+                plans.Add(new ImportPlan(item.Index, item.Definition, item.CanonicalJson, existing, targetId));
+            }
+
+            var duplicateTarget = plans.GroupBy(p => p.TargetId, StringComparer.Ordinal).FirstOrDefault(g => g.Count() > 1);
+            if (duplicateTarget is not null)
+            {
+                throw new InvalidOperationException($"Multiple import items resolve to the same job id '{duplicateTarget.Key}'.");
+            }
+
+            EnsureNoFinalActivityIdCollisions(connection, transaction, plans);
+
+            var batch = plans.ToDictionary(p => p.Definition.ActivityId, p => p.TargetId, StringComparer.Ordinal);
+
+            var mutationErrors = new List<ScheduleValidationError>();
+            foreach (var plan in plans.Where(p => p.Existing is not null))
+            {
+                mutationErrors.AddRange(MutationErrors(plan.Existing!, plan.Definition with { Id = plan.TargetId }, HasStarted(connection, transaction, plan.TargetId), $"[{plan.Index}]."));
             }
 
             if (mutationErrors.Count > 0)
@@ -115,22 +137,34 @@ namespace KoLite.Local.Sqlite.Catalog
                 throw new InvalidOperationException("Schedule JSON changes read-only started-job fields: " + FormatErrors(mutationErrors));
             }
 
-            foreach (var item in currentItems)
+            // Park updated jobs' activity_id at unique temp values so rename swaps within the batch
+            // do not trip the immediate (non-deferrable) unique index mid-transaction.
+            foreach (var plan in plans.Where(p => p.Existing is not null))
             {
-                var current = item.Current;
-                if (current is null)
+                ParkActivityId(connection, transaction, plan.TargetId);
+            }
+
+            var itemResults = new List<JobCatalogImportItemResult>();
+            var created = 0;
+            var updated = 0;
+            foreach (var plan in plans)
+            {
+                var proposed = plan.Definition with { Id = plan.TargetId };
+                var deps = ResolveDependencies(connection, transaction, proposed, batch);
+                var storageJson = CatalogScheduleJson.WriteStorageJson(plan.CanonicalJson, plan.TargetId, deps);
+                if (plan.Existing is null)
                 {
-                    InsertJob(connection, transaction, item.Definition, item.CanonicalJson, catalogVersion: 1, DateTimeOffset.UtcNow);
-                    InsertEvent(connection, transaction, Guid.NewGuid().ToString("N"), item.Definition.ActivityId, 1, "Created", item.CanonicalJson, actor);
-                    itemResults.Add(new JobCatalogImportItemResult(item.Definition.ActivityId, "Created", 1));
+                    InsertJob(connection, transaction, plan.TargetId, proposed, storageJson, catalogVersion: 1, DateTimeOffset.UtcNow);
+                    InsertEvent(connection, transaction, Guid.NewGuid().ToString("N"), plan.TargetId, 1, "Created", storageJson, actor);
+                    itemResults.Add(new JobCatalogImportItemResult(plan.TargetId, "Created", 1));
                     created++;
                     continue;
                 }
 
-                var newVersion = current.CatalogVersion + 1;
-                UpdateJob(connection, transaction, current.JobId, item.Definition, item.CanonicalJson, newVersion, current.CatalogVersion, DateTimeOffset.UtcNow);
-                InsertEvent(connection, transaction, Guid.NewGuid().ToString("N"), current.JobId, newVersion, "Updated", item.CanonicalJson, actor);
-                itemResults.Add(new JobCatalogImportItemResult(current.JobId, "Updated", newVersion));
+                var newVersion = plan.Existing.CatalogVersion + 1;
+                UpdateJob(connection, transaction, plan.TargetId, proposed, storageJson, newVersion, plan.Existing.CatalogVersion, DateTimeOffset.UtcNow);
+                InsertEvent(connection, transaction, Guid.NewGuid().ToString("N"), plan.TargetId, newVersion, "Updated", storageJson, actor);
+                itemResults.Add(new JobCatalogImportItemResult(plan.TargetId, "Updated", newVersion));
                 updated++;
             }
 
@@ -138,10 +172,18 @@ namespace KoLite.Local.Sqlite.Catalog
             return new JobCatalogImportResult(created, updated, itemResults);
         }
 
+        private sealed record ImportPlan(int Index, JobDefinition Definition, string CanonicalJson, JobCatalogRecord? Existing, string TargetId);
+
         public JobCatalogRecord? Get(string jobId)
         {
             using var connection = connectionFactory.OpenConnection();
             return Get(connection, null, jobId);
+        }
+
+        public JobCatalogRecord? GetByActivityId(string activityId)
+        {
+            using var connection = connectionFactory.OpenConnection();
+            return GetByActivityId(connection, null, activityId);
         }
 
         public IReadOnlyList<JobCatalogRecord> List(bool enabledOnly = false)
@@ -177,7 +219,11 @@ namespace KoLite.Local.Sqlite.Catalog
             return records;
         }
 
-        public string Export(string jobId) => Get(jobId)?.ScheduleJson ?? throw new InvalidOperationException($"Job '{jobId}' does not exist.");
+        public string Export(string jobId)
+        {
+            var record = Get(jobId) ?? throw new InvalidOperationException($"Job '{jobId}' does not exist.");
+            return CatalogScheduleJson.WriteExportJson(record.ScheduleJson, ActivityLabels());
+        }
 
         public string ExportAll(IReadOnlySet<string>? excludedJobIds = null)
         {
@@ -199,10 +245,17 @@ namespace KoLite.Local.Sqlite.Catalog
             return SerializeAsImportArray(included);
         }
 
-        private static string SerializeAsImportArray(IEnumerable<JobCatalogRecord> records) =>
-            "[" + string.Join(",", records
-                .OrderBy(record => record.JobId, StringComparer.Ordinal)
-                .Select(record => record.ScheduleJson)) + "]";
+        private string SerializeAsImportArray(IEnumerable<JobCatalogRecord> records)
+        {
+            var labels = ActivityLabels();
+            return "[" + string.Join(",", records
+                .OrderBy(record => record.ActivityId, StringComparer.Ordinal)
+                .ThenBy(record => record.JobId, StringComparer.Ordinal)
+                .Select(record => CatalogScheduleJson.WriteExportJson(record.ScheduleJson, labels))) + "]";
+        }
+
+        private IReadOnlyDictionary<string, string> ActivityLabels() =>
+            List().ToDictionary(record => record.JobId, record => record.ActivityId, StringComparer.Ordinal);
 
         public bool HasStarted(string jobId)
         {
@@ -307,28 +360,126 @@ namespace KoLite.Local.Sqlite.Catalog
             return reader.Read() ? ReadJob(reader) : null;
         }
 
-        private static JobCatalogRecord ReadJob(SqliteDataReader reader) => new(
-            reader.GetString(reader.GetOrdinal("job_id")),
-            reader.GetString(reader.GetOrdinal("display_name")),
-            reader.IsDBNull(reader.GetOrdinal("description")) ? null : reader.GetString(reader.GetOrdinal("description")),
-            reader.IsDBNull(reader.GetOrdinal("query_ref")) ? null : reader.GetString(reader.GetOrdinal("query_ref")),
-            reader.GetString(reader.GetOrdinal("schedule_json")),
-            reader.GetString(reader.GetOrdinal("parameters_json")),
-            reader.GetInt32(reader.GetOrdinal("is_enabled")) == 1,
-            reader.GetInt64(reader.GetOrdinal("catalog_version")),
-            SqliteStorage.ReadUtc(reader, "created_at_utc"),
-            SqliteStorage.ReadUtc(reader, "updated_at_utc"));
+        private static JobCatalogRecord? GetByActivityId(SqliteConnection connection, SqliteTransaction? transaction, string activityId)
+        {
+            using var command = SqliteStorage.Command(connection, transaction, "SELECT * FROM job_definitions WHERE activity_id = $activity_id LIMIT 1;");
+            command.Add("$activity_id", activityId);
+            using var reader = command.ExecuteReader();
+            return reader.Read() ? ReadJob(reader) : null;
+        }
 
-        private static void InsertJob(SqliteConnection connection, SqliteTransaction transaction, JobDefinition definition, string canonicalJson, long catalogVersion, DateTimeOffset now)
+        private static string? LookupIdByActivityId(SqliteConnection connection, SqliteTransaction? transaction, string activityId)
+        {
+            using var command = SqliteStorage.Command(connection, transaction, "SELECT job_id FROM job_definitions WHERE activity_id = $activity_id LIMIT 1;");
+            command.Add("$activity_id", activityId);
+            return command.ExecuteScalar() as string;
+        }
+
+        private static void EnsureActivityIdAvailable(SqliteConnection connection, SqliteTransaction? transaction, string activityId, string? excludingJobId)
+        {
+            var existingId = LookupIdByActivityId(connection, transaction, activityId);
+            if (existingId is not null && !StringComparer.Ordinal.Equals(existingId, excludingJobId))
+            {
+                throw new InvalidOperationException($"activityId '{activityId}' is already used by another job.");
+            }
+        }
+
+        private static IReadOnlyList<StoredDependency> ResolveDependencies(SqliteConnection connection, SqliteTransaction? transaction, JobDefinition definition, IReadOnlyDictionary<string, string>? batch)
+        {
+            var deps = new List<StoredDependency>();
+            foreach (var dependency in definition.DependsOn)
+            {
+                string? upstreamId;
+                if (dependency.Id is { } id)
+                {
+                    upstreamId = id;
+                    if (dependency.ActivityId is { } activityId)
+                    {
+                        var resolved = ResolveUpstreamActivityId(connection, transaction, batch, activityId);
+                        if (resolved is not null && !StringComparer.Ordinal.Equals(resolved, id))
+                        {
+                            throw new InvalidOperationException($"Dependency id '{id}' and activityId '{activityId}' refer to different jobs.");
+                        }
+                    }
+                }
+                else
+                {
+                    var activityId = dependency.ActivityId!;
+                    upstreamId = ResolveUpstreamActivityId(connection, transaction, batch, activityId)
+                        ?? throw new InvalidOperationException($"Unknown upstream dependency activityId '{activityId}'. Create it first or reference it by id.");
+                }
+
+                deps.Add(new StoredDependency(upstreamId, null));
+            }
+
+            return deps;
+        }
+
+        private static string? ResolveUpstreamActivityId(SqliteConnection connection, SqliteTransaction? transaction, IReadOnlyDictionary<string, string>? batch, string activityId) =>
+            batch is not null && batch.TryGetValue(activityId, out var batched) ? batched : LookupIdByActivityId(connection, transaction, activityId);
+
+        private static void ParkActivityId(SqliteConnection connection, SqliteTransaction transaction, string jobId)
+        {
+            using var command = SqliteStorage.Command(connection, transaction, "UPDATE job_definitions SET activity_id = $temp WHERE job_id = $job_id;");
+            command.Add("$temp", "\u0001import-temp:" + jobId);
+            command.Add("$job_id", jobId);
+            command.ExecuteNonQuery();
+        }
+
+        private static void EnsureNoFinalActivityIdCollisions(SqliteConnection connection, SqliteTransaction transaction, IReadOnlyList<ImportPlan> plans)
+        {
+            var finalByJobId = new Dictionary<string, string>(StringComparer.Ordinal);
+            using (var command = SqliteStorage.Command(connection, transaction, "SELECT job_id, activity_id FROM job_definitions;"))
+            using (var reader = command.ExecuteReader())
+            {
+                while (reader.Read())
+                {
+                    finalByJobId[reader.GetString(0)] = reader.IsDBNull(1) ? reader.GetString(0) : reader.GetString(1);
+                }
+            }
+
+            foreach (var plan in plans)
+            {
+                finalByJobId[plan.TargetId] = plan.Definition.ActivityId;
+            }
+
+            var duplicate = finalByJobId.GroupBy(kv => kv.Value, StringComparer.Ordinal).FirstOrDefault(g => g.Count() > 1);
+            if (duplicate is not null)
+            {
+                throw new InvalidOperationException($"activityId '{duplicate.Key}' would be used by more than one job after import.");
+            }
+        }
+
+        private static JobCatalogRecord ReadJob(SqliteDataReader reader)
+        {
+            var jobId = reader.GetString(reader.GetOrdinal("job_id"));
+            var activityIdOrdinal = reader.GetOrdinal("activity_id");
+            var activityId = reader.IsDBNull(activityIdOrdinal) ? jobId : reader.GetString(activityIdOrdinal);
+            return new(
+                jobId,
+                activityId,
+                reader.GetString(reader.GetOrdinal("display_name")),
+                reader.IsDBNull(reader.GetOrdinal("description")) ? null : reader.GetString(reader.GetOrdinal("description")),
+                reader.IsDBNull(reader.GetOrdinal("query_ref")) ? null : reader.GetString(reader.GetOrdinal("query_ref")),
+                reader.GetString(reader.GetOrdinal("schedule_json")),
+                reader.GetString(reader.GetOrdinal("parameters_json")),
+                reader.GetInt32(reader.GetOrdinal("is_enabled")) == 1,
+                reader.GetInt64(reader.GetOrdinal("catalog_version")),
+                SqliteStorage.ReadUtc(reader, "created_at_utc"),
+                SqliteStorage.ReadUtc(reader, "updated_at_utc"));
+        }
+
+        private static void InsertJob(SqliteConnection connection, SqliteTransaction transaction, string jobId, JobDefinition definition, string storageJson, long catalogVersion, DateTimeOffset now)
         {
             using var insert = SqliteStorage.Command(connection, transaction, """
-                INSERT INTO job_definitions (job_id, display_name, description, query_ref, schedule_json, parameters_json, is_enabled, catalog_version, created_at_utc, updated_at_utc)
-                VALUES ($job_id, $display_name, NULL, $query_ref, $schedule_json, $parameters_json, $is_enabled, $catalog_version, $now, $now);
+                INSERT INTO job_definitions (job_id, activity_id, display_name, description, query_ref, schedule_json, parameters_json, is_enabled, catalog_version, created_at_utc, updated_at_utc)
+                VALUES ($job_id, $activity_id, $display_name, NULL, $query_ref, $schedule_json, $parameters_json, $is_enabled, $catalog_version, $now, $now);
                 """);
-            insert.Add("$job_id", definition.ActivityId);
+            insert.Add("$job_id", jobId);
+            insert.Add("$activity_id", definition.ActivityId);
             insert.Add("$display_name", definition.ActivityId);
             insert.Add("$query_ref", definition.FunctionName);
-            insert.Add("$schedule_json", canonicalJson);
+            insert.Add("$schedule_json", storageJson);
             insert.Add("$parameters_json", ParametersJson(definition));
             insert.Add("$is_enabled", definition.IsPaused ? 0 : 1);
             insert.Add("$catalog_version", catalogVersion);
@@ -336,17 +487,18 @@ namespace KoLite.Local.Sqlite.Catalog
             insert.ExecuteNonQuery();
         }
 
-        private static void UpdateJob(SqliteConnection connection, SqliteTransaction transaction, string jobId, JobDefinition definition, string canonicalJson, long newVersion, long expectedVersion, DateTimeOffset updatedAt)
+        private static void UpdateJob(SqliteConnection connection, SqliteTransaction transaction, string jobId, JobDefinition definition, string storageJson, long newVersion, long expectedVersion, DateTimeOffset updatedAt)
         {
             using var update = SqliteStorage.Command(connection, transaction, """
                 UPDATE job_definitions
-                SET display_name = $display_name, query_ref = $query_ref, schedule_json = $schedule_json, parameters_json = $parameters_json,
+                SET activity_id = $activity_id, display_name = $display_name, query_ref = $query_ref, schedule_json = $schedule_json, parameters_json = $parameters_json,
                     is_enabled = $is_enabled, catalog_version = $catalog_version, updated_at_utc = $updated_at
                 WHERE job_id = $job_id AND catalog_version = $expected_version;
                 """);
+            update.Add("$activity_id", definition.ActivityId);
             update.Add("$display_name", definition.ActivityId);
             update.Add("$query_ref", definition.FunctionName);
-            update.Add("$schedule_json", canonicalJson);
+            update.Add("$schedule_json", storageJson);
             update.Add("$parameters_json", ParametersJson(definition));
             update.Add("$is_enabled", definition.IsPaused ? 0 : 1);
             update.Add("$catalog_version", newVersion);

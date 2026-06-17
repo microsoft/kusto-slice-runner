@@ -32,18 +32,23 @@ namespace KoLite.LocalApp.Pages.Jobs
         [BindProperty(Name = "reason")] public string Reason { get; set; } = "Manual rerun";
 
         public string JobId { get; private set; } = string.Empty;
+        public string ActivityId { get; private set; } = string.Empty;
         public RerunPlanResult? Plan { get; private set; }
         public string? ErrorMessage { get; private set; }
 
         public IActionResult OnGet(string jobId, string? start, string? end, string? reason, string? requestedBy)
         {
             JobId = jobId;
-            if (catalog.Get(jobId) is null)
+            ActivityId = jobId;
+            var record = catalog.Get(jobId);
+            if (record is null)
             {
                 Response.StatusCode = StatusCodes.Status404NotFound;
                 ErrorMessage = $"Job '{jobId}' was not found.";
                 return Page();
             }
+
+            ActivityId = record.ActivityId;
 
             StartInput = start?.Trim() ?? string.Empty;
             EndInput = end?.Trim() ?? string.Empty;
@@ -81,6 +86,7 @@ namespace KoLite.LocalApp.Pages.Jobs
         public IActionResult OnPost(string jobId)
         {
             JobId = jobId;
+            ActivityId = catalog.Get(jobId)?.ActivityId ?? jobId;
             if (!TryParseUtcInput(StartInput, "Start", out var startUtc, out var error) ||
                 !TryParseUtcInput(EndInput, "End", out var endUtc, out error))
             {

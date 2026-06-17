@@ -25,7 +25,8 @@
     KO Lite base URL. Defaults to the loopback default http://127.0.0.1:5057.
 
 .PARAMETER JobId
-    Job id (activityId) for Get-Job.
+    Job id - the permanent GUID - for Get-Job. (To resolve a job from its human
+    activityId, list jobs with Get-Jobs and match on displayName, then use its jobId.)
 
 .PARAMETER Json
     Schedule JSON string (single object or array) for Import.

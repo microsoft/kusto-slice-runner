@@ -5,6 +5,7 @@
     <form method="post" action="@Model.PostAction">
         @Html.AntiForgeryToken()
         <input type="hidden" name="formMode" value="fields" />
+        <input type="hidden" name="Input.Id" value="@Model.Input.Id" />
         @if (Model.ExpectedVersion is { } version)
         {
             <input type="hidden" name="expectedVersion" value="@version" />
@@ -14,7 +15,11 @@
             <span class="muted">Primary editor</span>
         </div>
         <div class="form-grid">
-            <label>Activity ID<input name="Input.ActivityId" value="@Model.Input.ActivityId" @(Model.ExistingJob ? "readonly" : null) /></label>
+            @if (!string.IsNullOrEmpty(Model.Input.Id))
+            {
+                <label>Job ID (permanent)<input value="@Model.Input.Id" readonly /></label>
+            }
+            <label>Activity ID (display name)<input name="Input.ActivityId" value="@Model.Input.ActivityId" /></label>
             <label>Function name<input name="Input.FunctionName" value="@Model.Input.FunctionName" /></label>
             <label>Output table<input name="Input.OutputTable" value="@Model.Input.OutputTable" /></label>
             <label>Query window size<input name="Input.QueryWindowSize" value="@Model.Input.QueryWindowSize" placeholder="01:00:00" @(Model.StartedFieldsReadOnly ? "readonly" : null) /></label>

@@ -79,6 +79,7 @@ namespace KoLite.Local.Sqlite.Migrations
             new(5, "slice-attempts-job-completed-index", """
                 CREATE INDEX IF NOT EXISTS ix_slice_attempts_job_completed ON slice_attempts(job_id, completed_at_utc);
                 """),
+            new(6, "rekey-activity-id-to-guid", null, RekeyActivityIdToGuidMigration.Apply, "v6:rekey-activity-id-to-guid:1"),
         ];
 
         private readonly IKoLiteSqliteConnectionFactory connectionFactory;
@@ -96,25 +97,40 @@ namespace KoLite.Local.Sqlite.Migrations
             Migrate(connection);
         }
 
-        public void Migrate(SqliteConnection connection)
+        public void Migrate(SqliteConnection connection) => Migrate(connection, LatestVersion);
+
+        // Applies migrations only up to and including throughVersion. Primarily a test/ops hook
+        // for reconstructing an older schema state; production startup calls Migrate(connection).
+        public void Migrate(SqliteConnection connection, int throughVersion)
         {
             ArgumentNullException.ThrowIfNull(connection);
             EnsureLedger(connection);
 
             foreach (var migration in Migrations)
             {
+                if (migration.Version > throughVersion)
+                {
+                    break;
+                }
+
                 if (HasApplied(connection, migration))
                 {
                     continue;
                 }
 
                 using var transaction = connection.BeginTransaction();
-                ExecuteNonQuery(connection, transaction, migration.Sql);
+                if (!string.IsNullOrEmpty(migration.Sql))
+                {
+                    ExecuteNonQuery(connection, transaction, migration.Sql);
+                }
+
+                migration.Code?.Invoke(connection, transaction);
                 InsertLedger(connection, transaction, migration);
                 transaction.Commit();
             }
 
-            SetMetadata(connection, "schema_version", LatestVersion.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            var target = Math.Min(throughVersion, LatestVersion);
+            SetMetadata(connection, "schema_version", target.ToString(System.Globalization.CultureInfo.InvariantCulture));
         }
 
         private static void EnsureLedger(SqliteConnection connection)
@@ -140,7 +156,7 @@ namespace KoLite.Local.Sqlite.Migrations
                 return false;
             }
 
-            var expectedChecksum = Sha256(migration.Sql);
+            var expectedChecksum = Sha256(migration.ChecksumMaterial);
             if (!StringComparer.Ordinal.Equals(appliedChecksum, expectedChecksum))
             {
                 throw new InvalidOperationException($"SQLite migration {migration.Version} ({migration.Name}) checksum mismatch. Expected {expectedChecksum}, found {appliedChecksum}.");
@@ -159,7 +175,7 @@ namespace KoLite.Local.Sqlite.Migrations
                 """;
             command.Parameters.AddWithValue("$version", migration.Version);
             command.Parameters.AddWithValue("$name", migration.Name);
-            command.Parameters.AddWithValue("$checksum", Sha256(migration.Sql));
+            command.Parameters.AddWithValue("$checksum", Sha256(migration.ChecksumMaterial));
             command.ExecuteNonQuery();
         }
 
@@ -192,7 +208,14 @@ namespace KoLite.Local.Sqlite.Migrations
             return Convert.ToHexString(bytes).ToLowerInvariant();
         }
 
-        private sealed record SqliteMigration(int Version, string Name, string Sql);
+        private sealed record SqliteMigration(int Version, string Name, string? Sql, Action<SqliteConnection, SqliteTransaction>? Code = null, string? CodeChecksum = null)
+        {
+            // Material the ledger checksum is computed from. SQL migrations hash their SQL text;
+            // code migrations hash an explicit, reviewer-bumped checksum string so that changing
+            // the delegate body without bumping the string is detected as drift.
+            public string ChecksumMaterial => Sql ?? CodeChecksum
+                ?? throw new InvalidOperationException($"Migration {Version} ({Name}) has neither SQL nor a code checksum.");
+        }
 
         private const string InitialSchemaSql = """
             CREATE TABLE IF NOT EXISTS app_metadata (

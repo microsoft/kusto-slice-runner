@@ -22,8 +22,8 @@ namespace KoLite.Local.Sqlite.Tests
             catalog = new SqliteJobCatalogRepository(factory);
             state = new SqliteSliceStateRepository(factory);
             catalog.Create(Schedule("job.queue"));
-            state.Append("state-queued", "job.queue", At(0), At(5), DurableSliceStatus.Queued, expectedVersion: 0);
-            state.Append("state-queued-2", "job.queue", At(5), At(10), DurableSliceStatus.Queued, expectedVersion: 0);
+            state.Append("state-queued", JobId("job.queue"), At(0), At(5), DurableSliceStatus.Queued, expectedVersion: 0);
+            state.Append("state-queued-2", JobId("job.queue"), At(5), At(10), DurableSliceStatus.Queued, expectedVersion: 0);
             queue = new SqliteWorkQueueRepository(factory);
         }
 
@@ -36,8 +36,8 @@ namespace KoLite.Local.Sqlite.Tests
         [Fact]
         public void Enqueue_is_idempotent_by_key()
         {
-            var first = queue.Enqueue("job.queue", At(0), At(5), "same-key", At(20));
-            var second = queue.Enqueue("job.queue", At(0), At(5), "same-key", At(20), priority: 99);
+            var first = queue.Enqueue(JobId("job.queue"), At(0), At(5), "same-key", At(20));
+            var second = queue.Enqueue(JobId("job.queue"), At(0), At(5), "same-key", At(20), priority: 99);
 
             Assert.Equal(first.QueueItemId, second.QueueItemId);
             Assert.Equal(first.Priority, second.Priority);
@@ -46,8 +46,8 @@ namespace KoLite.Local.Sqlite.Tests
         [Fact]
         public void Claim_orders_by_availability_then_priority_and_visibility_timeout()
         {
-            queue.Enqueue("job.queue", At(0), At(5), "low", At(10), priority: 0);
-            queue.Enqueue("job.queue", At(5), At(10), "high", At(10), priority: 5);
+            queue.Enqueue(JobId("job.queue"), At(0), At(5), "low", At(10), priority: 0);
+            queue.Enqueue(JobId("job.queue"), At(5), At(10), "high", At(10), priority: 5);
 
             var first = queue.Claim("default", "worker", TimeSpan.FromMinutes(5), At(10));
             var hidden = queue.Claim("default", "other", TimeSpan.FromMinutes(5), At(11));
@@ -62,8 +62,8 @@ namespace KoLite.Local.Sqlite.Tests
         [Fact]
         public void Complete_abandon_and_deadletter_transition_leased_items_only()
         {
-            var completed = queue.Enqueue("job.queue", At(0), At(5), "complete", At(10));
-            var abandoned = queue.Enqueue("job.queue", At(5), At(10), "abandon", At(10));
+            var completed = queue.Enqueue(JobId("job.queue"), At(0), At(5), "complete", At(10));
+            var abandoned = queue.Enqueue(JobId("job.queue"), At(5), At(10), "abandon", At(10));
             var claimedComplete = queue.Claim("default", "worker", TimeSpan.FromMinutes(5), At(10));
             Assert.True(queue.Complete(claimedComplete!.QueueItemId, "worker"));
             Assert.False(queue.Complete(completed.QueueItemId, "worker"));
@@ -83,7 +83,7 @@ namespace KoLite.Local.Sqlite.Tests
         [Fact]
         public async Task Concurrent_claims_do_not_double_claim_one_item()
         {
-            queue.Enqueue("job.queue", At(0), At(5), "only", At(10));
+            queue.Enqueue(JobId("job.queue"), At(0), At(5), "only", At(10));
 
             var claims = await Task.WhenAll(
                 Task.Run(() => queue.Claim("default", "a", TimeSpan.FromMinutes(5), At(10))),
@@ -96,9 +96,9 @@ namespace KoLite.Local.Sqlite.Tests
         public void Claim_skips_disabled_jobs_without_consuming_attempts_and_claims_after_resume()
         {
             var created = catalog.Create(Schedule("job.paused"));
-            state.Append("paused-queued", "job.paused", At(0), At(5), DurableSliceStatus.Queued, expectedVersion: 0);
-            var item = queue.Enqueue("job.paused", At(0), At(5), "paused-work", At(10));
-            var disabled = catalog.SetEnabled("job.paused", enabled: false, expectedVersion: created.CatalogVersion);
+            state.Append("paused-queued", JobId("job.paused"), At(0), At(5), DurableSliceStatus.Queued, expectedVersion: 0);
+            var item = queue.Enqueue(JobId("job.paused"), At(0), At(5), "paused-work", At(10));
+            var disabled = catalog.SetEnabled(JobId("job.paused"), enabled: false, expectedVersion: created.CatalogVersion);
 
             var pausedClaim = queue.Claim("default", "worker", TimeSpan.FromMinutes(5), At(10));
 
@@ -109,7 +109,7 @@ namespace KoLite.Local.Sqlite.Tests
             Assert.Null(pausedItem.LockedBy);
             Assert.Null(pausedItem.LockedUntilUtc);
 
-            catalog.SetEnabled("job.paused", enabled: true, expectedVersion: disabled.CatalogVersion);
+            catalog.SetEnabled(JobId("job.paused"), enabled: true, expectedVersion: disabled.CatalogVersion);
             var resumedClaim = queue.Claim("default", "worker", TimeSpan.FromMinutes(5), At(10));
 
             Assert.NotNull(resumedClaim);
@@ -123,13 +123,13 @@ namespace KoLite.Local.Sqlite.Tests
         public void Count_claimable_uses_same_lifecycle_availability_and_lease_predicates_as_claim()
         {
             var disabled = catalog.Create(Schedule("job.disabled"));
-            state.Append("disabled-queued", "job.disabled", At(0), At(5), DurableSliceStatus.Queued, expectedVersion: 0);
-            queue.Enqueue("job.disabled", At(0), At(5), "disabled-work", At(10));
-            catalog.SetEnabled("job.disabled", enabled: false, expectedVersion: disabled.CatalogVersion);
+            state.Append("disabled-queued", JobId("job.disabled"), At(0), At(5), DurableSliceStatus.Queued, expectedVersion: 0);
+            queue.Enqueue(JobId("job.disabled"), At(0), At(5), "disabled-work", At(10));
+            catalog.SetEnabled(JobId("job.disabled"), enabled: false, expectedVersion: disabled.CatalogVersion);
 
-            queue.Enqueue("job.queue", At(0), At(5), "ready-work", At(10));
-            queue.Enqueue("job.queue", At(5), At(10), "future-work", At(20));
-            queue.Enqueue("job.queue", At(5), At(10), "expired-work", At(10));
+            queue.Enqueue(JobId("job.queue"), At(0), At(5), "ready-work", At(10));
+            queue.Enqueue(JobId("job.queue"), At(5), At(10), "future-work", At(20));
+            queue.Enqueue(JobId("job.queue"), At(5), At(10), "expired-work", At(10));
             var expired = queue.Claim("default", "stale-worker", TimeSpan.FromMinutes(1), At(10));
             Assert.NotNull(expired);
 
@@ -142,10 +142,10 @@ namespace KoLite.Local.Sqlite.Tests
         [Fact]
         public void Queued_only_claiming_skips_expired_leases()
         {
-            queue.Enqueue("job.queue", At(0), At(5), "expired-work", At(10));
+            queue.Enqueue(JobId("job.queue"), At(0), At(5), "expired-work", At(10));
             var expired = queue.Claim("default", "stale-worker", TimeSpan.FromMinutes(1), At(10));
             Assert.NotNull(expired);
-            queue.Enqueue("job.queue", At(5), At(10), "ready-work", At(10));
+            queue.Enqueue(JobId("job.queue"), At(5), At(10), "ready-work", At(10));
 
             Assert.Equal(2, queue.CountClaimable("default", At(12)));
             Assert.Equal(1, queue.CountQueuedClaimable("default", At(12)));
@@ -158,7 +158,7 @@ namespace KoLite.Local.Sqlite.Tests
         [Fact]
         public void Defer_without_attempt_releases_claim_without_consuming_attempt()
         {
-            queue.Enqueue("job.queue", At(0), At(5), "defer-paused", At(10));
+            queue.Enqueue(JobId("job.queue"), At(0), At(5), "defer-paused", At(10));
             var claimed = queue.Claim("default", "worker", TimeSpan.FromMinutes(5), At(10));
             Assert.NotNull(claimed);
             Assert.Equal(1, claimed!.Attempts);
@@ -175,7 +175,7 @@ namespace KoLite.Local.Sqlite.Tests
         [Fact]
         public void Extend_lease_updates_locked_until_for_current_owner_only()
         {
-            queue.Enqueue("job.queue", At(0), At(5), "extend-current-owner", At(10));
+            queue.Enqueue(JobId("job.queue"), At(0), At(5), "extend-current-owner", At(10));
             var claimed = queue.Claim("default", "worker", TimeSpan.FromMinutes(1), At(10));
             Assert.NotNull(claimed);
 
@@ -191,7 +191,7 @@ namespace KoLite.Local.Sqlite.Tests
         [Fact]
         public void Extend_lease_fails_after_current_lease_expires()
         {
-            queue.Enqueue("job.queue", At(0), At(5), "extend-expired", At(10));
+            queue.Enqueue(JobId("job.queue"), At(0), At(5), "extend-expired", At(10));
             var claimed = queue.Claim("default", "worker", TimeSpan.FromMinutes(1), At(10));
             Assert.NotNull(claimed);
 
@@ -204,8 +204,15 @@ namespace KoLite.Local.Sqlite.Tests
 
         private static DateTimeOffset At(int minutes) => new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero).AddMinutes(minutes);
 
+        private static string JobId(string activityId)
+        {
+            var bytes = System.Security.Cryptography.MD5.HashData(System.Text.Encoding.UTF8.GetBytes(activityId));
+            return new Guid(bytes).ToString("N");
+        }
+
         private static string Schedule(string activityId) => $$"""
         {
+          "id": "{{JobId(activityId)}}",
           "activityId": "{{activityId}}",
           "functionName": "QueueFunction",
           "outputTable": "QueueOutput",

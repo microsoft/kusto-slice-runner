@@ -38,7 +38,7 @@ namespace KoLite.Local.Kusto.Execution
         {
             if (!Uri.TryCreate(job.Target.ClusterUri, UriKind.Absolute, out var clusterUri) || clusterUri.Scheme != Uri.UriSchemeHttps) throw new InvalidOperationException("Kusto cluster URI must be an absolute https URI.");
             ValidateIdentifier(job.Target.Database, nameof(job.Target.Database)); ValidateIdentifier(job.FunctionName, nameof(job.FunctionName)); ValidateIdentifier(job.OutputTable, nameof(job.OutputTable));
-            if (job.ActivityId != slice.ActivityId) throw new InvalidOperationException("Slice activity id must match the job activity id.");
+            if (!StringComparer.Ordinal.Equals(job.Id, slice.JobId)) throw new InvalidOperationException("Slice job id must match the job id.");
 
             var sliceKey = slice.ToKey().Value;
             var idempotencyKey = $"ko-lite:{sliceKey}";

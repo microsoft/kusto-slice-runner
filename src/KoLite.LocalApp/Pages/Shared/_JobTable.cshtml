@@ -131,13 +131,13 @@
                     <tr data-dashboard-job-row="@Model.EnableClientFilter.ToString().ToLowerInvariant()" data-dashboard-job-id="@job.Record.JobId" data-dashboard-search="@dashboardSearchText">
                         @if (Model.EnableBulkSelect)
                         {
-                            <td class="select-cell"><input type="checkbox" class="bulk-select" data-bulk-select value="@job.Record.JobId" data-expected-version="@job.Record.CatalogVersion" aria-label="Select @job.Record.JobId" /></td>
+                            <td class="select-cell"><input type="checkbox" class="bulk-select" data-bulk-select value="@job.Record.JobId" data-expected-version="@job.Record.CatalogVersion" aria-label="Select @job.Record.ActivityId" /></td>
                         }
                         <td class="status-cell">
                             <span class="badge @job.StatusCss">@job.StatusText</span>
                         </td>
                         <td class="activity-cell">
-                            <a class="strong text-truncate" title="@job.Record.JobId" href="/jobs/@Uri.EscapeDataString(job.Record.JobId)">@job.Record.JobId</a>
+                            <a class="strong text-truncate" title="@job.Record.ActivityId" href="/jobs/@Uri.EscapeDataString(job.Record.JobId)">@job.Record.ActivityId</a>
                             @if (Model.ShowFolderLine && !string.IsNullOrWhiteSpace(job.Definition.Folder))
                             {
                                 <div class="muted text-truncate" title="@job.Definition.Folder">@job.Definition.Folder</div>
@@ -248,7 +248,7 @@
     {
         var parts = new List<string?>
         {
-            job.Record.JobId,
+            job.Record.ActivityId,
             job.StatusText,
             AppFormatting.Duration(job.Definition.QueryWindowSize),
             "Delay " + AppFormatting.Duration(job.Definition.DelayFromUtcNow)

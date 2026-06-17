@@ -47,7 +47,7 @@ namespace KoLite.Local.Core.Orchestration
     public enum LocalWorkerProgressStatus { Started, Succeeded, FailedRetryable, DeadLettered, LeaseLost }
 
     public sealed record LocalWorkerProgressEvent(
-        string ActivityId,
+        string JobId,
         string QueueItemId,
         DateTimeOffset SliceStartUtc,
         DateTimeOffset SliceEndUtc,

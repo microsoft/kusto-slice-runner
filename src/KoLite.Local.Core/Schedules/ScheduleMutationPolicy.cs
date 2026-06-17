@@ -12,11 +12,11 @@ namespace KoLite.Local.Core.Schedules
             ArgumentNullException.ThrowIfNull(proposed);
 
             var violations = new List<ScheduleMutationViolation>();
-            if (!StringComparer.Ordinal.Equals(current.ActivityId, proposed.ActivityId))
+            if (!StringComparer.Ordinal.Equals(current.Id, proposed.Id))
             {
                 violations.Add(new ScheduleMutationViolation(
-                    "activityId",
-                    $"activityId cannot change from '{current.ActivityId}' to '{proposed.ActivityId}' for an existing job."));
+                    "id",
+                    $"id cannot change from '{current.Id}' to '{proposed.Id}' for an existing job."));
             }
 
             if (!hasStarted)

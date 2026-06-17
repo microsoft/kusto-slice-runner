@@ -47,7 +47,8 @@ Anything else is rejected by the validator.
 
 | Field | Required | Type | Rules |
 | --- | --- | --- | --- |
-| `activityId` | Yes | string | Non-empty. Stable logical job id. Used in slice keys and dependency references. Repo convention: prefix with the logical job database name and a period (`<databaseName>.<activityName>`), for example `CopilotUsage.GhcpReportingUserDaily`. Dependency references must use the same full id. |
+| `id` | No | string (GUID) | Opaque, permanent job identity. **Omit when authoring a new job** — KO Lite mints it. Exports include it; preserve it when editing so the edit targets (and can rename) the same job. Immutable once assigned. When present it must be a valid GUID. |
+| `activityId` | Yes | string | Non-empty. **Mutable, unique** human-facing display label (a display name) — it can be renamed without changing the permanent `id`, slice history, dependency edges, or output idempotency. Repo convention: prefix with the logical job database name and a period (`<databaseName>.<activityName>`), for example `CopilotUsage.GhcpReportingUserDaily`. No longer the slice-key identity (the GUID `id` is). |
 | `functionName` | Yes | string | Non-empty. Kusto producer function the worker calls per slice. KO Lite passes arguments positionally: slice start as the first `datetime` parameter, slice end as the second `datetime` parameter, and (when `jobSettings` is set) the settings as a third `dynamic` parameter. Parameter names are not inspected; recommended names are `startTime`, `endTime`, and `jobSettings`. |
 | `outputTable` | Yes | string | Non-empty. Kusto table where worker output is committed. Convention in this repo: `outputTable` is `_` + `functionName` (leading underscore), so the producer function `Foo` writes to table `_Foo`. |
 | `queryWindowSize` | Yes | TimeSpan string (`c` format) | `> 00:00:00`. Examples: `00:15:00`, `01:00:00`, `1.00:00:00`. |
@@ -60,7 +61,7 @@ Anything else is rejected by the validator.
 | `isPaused` | No | boolean | Default `false`. When `true`, the scheduler emits no work. |
 | `folder` | No | string | Informational only. KO Lite does not interpret. |
 | `tags` | No | array of strings | Optional local job organization tags. When present, must be an array of non-empty strings. KO Lite trims tags, normalizes them to lowercase, deduplicates after normalization, and uses them for dashboard/catalog filters. Tags are separate from Kusto ingestion tags and from `folder`. |
-| `dependsOn` | No | array of objects | Each entry is `{ "activityId": "<id>" }`. No bare-string shorthand. No self-dependency. |
+| `dependsOn` | No | array of objects | Each entry references an upstream by `activityId` and/or `id` (the upstream's GUID): `{ "activityId": "<label>" }`, `{ "id": "<guid>" }`, or both. At least one is required per entry. No bare-string shorthand. No self-dependency. KO Lite resolves the reference to the upstream's GUID and stores the edge by `id`, so upstream renames don't break it; referencing by `activityId` requires the upstream to exist (in the catalog or same import batch). |
 | `jobSettings` | No | any JSON | Opaque pass-through for downstream code. KO Lite stores it but does not interpret it. |
 
 Unknown fields anywhere in the top level, in `target`, or in any `dependsOn`
@@ -204,8 +205,9 @@ Use these as references for shape and style:
   cluster or database.
 - The database-name prefix for `activityId` cannot be inferred from the file,
   folder, or surrounding docs.
-- `activityId` collides with an existing job and the intent (rename vs. edit
-  vs. supersede) is unclear.
+- `activityId` collides with an existing job. A **rename** (same `id`, new `activityId`) is a
+  supported, normal edit; stop only if the intent (rename vs. a distinct new job vs. editing the
+  existing one) is unclear.
 - A requested schedule field is not in the supported contract (e.g., custom
   rerun intervals, chunk definitions, raw inline KQL, schema override switches,
   extent metadata controls, rebuild request types, performance request types).

@@ -10,6 +10,7 @@ namespace KoLite.LocalApp.Ui
         private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true };
 
         public string ActivityId { get; set; } = string.Empty;
+        public string? Id { get; set; }
         public string FunctionName { get; set; } = string.Empty;
         public string OutputTable { get; set; } = string.Empty;
         public string QueryWindowSize { get; set; } = "01:00:00";
@@ -43,6 +44,7 @@ namespace KoLite.LocalApp.Ui
         {
             return new ScheduleFormInput
             {
+                Id = definition.Id,
                 ActivityId = definition.ActivityId,
                 FunctionName = definition.FunctionName,
                 OutputTable = definition.OutputTable,
@@ -57,7 +59,7 @@ namespace KoLite.LocalApp.Ui
                 Tags = string.Join(Environment.NewLine, definition.Tags),
                 ClusterUri = definition.Target.ClusterUri,
                 Database = definition.Target.Database,
-                DependsOn = string.Join(Environment.NewLine, definition.DependsOn.Select(d => d.ActivityId)),
+                DependsOn = string.Join(Environment.NewLine, definition.DependsOn.Select(d => d.ActivityId ?? d.Id)),
                 JobSettingsJson = definition.JobSettings is null ? "{}" : JsonSerializer.Serialize(definition.JobSettings.Value, JsonOptions)
             };
         }
@@ -82,6 +84,11 @@ namespace KoLite.LocalApp.Ui
                 }
             };
 
+            if (!string.IsNullOrWhiteSpace(Id))
+            {
+                root["id"] = Id.Trim();
+            }
+
             if (!string.IsNullOrWhiteSpace(EndOn))
             {
                 root["endOn"] = EndOn.Trim();
@@ -104,7 +111,11 @@ namespace KoLite.LocalApp.Ui
                 root["tags"] = array;
             }
 
-            var dependencies = SplitDependencyIds().Select(id => new JsonObject { ["activityId"] = id }).ToArray();
+            var dependencies = SplitDependencyIds()
+                .Select(token => Guid.TryParse(token, out var guid)
+                    ? new JsonObject { ["id"] = guid.ToString("N") }
+                    : new JsonObject { ["activityId"] = token })
+                .ToArray();
             if (dependencies.Length > 0)
             {
                 var array = new JsonArray();

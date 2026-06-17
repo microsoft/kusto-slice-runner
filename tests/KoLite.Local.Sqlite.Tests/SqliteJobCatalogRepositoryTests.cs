@@ -34,13 +34,14 @@ namespace KoLite.Local.Sqlite.Tests
         {
             var created = repository.Create(Schedule("job.catalog", paused: false), actor: "test");
 
-            Assert.Equal("job.catalog", created.JobId);
+            Assert.Equal(JobId("job.catalog"), created.JobId);
+            Assert.Equal("job.catalog", created.ActivityId);
             Assert.True(created.IsEnabled);
             Assert.Equal(1, created.CatalogVersion);
             Assert.DoesNotContain("\r", created.ScheduleJson);
             Assert.DoesNotContain("  ", created.ScheduleJson);
             Assert.Equal("CatalogFunction", created.Definition.FunctionName);
-            var history = repository.History("job.catalog");
+            var history = repository.History(JobId("job.catalog"));
             Assert.Single(history);
             Assert.Equal("Created", history[0].EventType);
         }
@@ -75,7 +76,7 @@ namespace KoLite.Local.Sqlite.Tests
             Assert.True(parsed.IsValid, errors);
             Assert.Equal(["job.a", "job.b", "job.c"], ActivityIds(allJson));
 
-            var filteredJson = repository.ExportAll(new HashSet<string>(StringComparer.Ordinal) { "job.b" });
+            var filteredJson = repository.ExportAll(new HashSet<string>(StringComparer.Ordinal) { JobId("job.b") });
 
             Assert.Equal(["job.a", "job.c"], ActivityIds(filteredJson));
         }
@@ -87,7 +88,7 @@ namespace KoLite.Local.Sqlite.Tests
             repository.Create(Schedule("job.a", paused: true));
             repository.Create(Schedule("job.c", paused: false));
 
-            var selectedJson = repository.ExportSelected(["job.c", "job.a", "job.a", "job.missing"]);
+            var selectedJson = repository.ExportSelected([JobId("job.c"), JobId("job.a"), JobId("job.a"), JobId("job.missing")]);
             var parsed = ScheduleImportParser.Parse(selectedJson);
             var errors = string.Join("; ", parsed.Errors.Select(e => $"{e.Field}: {e.Message}"));
 
@@ -107,7 +108,7 @@ namespace KoLite.Local.Sqlite.Tests
             Assert.Equal(["job.1", "job.A", "job.a", "job.b"], ActivityIds(repository.ExportAll()));
             Assert.Equal(["job.1", "job.A", "job.a", "job.b"], ActivityIds(repository.ExportAll(new HashSet<string>(StringComparer.Ordinal))));
 
-            var selectedJson = repository.ExportSelected(["job.b", "job.a", "job.1"]);
+            var selectedJson = repository.ExportSelected([JobId("job.b"), JobId("job.a"), JobId("job.1")]);
             Assert.Equal(["job.1", "job.a", "job.b"], ActivityIds(selectedJson));
         }
 
@@ -163,6 +164,39 @@ namespace KoLite.Local.Sqlite.Tests
         }
 
         [Fact]
+        public void Update_allows_activity_id_rename_keeping_same_job_id()
+        {
+            var created = repository.Create(Schedule("job.rename", paused: false));
+
+            var renamed = repository.Update(
+                created.JobId,
+                Schedule("job.renamed", paused: false, id: created.JobId),
+                expectedVersion: created.CatalogVersion);
+
+            Assert.Equal(created.JobId, renamed.JobId);
+            Assert.Equal("job.renamed", renamed.ActivityId);
+            Assert.Equal(2, renamed.CatalogVersion);
+            Assert.Equal("job.renamed", repository.Get(created.JobId)!.ActivityId);
+            Assert.Equal(["Created", "Updated"], repository.History(created.JobId).Select(e => e.EventType).ToArray());
+        }
+
+        [Fact]
+        public void Update_rejects_rename_to_an_activity_id_used_by_another_job()
+        {
+            repository.Create(Schedule("job.first", paused: false));
+            var second = repository.Create(Schedule("job.second", paused: false));
+
+            var ex = Assert.Throws<InvalidOperationException>(() => repository.Update(
+                second.JobId,
+                Schedule("job.first", paused: false, id: second.JobId),
+                expectedVersion: second.CatalogVersion));
+
+            Assert.Contains("already used", ex.Message, StringComparison.Ordinal);
+            Assert.Equal("job.second", repository.Get(second.JobId)!.ActivityId);
+            Assert.Equal(1, repository.Get(second.JobId)!.CatalogVersion);
+        }
+
+        [Fact]
         public void Create_import_and_export_normalize_schedule_tags()
         {
             var created = repository.Create(Schedule("job.tags", paused: false, tags: [" Prod ", "daily", "PROD"]));
@@ -172,15 +206,15 @@ namespace KoLite.Local.Sqlite.Tests
             Assert.DoesNotContain(" Prod ", created.ScheduleJson, StringComparison.Ordinal);
 
             var result = repository.Import("[" + Schedule("job.tags", paused: false, tags: ["Security", "prod", "security"]) + "," + Schedule("job.tags.new", paused: false, tags: ["Daily"]) + "]", actor: "test-import");
-            var updated = repository.Get("job.tags")!;
-            var imported = repository.Get("job.tags.new")!;
+            var updated = repository.Get(JobId("job.tags"))!;
+            var imported = repository.Get(JobId("job.tags.new"))!;
             var exportAll = ScheduleImportParser.Parse(repository.ExportAll());
 
             Assert.Equal(1, result.Created);
             Assert.Equal(1, result.Updated);
             Assert.Equal(["security", "prod"], updated.Definition.Tags);
             Assert.Equal(["daily"], imported.Definition.Tags);
-            Assert.Contains("\"tags\":[\"security\",\"prod\"]", repository.Export("job.tags"), StringComparison.Ordinal);
+            Assert.Contains("\"tags\":[\"security\",\"prod\"]", repository.Export(JobId("job.tags")), StringComparison.Ordinal);
             Assert.True(exportAll.IsValid, string.Join(Environment.NewLine, exportAll.Errors.Select(e => $"{e.Field}: {e.Message}")));
             Assert.Equal(["security", "prod"], exportAll.Items.Single(item => item.Definition.ActivityId == "job.tags").Definition.Tags);
             Assert.Equal(["daily"], exportAll.Items.Single(item => item.Definition.ActivityId == "job.tags.new").Definition.Tags);
@@ -206,9 +240,9 @@ namespace KoLite.Local.Sqlite.Tests
             Assert.Equal(2, result.Total);
             Assert.Equal(["Updated", "Created"], result.Items.Select(i => i.Action).ToArray());
 
-            var existing = repository.Get("job.existing")!;
-            var omitted = repository.Get("job.omitted")!;
-            var created = repository.Get("job.new")!;
+            var existing = repository.Get(JobId("job.existing"))!;
+            var omitted = repository.Get(JobId("job.omitted"))!;
+            var created = repository.Get(JobId("job.new"))!;
             Assert.Equal(2, existing.CatalogVersion);
             Assert.Equal(3, existing.Definition.MaxParallelism);
             Assert.False(existing.IsEnabled);
@@ -217,15 +251,15 @@ namespace KoLite.Local.Sqlite.Tests
             Assert.True(omitted.IsEnabled);
             Assert.Equal(1, created.CatalogVersion);
             Assert.Equal(4, created.Definition.MaxParallelism);
-            Assert.Equal(["Created", "Updated"], repository.History("job.existing").Select(e => e.EventType).ToArray());
-            Assert.Equal(["Created"], repository.History("job.new").Select(e => e.EventType).ToArray());
+            Assert.Equal(["Created", "Updated"], repository.History(JobId("job.existing")).Select(e => e.EventType).ToArray());
+            Assert.Equal(["Created"], repository.History(JobId("job.new")).Select(e => e.EventType).ToArray());
         }
 
         [Fact]
         public void Import_rolls_back_full_batch_when_started_job_changes_protected_fields()
         {
             repository.Create(Schedule("job.existing", paused: false), actor: "seed");
-            MarkStarted("job.existing");
+            MarkStarted(JobId("job.existing"));
 
             var ex = Assert.Throws<InvalidOperationException>(() => repository.Import(
                 "[" +
@@ -237,12 +271,12 @@ namespace KoLite.Local.Sqlite.Tests
 
             Assert.Contains("[1].queryWindowSize", ex.Message, StringComparison.Ordinal);
             Assert.Contains("[1].startFrom", ex.Message, StringComparison.Ordinal);
-            Assert.Null(repository.Get("job.new"));
-            var existing = repository.Get("job.existing")!;
+            Assert.Null(repository.Get(JobId("job.new")));
+            var existing = repository.Get(JobId("job.existing"))!;
             Assert.Equal(1, existing.CatalogVersion);
             Assert.Equal(TimeSpan.FromMinutes(5), existing.Definition.QueryWindowSize);
             Assert.Equal(At(0), existing.Definition.StartFrom);
-            Assert.Equal(["Created"], repository.History("job.existing").Select(e => e.EventType).ToArray());
+            Assert.Equal(["Created"], repository.History(JobId("job.existing")).Select(e => e.EventType).ToArray());
         }
 
         [Fact]
@@ -253,16 +287,16 @@ namespace KoLite.Local.Sqlite.Tests
             var ex = Assert.Throws<InvalidOperationException>(() => repository.Import("[" + Schedule("job.new", paused: false, maxParallelism: 2) + "," + InvalidSchedule("job.bad") + "]", actor: "test-import"));
 
             Assert.Contains("[1].outputTable", ex.Message, StringComparison.Ordinal);
-            Assert.Null(repository.Get("job.new"));
-            Assert.NotNull(repository.Get("job.keep"));
+            Assert.Null(repository.Get(JobId("job.new")));
+            Assert.NotNull(repository.Get(JobId("job.keep")));
             Assert.Single(repository.List());
-            Assert.Equal(["Created"], repository.History("job.keep").Select(e => e.EventType).ToArray());
+            Assert.Equal(["Created"], repository.History(JobId("job.keep")).Select(e => e.EventType).ToArray());
         }
 
-        private void MarkStarted(string activityId)
+        private void MarkStarted(string jobId)
         {
             var state = new SqliteSliceStateRepository(factory);
-            state.Append("started-" + activityId, activityId, At(0), At(5), DurableSliceStatus.Queued, expectedVersion: 0);
+            state.Append("started-" + jobId, jobId, At(0), At(5), DurableSliceStatus.Queued, expectedVersion: 0);
         }
 
         private static DateTimeOffset At(int minutes) => new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero).AddMinutes(minutes);
@@ -276,10 +310,18 @@ namespace KoLite.Local.Sqlite.Tests
                 .ToArray();
         }
 
-        private static string Schedule(string activityId, bool paused, int maxParallelism = 1, string queryWindowSize = "00:05:00", string startFrom = "2026-01-01T00:00:00Z", IReadOnlyList<string>? tags = null)
+        private static string JobId(string activityId)
         {
+            var bytes = System.Security.Cryptography.MD5.HashData(System.Text.Encoding.UTF8.GetBytes(activityId));
+            return new Guid(bytes).ToString("N");
+        }
+
+        private static string Schedule(string activityId, bool paused, int maxParallelism = 1, string queryWindowSize = "00:05:00", string startFrom = "2026-01-01T00:00:00Z", IReadOnlyList<string>? tags = null, string? id = null)
+        {
+            var jobId = id ?? JobId(activityId);
             var schedule = $$"""
             {
+              "id": "{{jobId}}",
               "activityId": "{{activityId}}",
               "functionName": "CatalogFunction",
               "outputTable": "CatalogOutput",

@@ -145,6 +145,7 @@ namespace KoLite.Local.Kusto.Tests
             using var document = System.Text.Json.JsonDocument.Parse(settingsJson);
             return new JobDefinition
             {
+                Id = "job_kusto",
                 ActivityId = "job_kusto",
                 FunctionName = "KustoFunction",
                 OutputTable = "OutputTable",

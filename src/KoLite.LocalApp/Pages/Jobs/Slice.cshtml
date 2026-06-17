@@ -12,8 +12,8 @@ else
 {
     <div class="page-heading">
         <div>
-            <h1>Slice detail: @Model.Data.Job.JobId</h1>
-            <p class="muted">@Model.Data.Job.JobId: @AppFormatting.Iso(Model.Data.SliceStartUtc) - @AppFormatting.Iso(Model.Data.SliceEndUtc)</p>
+            <h1>Slice detail: @Model.Data.Job.ActivityId</h1>
+            <p class="muted">@Model.Data.Job.ActivityId: @AppFormatting.Iso(Model.Data.SliceStartUtc) - @AppFormatting.Iso(Model.Data.SliceEndUtc)</p>
         </div>
         <div class="button-row">
             <a class="btn primary" href="/jobs/@Uri.EscapeDataString(Model.Data.Job.JobId)/rerun?start=@Uri.EscapeDataString(AppFormatting.DateTimeInputUtc(Model.Data.SliceStartUtc))&end=@Uri.EscapeDataString(AppFormatting.DateTimeInputUtc(Model.Data.SliceEndUtc))">Rerun this slice</a>

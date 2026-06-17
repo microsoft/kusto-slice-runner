@@ -12,15 +12,17 @@ namespace KoLite.Local.Core.Scheduling
         public static DependencyReadiness Evaluate(
             JobDefinition downstream,
             SliceRange downstreamSlice,
-            IReadOnlyDictionary<string, JobDefinition> jobsByActivityId,
+            IReadOnlyDictionary<string, JobDefinition> jobsById,
             IReadOnlySet<SliceKey> completedSlices)
         {
             var missing = new List<SliceKey>();
             foreach (var dependency in downstream.DependsOn)
             {
-                if (!jobsByActivityId.TryGetValue(dependency.ActivityId, out var upstream))
+                var upstreamId = dependency.Id;
+                if (string.IsNullOrWhiteSpace(upstreamId) || !jobsById.TryGetValue(upstreamId, out var upstream))
                 {
-                    missing.Add(SliceKey.Create(dependency.ActivityId, downstreamSlice.StartUtc, downstreamSlice.EndUtc));
+                    var reference = string.IsNullOrWhiteSpace(upstreamId) ? dependency.ActivityId ?? "<unknown>" : upstreamId;
+                    missing.Add(SliceKey.Create(reference, downstreamSlice.StartUtc, downstreamSlice.EndUtc));
                     continue;
                 }
 
@@ -33,7 +35,7 @@ namespace KoLite.Local.Core.Scheduling
 
         public static IReadOnlyList<SliceRange> RequiredUpstreamSlices(JobDefinition upstream, SliceRange downstreamSlice)
         {
-            if (string.IsNullOrWhiteSpace(upstream.ActivityId)) throw new ArgumentException("Activity id is required.", nameof(upstream));
+            if (string.IsNullOrWhiteSpace(upstream.Id)) throw new ArgumentException("Upstream job id is required.", nameof(upstream));
             if (upstream.QueryWindowSize <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(upstream), "Query window size must be positive.");
 
             var upstreamStart = upstream.StartFrom.ToUniversalTime();
@@ -51,7 +53,7 @@ namespace KoLite.Local.Core.Scheduling
             var required = new List<SliceRange>();
             for (var cursor = firstWindowStart; cursor < downstreamEnd; cursor += upstream.QueryWindowSize)
             {
-                required.Add(new SliceRange(upstream.ActivityId, cursor, cursor + upstream.QueryWindowSize));
+                required.Add(new SliceRange(upstream.Id!, cursor, cursor + upstream.QueryWindowSize));
             }
 
             return required;
