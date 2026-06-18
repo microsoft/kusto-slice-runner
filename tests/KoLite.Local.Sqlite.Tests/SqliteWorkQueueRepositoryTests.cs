@@ -202,6 +202,38 @@ namespace KoLite.Local.Sqlite.Tests
             Assert.Equal("worker", expired.LockedBy);
         }
 
+        [Fact]
+        public void Claim_enforces_job_parallelism_only_when_requested()
+        {
+            queue.Enqueue(JobId("job.queue"), At(0), At(5), "first", At(10));
+            queue.Enqueue(JobId("job.queue"), At(5), At(10), "second", At(10));
+
+            // job.queue has maxParallelism=1: with enforcement, only one slice may be leased at a time.
+            var first = queue.Claim("default", "w1", TimeSpan.FromMinutes(5), At(10), enforceJobParallelism: true);
+            var blocked = queue.Claim("default", "w2", TimeSpan.FromMinutes(5), At(10), enforceJobParallelism: true);
+
+            Assert.NotNull(first);
+            Assert.Null(blocked);
+
+            Assert.True(queue.Complete(first!.QueueItemId, "w1"));
+            var afterComplete = queue.Claim("default", "w3", TimeSpan.FromMinutes(5), At(10), enforceJobParallelism: true);
+            Assert.NotNull(afterComplete);
+        }
+
+        [Fact]
+        public void Count_claimable_respects_job_parallelism_only_when_requested()
+        {
+            queue.Enqueue(JobId("job.queue"), At(0), At(5), "a", At(10));
+            queue.Enqueue(JobId("job.queue"), At(5), At(10), "b", At(10));
+
+            Assert.Equal(2, queue.CountClaimable("default", At(10)));
+            Assert.Equal(1, queue.CountClaimable("default", At(10), enforceJobParallelism: true));
+
+            var claimed = queue.Claim("default", "w1", TimeSpan.FromMinutes(5), At(10), enforceJobParallelism: true);
+            Assert.NotNull(claimed);
+            Assert.Equal(0, queue.CountClaimable("default", At(10), enforceJobParallelism: true));
+        }
+
         private static DateTimeOffset At(int minutes) => new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero).AddMinutes(minutes);
 
         private static string JobId(string activityId)

@@ -108,6 +108,22 @@ namespace KoLite.Local.Sqlite.Tests
         }
 
         [Fact]
+        public void Scheduler_without_per_tick_cap_tops_up_every_job_in_a_single_pass()
+        {
+            catalog.Create(Schedule("job.cap.one", maxParallelism: 2));
+            catalog.Create(Schedule("job.cap.two", maxParallelism: 2));
+            catalog.Create(Schedule("job.cap.three", maxParallelism: 2));
+
+            // Default options: no global per-tick throttle. One pass tops up every job to its MaxParallelism.
+            var tick = new SqliteLocalScheduler(catalog, state, queue, observability, clock, new LocalSchedulerOptions()).Tick();
+
+            Assert.Equal(6, tick.Enqueued);
+            Assert.Equal(2, queue.CountActive(JobId("job.cap.one"), "default"));
+            Assert.Equal(2, queue.CountActive(JobId("job.cap.two"), "default"));
+            Assert.Equal(2, queue.CountActive(JobId("job.cap.three"), "default"));
+        }
+
+        [Fact]
         public void Scheduler_does_not_enqueue_completed_slice_after_queue_completion()
         {
             var localClock = new ManualClock(At(5));

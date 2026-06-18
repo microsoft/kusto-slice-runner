@@ -132,11 +132,12 @@ namespace KoLite.LocalApp.Tests
             Assert.Equal(databasePath, healthJson.RootElement.GetProperty("databasePath").GetString());
             Assert.Equal("Enabled", healthJson.RootElement.GetProperty("liveKustoExecution").GetString());
             Assert.Equal("AzureCli", healthJson.RootElement.GetProperty("kustoAuthMode").GetString());
-            Assert.Equal(10, healthJson.RootElement.GetProperty("scheduler").GetProperty("workerConcurrency").GetInt32());
+            Assert.Equal("Unbounded", healthJson.RootElement.GetProperty("scheduler").GetProperty("workerConcurrency").GetString());
             Assert.False(healthJson.RootElement.GetProperty("scheduler").GetProperty("logEveryPass").GetBoolean());
             var workerPool = healthJson.RootElement.GetProperty("workerPool");
             Assert.Equal("Fixed", workerPool.GetProperty("mode").GetString());
-            Assert.Equal(10, workerPool.GetProperty("maxConcurrency").GetInt32());
+            Assert.Equal(JsonValueKind.Null, workerPool.GetProperty("maxConcurrency").ValueKind);
+            Assert.Equal("Unbounded", workerPool.GetProperty("maxConcurrencyDisplay").GetString());
             Assert.Equal("Default", workerPool.GetProperty("maxConcurrencySource").GetString());
             Assert.Equal(TimeSpan.FromMilliseconds(250).ToString(), workerPool.GetProperty("idleDelay").GetString());
 

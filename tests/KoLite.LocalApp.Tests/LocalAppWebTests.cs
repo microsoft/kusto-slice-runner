@@ -49,7 +49,9 @@ namespace KoLite.LocalApp.Tests
             Assert.Equal(TimeSpan.FromSeconds(10), options.TickInterval);
             Assert.False(options.LogEveryPass);
             Assert.Equal("Fixed", workerPool.Mode);
-            Assert.Equal(10, workerPool.MaxConcurrency);
+            Assert.Equal(LocalBackgroundWorkerPoolOptions.Unbounded, workerPool.MaxConcurrency);
+            Assert.True(workerPool.MaxConcurrencyUnbounded);
+            Assert.Equal("Unbounded", workerPool.MaxConcurrencyDisplay);
             Assert.Equal("Default", workerPool.MaxConcurrencySource);
             Assert.Equal(TimeSpan.FromMilliseconds(250), workerPool.IdleDelay);
             Assert.Equal(100, workerPool.MaxDispatchStartsPerCycle);

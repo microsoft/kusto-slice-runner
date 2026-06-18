@@ -14,7 +14,10 @@ namespace KoLite.Local.Core.Orchestration
         Task<LocalSliceOutputResult> ExecuteAsync(JobDefinition job, SliceRange slice, CancellationToken cancellationToken = default);
     }
 
-    public sealed record LocalSchedulerOptions(string QueueName = "default", int MaxSlicesPerTick = 100);
+    // MaxSlicesPerTick defaults to unbounded: a pass is already naturally bounded to the sum of each
+    // job's MaxParallelism (the scheduler stops topping up a job once it reaches that). Per-job
+    // MaxParallelism is the concurrency lever, so no global per-tick throttle is applied by default.
+    public sealed record LocalSchedulerOptions(string QueueName = "default", int MaxSlicesPerTick = int.MaxValue);
 
     public sealed record LocalSchedulerTickResult(int Enqueued, int DependencyBlocked, int SkippedCompleted, int SkippedMaxParallelism);
 
@@ -25,7 +28,8 @@ namespace KoLite.Local.Core.Orchestration
         int MaxAttempts = 3,
         TimeSpan? InitialRetryDelay = null,
         TimeSpan? MaxRetryDelay = null,
-        double BackoffFactor = 2.0)
+        double BackoffFactor = 2.0,
+        bool EnforceJobParallelism = false)
     {
         public static TimeSpan QueryTimeoutLeaseBuffer { get; } = TimeSpan.FromMinutes(2);
         public TimeSpan EffectiveVisibilityTimeout => VisibilityTimeout ?? TimeSpan.FromMinutes(5);

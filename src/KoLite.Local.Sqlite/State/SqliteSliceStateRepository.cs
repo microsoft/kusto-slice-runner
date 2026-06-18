@@ -16,6 +16,8 @@ namespace KoLite.Local.Sqlite.State
 
     public sealed record SliceStateAppendResult(DurableSliceState State, bool WasDuplicate);
 
+    public readonly record struct SliceSchedulingState(DurableSliceStatus Status, long Version);
+
     public sealed class SqliteSliceStateRepository
     {
         private readonly IKoLiteSqliteConnectionFactory connectionFactory;
@@ -55,11 +57,37 @@ namespace KoLite.Local.Sqlite.State
         public bool DeadLetterLease(string operationId, string jobId, DateTimeOffset sliceStartUtc, DateTimeOffset sliceEndUtc, string leaseOwner, string leaseToken, DateTimeOffset nowUtc, string reason, string payloadJson = "{}") => FinishLease(operationId, jobId, sliceStartUtc, sliceEndUtc, leaseOwner, leaseToken, nowUtc, DurableSliceStatus.DeadLettered, reason, payloadJson);
 
         public DependencyReadiness EvaluateDependencyReadiness(JobDefinition downstream, SliceRange downstreamSlice, IReadOnlyDictionary<string, JobDefinition> jobsById)
+            => DependencyReadinessEvaluator.Evaluate(downstream, downstreamSlice, jobsById, ListCompletedSliceKeys());
+
+        // Loads every Completed slice key across all jobs in a single query. The scheduler loads this
+        // once per pass and reuses it for all dependency-readiness checks instead of reloading the full
+        // set per schedulable slice.
+        public IReadOnlySet<SliceKey> ListCompletedSliceKeys()
         {
             var completed = new HashSet<SliceKey>(); using var c = connectionFactory.OpenConnection();
             using (var cmd = SqliteStorage.Command(c, null, "SELECT job_id, slice_start_utc, slice_end_utc FROM current_slice_state WHERE state = 'Completed';"))
             using (var r = cmd.ExecuteReader()) while (r.Read()) completed.Add(SliceKey.Create(r.GetString(0), DateTimeOffset.Parse(r.GetString(1)), DateTimeOffset.Parse(r.GetString(2))));
-            return DependencyReadinessEvaluator.Evaluate(downstream, downstreamSlice, jobsById, completed);
+            return completed;
+        }
+
+        // Loads the current state and version of every materialized slice of a job in a single query,
+        // keyed by UTC slice start. Keys absent from the map are Missing. The scheduler loads this once
+        // per job per pass so per-slice status lookups are in-memory instead of one connection per slice.
+        public IReadOnlyDictionary<DateTimeOffset, SliceSchedulingState> ListSliceStates(string jobId)
+        {
+            var map = new Dictionary<DateTimeOffset, SliceSchedulingState>();
+            using var c = connectionFactory.OpenConnection();
+            using var cmd = SqliteStorage.Command(c, null, "SELECT css.slice_start_utc AS slice_start_utc, css.state AS state, (SELECT COUNT(*) FROM slice_state_events e WHERE e.job_id=css.job_id AND e.slice_start_utc=css.slice_start_utc AND e.slice_end_utc=css.slice_end_utc) AS version FROM current_slice_state css WHERE css.job_id=$j;");
+            cmd.Add("$j", jobId);
+            using var r = cmd.ExecuteReader();
+            while (r.Read())
+            {
+                var start = SqliteStorage.ReadUtc(r, "slice_start_utc");
+                var status = Enum.Parse<DurableSliceStatus>(r.GetString(r.GetOrdinal("state")));
+                var version = r.GetInt64(r.GetOrdinal("version"));
+                map[start.ToUniversalTime()] = new SliceSchedulingState(status, version);
+            }
+            return map;
         }
 
         private bool FinishLease(string op, string jobId, DateTimeOffset start, DateTimeOffset end, string owner, string leaseToken, DateTimeOffset now, DurableSliceStatus status, string? reason, string payload)

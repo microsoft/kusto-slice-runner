@@ -44,7 +44,7 @@ dotnet run --project .\src\KoLite.LocalApp\KoLite.LocalApp.csproj -- --Connectio
 | `KoLite:Scheduler:Enabled` | `true` | Disable for UI-only or safe first-run review. |
 | `KoLite:Scheduler:TickInterval` | `00:00:10` | Scheduler cadence. Must be greater than zero. |
 | `KoLite:Scheduler:LogEveryPass` | `false` | Writes durable scheduler/worker diagnostic rows when enabled. |
-| `KoLite:WorkerPool:MaxConcurrency` | `10` | Fixed local worker-pool concurrency. |
+| `KoLite:WorkerPool:MaxConcurrency` | `Unbounded` | Global worker-pool concurrency cap. Unbounded by default so total concurrency equals the sum of each job's `maxParallelism` (enforced per job at claim time); set a positive integer to impose a global cap. |
 | `KoLite:WorkerPool:IdleDelay` | `00:00:00.250` | Delay between idle dispatcher cycles. |
 | `KoLite:WorkerPool:MaxDispatchStartsPerCycle` | `100` | Per-cycle dispatch start cap. |
 | `KoLite:Kusto:AuthMode` | `AzureCli` | Supported values: `AzureCli`, `ManagedIdentity`. |

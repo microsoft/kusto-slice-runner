@@ -50,7 +50,7 @@ namespace KoLite.LocalApp
             builder.Services.AddScoped<IKustoExecutor, KustoSdkExecutor>();
             builder.Services.AddScoped<ILocalSliceOutputExecutor, KustoLocalSliceOutputExecutor>();
             builder.Services.AddSingleton<LocalShutdownDrainCoordinator>();
-            builder.Services.AddSingleton(new LocalWorkerOptions(WorkerId: "local-web-worker"));
+            builder.Services.AddSingleton(new LocalWorkerOptions(WorkerId: "local-web-worker", EnforceJobParallelism: true));
             builder.Services.AddScoped<LocalWorkerFactory>();
             builder.Services.AddScoped(sp => new SqliteLocalScheduler(
                 sp.GetRequiredService<SqliteJobCatalogRepository>(),
@@ -58,7 +58,7 @@ namespace KoLite.LocalApp
                 sp.GetRequiredService<SqliteWorkQueueRepository>(),
                 sp.GetRequiredService<SqliteOperationalReadModelRepository>(),
                 sp.GetRequiredService<IClock>(),
-                new LocalSchedulerOptions(MaxSlicesPerTick: 20)));
+                new LocalSchedulerOptions()));
             builder.Services.AddScoped(sp => sp.GetRequiredService<LocalWorkerFactory>().Create(sp.GetRequiredService<LocalWorkerOptions>().WorkerId));
             builder.Services.AddSingleton<ILocalWorkerProgressSink, LoggingLocalWorkerProgressSink>();
             builder.Services.AddSingleton(sp => LocalBackgroundSchedulerOptions.From(sp.GetRequiredService<IConfiguration>()));
@@ -151,7 +151,7 @@ namespace KoLite.LocalApp
                 command.ExecuteScalar();
                 var nowUtc = clock.UtcNow;
                 var queueStatus = observability.GetQueueStatus(localWorkerOptions.QueueName, nowUtc);
-                var claimableBacklog = queue.CountClaimable(localWorkerOptions.QueueName, nowUtc);
+                var claimableBacklog = queue.CountClaimable(localWorkerOptions.QueueName, nowUtc, localWorkerOptions.EnforceJobParallelism);
                 var updateSnapshot = updateCheckState.GetSnapshot();
                 return Results.Json(new
                 {
@@ -166,7 +166,7 @@ namespace KoLite.LocalApp
                         enabled = schedulerOptions.Enabled,
                         tickInterval = schedulerOptions.TickInterval.ToString(),
                         maxWorkerIterations = workerPoolOptions.MaxDispatchStartsPerCycle,
-                        workerConcurrency = workerPoolOptions.MaxConcurrency,
+                        workerConcurrency = workerPoolOptions.MaxConcurrencyDisplay,
                         logEveryPass = schedulerOptions.LogEveryPass
                     },
                     workerPool = workerPoolState.GetSnapshot(workerPoolOptions, queueStatus, claimableBacklog),
@@ -311,9 +311,13 @@ namespace KoLite.LocalApp
         bool LogEveryPass)
     {
         public const string FixedMode = "Fixed";
-        public const int DefaultMaxConcurrency = 10;
+        public const int Unbounded = int.MaxValue;
+        public const int DefaultMaxConcurrency = Unbounded;
         public const int DefaultMaxDispatchStartsPerCycle = 100;
         public static TimeSpan DefaultIdleDelay { get; } = TimeSpan.FromMilliseconds(250);
+
+        public bool MaxConcurrencyUnbounded => MaxConcurrency == Unbounded;
+        public string MaxConcurrencyDisplay => MaxConcurrencyUnbounded ? "Unbounded" : MaxConcurrency.ToString(CultureInfo.InvariantCulture);
 
         public static LocalBackgroundWorkerPoolOptions From(IConfiguration configuration, LocalBackgroundSchedulerOptions schedulerOptions)
         {
@@ -402,14 +406,15 @@ namespace KoLite.LocalApp
         string Mode,
         bool Enabled,
         string EnabledSource,
-        int MaxConcurrency,
+        int? MaxConcurrency,
         string MaxConcurrencySource,
+        string MaxConcurrencyDisplay,
         string IdleDelay,
         string IdleDelaySource,
         int MaxDispatchStartsPerCycle,
         string MaxDispatchStartsPerCycleSource,
         int ActiveWorkerCount,
-        int AvailableSlots,
+        int? AvailableSlots,
         int ClaimableBacklog,
         int ActiveQueueRows,
         int QueuedQueueRows,
@@ -486,13 +491,17 @@ namespace KoLite.LocalApp
             lock (gate)
             {
                 var activeQueueRows = queueStatus.QueuedCount + queueStatus.LeasedCount;
-                var availableSlots = Math.Max(0, options.MaxConcurrency - activeWorkerCount);
+                var unbounded = options.MaxConcurrencyUnbounded;
+                int? maxConcurrency = unbounded ? null : options.MaxConcurrency;
+                int? availableSlots = unbounded ? null : Math.Max(0, options.MaxConcurrency - activeWorkerCount);
+                var isSaturated = !unbounded && activeWorkerCount >= options.MaxConcurrency && claimableBacklog > 0;
                 return new WorkerPoolSnapshot(
                     options.Mode,
                     options.Enabled,
                     options.EnabledSource,
-                    options.MaxConcurrency,
+                    maxConcurrency,
                     options.MaxConcurrencySource,
+                    options.MaxConcurrencyDisplay,
                     options.IdleDelay.ToString(),
                     options.IdleDelaySource,
                     options.MaxDispatchStartsPerCycle,
@@ -505,7 +514,7 @@ namespace KoLite.LocalApp
                     queueStatus.LeasedCount,
                     queueStatus.ExpiredLeaseCount,
                     activeWorkerCount == 0 && claimableBacklog == 0,
-                    activeWorkerCount >= options.MaxConcurrency && claimableBacklog > 0,
+                    isSaturated,
                     dispatchCycles,
                     idleCycles,
                     saturatedCycles,
@@ -837,8 +846,8 @@ namespace KoLite.LocalApp
             var scopedClock = scope.ServiceProvider.GetRequiredService<IClock>();
             var nowUtc = scopedClock.UtcNow;
             var claimable = includeExpiredLeases
-                ? queue.CountClaimable(localWorkerOptions.QueueName, nowUtc)
-                : queue.CountQueuedClaimable(localWorkerOptions.QueueName, nowUtc);
+                ? queue.CountClaimable(localWorkerOptions.QueueName, nowUtc, localWorkerOptions.EnforceJobParallelism)
+                : queue.CountQueuedClaimable(localWorkerOptions.QueueName, nowUtc, localWorkerOptions.EnforceJobParallelism);
             var queueStatus = observability.GetQueueStatus(localWorkerOptions.QueueName, nowUtc);
             return new WorkerQueueSnapshot(
                 claimable,
@@ -986,11 +995,11 @@ namespace KoLite.LocalApp
                 expiredLeaseRows = queueSnapshot.ExpiredLeaseRows,
                 started,
                 inFlight,
-                availableSlots = Math.Max(0, options.MaxConcurrency - inFlight),
+                availableSlots = options.MaxConcurrencyUnbounded ? (object)"Unbounded" : Math.Max(0, options.MaxConcurrency - inFlight),
                 includeExpiredLeases,
-                workerConcurrency = options.MaxConcurrency,
+                workerConcurrency = options.MaxConcurrencyDisplay,
                 maxWorkerIterations = options.MaxDispatchStartsPerCycle,
-                maxConcurrency = options.MaxConcurrency,
+                maxConcurrency = options.MaxConcurrencyDisplay,
                 maxDispatchStartsPerCycle = options.MaxDispatchStartsPerCycle,
                 idleDelay = options.IdleDelay.ToString(),
                 isIdle,

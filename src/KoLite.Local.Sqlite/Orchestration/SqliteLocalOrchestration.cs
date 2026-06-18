@@ -30,21 +30,26 @@ namespace KoLite.Local.Sqlite.Orchestration
             var jobsById = jobs.ToDictionary(j => j.JobId, j => j.Definition, StringComparer.Ordinal);
             var enqueued = 0; var blocked = 0; var completed = 0; var maxSkipped = 0;
 
+            var completedSlices = state.ListCompletedSliceKeys();
+
             foreach (var record in jobs)
             {
                 var job = record.Definition;
                 var activeForJob = queue.CountActive(record.JobId, options.QueueName);
+                var sliceStates = state.ListSliceStates(record.JobId);
                 foreach (var slice in SliceEnumerator.EnumerateEligible(job, clock).OrderBy(s => s.StartUtc))
                 {
                     if (enqueued >= options.MaxSlicesPerTick) break;
-                    var current = state.Get(record.JobId, slice.StartUtc, slice.EndUtc);
+                    var current = sliceStates.TryGetValue(slice.StartUtc.ToUniversalTime(), out var existing)
+                        ? existing
+                        : new SliceSchedulingState(DurableSliceStatus.Missing, 0);
                     if (!CanSchedulerEnqueue(current.Status))
                     {
                         if (current.Status == DurableSliceStatus.Completed) completed++;
                         continue;
                     }
 
-                    var readiness = state.EvaluateDependencyReadiness(job, slice, jobsById);
+                    var readiness = DependencyReadinessEvaluator.Evaluate(job, slice, jobsById, completedSlices);
                     if (!readiness.IsReady)
                     {
                         if (current.Status == DurableSliceStatus.Missing)
@@ -111,8 +116,8 @@ namespace KoLite.Local.Sqlite.Orchestration
         {
             var claimStartedAtUtc = clock.UtcNow;
             var item = includeExpiredLeases
-                ? queue.Claim(options.QueueName, options.WorkerId, options.EffectiveVisibilityTimeout, claimStartedAtUtc)
-                : queue.ClaimQueued(options.QueueName, options.WorkerId, options.EffectiveVisibilityTimeout, claimStartedAtUtc);
+                ? queue.Claim(options.QueueName, options.WorkerId, options.EffectiveVisibilityTimeout, claimStartedAtUtc, options.EnforceJobParallelism)
+                : queue.ClaimQueued(options.QueueName, options.WorkerId, options.EffectiveVisibilityTimeout, claimStartedAtUtc, options.EnforceJobParallelism);
             if (item is null) return new LocalWorkerRunResult(false, null, false, false, false, null);
 
             var jobRecord = catalog.Get(item.JobId);
