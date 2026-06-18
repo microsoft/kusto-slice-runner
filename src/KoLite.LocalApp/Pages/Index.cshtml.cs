@@ -15,14 +15,16 @@ namespace KoLite.LocalApp.Pages
 
         public DashboardPageData Data { get; private set; } = null!;
         public string Range { get; private set; } = "1d";
+        public DashboardSort Sort { get; private set; } = DashboardSort.Default;
         public IReadOnlyList<ChartRangeLink> RangeLinks => ChartRangeOptions.Links;
 
         public string? BulkOperationSummary => TempData[Catalog.CatalogBulkOperations.TempDataKey] as string;
 
-        public void OnGet(string? range, [FromQuery(Name = "tag")] string[]? tags)
+        public void OnGet(string? range, [FromQuery(Name = "tag")] string[]? tags, string? sort, string? dir)
         {
             Range = ChartRangeOptions.Normalize(range);
-            Data = query.Get(ChartRangeOptions.Parse(Range), tags);
+            Sort = DashboardSort.Parse(sort, dir);
+            Data = query.Get(ChartRangeOptions.Parse(Range), tags, Sort);
         }
     }
 }

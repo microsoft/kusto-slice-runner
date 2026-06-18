@@ -6,7 +6,7 @@ namespace KoLite.Local.Sqlite.Tests
 {
     public sealed class KoLiteSqliteMigrationTests : IDisposable
     {
-        private const string InitialMigrationChecksum = "80a66eae0681d611eab4abbfb7ae8c020f0ad0933b919eb19817366aa9222781";
+        private const string BaselineSchemaChecksum = "07743713f19cd9c306aa330d12a44f9f30be486ce794e25134d17370c225661c";
         private readonly string testDirectory = Path.Combine(AppContext.BaseDirectory, "sqlite-file-tests", Guid.NewGuid().ToString("N"));
 
         public void Dispose()
@@ -64,14 +64,55 @@ namespace KoLite.Local.Sqlite.Tests
         }
 
         [Fact]
-        public void InitialMigrationChecksumRemainsStableForExistingDatabases()
+        public void BaselineSchemaChecksumIsStable()
         {
             var factory = CreateFactory();
             new KoLiteSqliteMigrator(factory).Migrate();
 
             using var connection = factory.OpenConnection();
 
-            Assert.Equal(InitialMigrationChecksum, QueryString(connection, "SELECT checksum FROM schema_migrations WHERE version = 1;"));
+            Assert.Equal(BaselineSchemaChecksum, QueryString(connection, "SELECT checksum FROM schema_migrations WHERE version = 1;"));
+        }
+
+        [Fact]
+        public void LegacyMigrationLedgerIsCollapsedToBaselineInPlace()
+        {
+            var factory = CreateFactory();
+            var migrator = new KoLiteSqliteMigrator(factory);
+            migrator.Migrate();
+
+            using (var connection = factory.OpenConnection())
+            {
+                ExecuteNonQuery(connection, "INSERT INTO job_definitions (job_id, activity_id, display_name, schedule_json) VALUES ('guid1','my.job','my.job','{}');");
+                ExecuteNonQuery(connection, "DELETE FROM schema_migrations;");
+                ExecuteNonQuery(connection, """
+                    INSERT INTO schema_migrations (version, name, checksum) VALUES
+                        (1,'initial-local-first-schema','old1'),
+                        (2,'repair-batches-job-association','old2'),
+                        (3,'rerun-batches','old3'),
+                        (4,'drop-activity-cursors','old4'),
+                        (5,'slice-attempts-job-completed-index','old5'),
+                        (6,'rekey-activity-id-to-guid','old6');
+                    """);
+            }
+
+            migrator.Migrate();
+
+            using (var connection = factory.OpenConnection())
+            {
+                Assert.Equal(1, QueryInt(connection, "SELECT COUNT(*) FROM schema_migrations;"));
+                Assert.Equal("baseline-guid-schema", QueryString(connection, "SELECT name FROM schema_migrations WHERE version = 1;"));
+                Assert.Equal(BaselineSchemaChecksum, QueryString(connection, "SELECT checksum FROM schema_migrations WHERE version = 1;"));
+                Assert.Equal("1", QueryString(connection, "SELECT value FROM app_metadata WHERE key = 'schema_version';"));
+                Assert.Equal("my.job", QueryString(connection, "SELECT activity_id FROM job_definitions WHERE job_id = 'guid1';"));
+            }
+
+            // A subsequent run does not reconcile again or duplicate the ledger.
+            migrator.Migrate();
+            using (var connection = factory.OpenConnection())
+            {
+                Assert.Equal(1, QueryInt(connection, "SELECT COUNT(*) FROM schema_migrations;"));
+            }
         }
 
         [Fact]
@@ -87,7 +128,7 @@ namespace KoLite.Local.Sqlite.Tests
             }
 
             var exception = Assert.Throws<InvalidOperationException>(() => migrator.Migrate());
-            Assert.Contains("SQLite migration 1 (initial-local-first-schema) checksum mismatch", exception.Message);
+            Assert.Contains("SQLite migration 1 (baseline-guid-schema) checksum mismatch", exception.Message);
             Assert.Contains("tampered-checksum", exception.Message);
         }
 
@@ -158,6 +199,10 @@ namespace KoLite.Local.Sqlite.Tests
 
             Assert.Equal(0, QueryInt(connection, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'activity_cursors';"));
             Assert.Equal(0, QueryInt(connection, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'ix_activity_cursors_job';"));
+
+            // The GUID-identity baseline ships activity_id (NOT NULL) and its unique index directly.
+            Assert.Equal(1, QueryInt(connection, "SELECT COUNT(*) FROM pragma_table_info('job_definitions') WHERE name = 'activity_id' AND \"notnull\" = 1;"));
+            Assert.Equal(1, QueryInt(connection, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'ux_job_definitions_activity_id';"));
         }
 
         [Fact]

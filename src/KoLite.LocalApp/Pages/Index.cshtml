@@ -2,7 +2,7 @@
 @model KoLite.LocalApp.Pages.IndexModel
 @{
     ViewData["Title"] = "Jobs";
-    var tagFilter = new TagFilterViewModel("/", Model.Range, Model.Data.AvailableTags, Model.Data.SelectedTags);
+    var tagFilter = new TagFilterViewModel("/", Model.Range, Model.Data.AvailableTags, Model.Data.SelectedTags, Sort: Model.Sort);
 }
 
 <div class="page-heading">
@@ -30,9 +30,12 @@
 }
 
 @{
-    var activeJobs = new JobTableViewModel("Active jobs", Model.Data.ActiveJobs, false, ShowSoftDeleteAction: false, ShowDefinitionColumns: false, ShowUpdatedColumn: false, ShowNextEligibleColumn: true, ShowRunningProgressCount: false, ShowProgressColumn: false, ShowHistoryAction: false, ShowFolderLine: false, EnableClientFilter: true, EnableColumnResize: true, EnableInlineToggle: true, EnableBulkSelect: true, TableKey: "active");
-    var completedJobs = new JobTableViewModel("Completed jobs", Model.Data.CompletedJobs, false, ShowSoftDeleteAction: false, SectionCssClass: "nested-card", ShowDefinitionColumns: false, ShowUpdatedColumn: false, ShowNextEligibleColumn: true, ShowRunningProgressCount: false, ShowProgressColumn: false, ShowHistoryAction: false, ShowFolderLine: false, EnableClientFilter: true, EnableColumnResize: true, EnableInlineToggle: true, EnableBulkSelect: true, TableKey: "completed");
-    var softDeletedJobs = new JobTableViewModel("Soft-deleted jobs", Model.Data.SoftDeletedJobs, true, SectionCssClass: "nested-card", ShowDefinitionColumns: false, ShowUpdatedColumn: false, ShowNextEligibleColumn: true, ShowRunningProgressCount: false, ShowProgressColumn: false, ShowHistoryAction: false, ShowFolderLine: false, EnableClientFilter: true, EnableColumnResize: true, TableKey: "soft-deleted");
+    var sortBaseParts = new List<string> { "range=" + Uri.EscapeDataString(Model.Range) };
+    sortBaseParts.AddRange(Model.Data.SelectedTags.Select(tag => "tag=" + Uri.EscapeDataString(tag)));
+    var sortBaseQuery = string.Join("&", sortBaseParts);
+    var activeJobs = new JobTableViewModel("Active jobs", Model.Data.ActiveJobs, false, ShowSoftDeleteAction: false, ShowDefinitionColumns: false, ShowUpdatedColumn: false, ShowNextEligibleColumn: true, ShowRunningProgressCount: false, ShowProgressColumn: false, ShowHistoryAction: false, ShowFolderLine: false, EnableClientFilter: true, EnableColumnResize: true, EnableInlineToggle: true, EnableBulkSelect: true, EnableSort: true, Sort: Model.Sort, SortBaseQuery: sortBaseQuery, TableKey: "active");
+    var completedJobs = new JobTableViewModel("Completed jobs", Model.Data.CompletedJobs, false, ShowSoftDeleteAction: false, SectionCssClass: "nested-card", ShowDefinitionColumns: false, ShowUpdatedColumn: false, ShowNextEligibleColumn: true, ShowRunningProgressCount: false, ShowProgressColumn: false, ShowHistoryAction: false, ShowFolderLine: false, EnableClientFilter: true, EnableColumnResize: true, EnableInlineToggle: true, EnableBulkSelect: true, EnableSort: true, Sort: Model.Sort, SortBaseQuery: sortBaseQuery, TableKey: "completed");
+    var softDeletedJobs = new JobTableViewModel("Soft-deleted jobs", Model.Data.SoftDeletedJobs, true, SectionCssClass: "nested-card", ShowDefinitionColumns: false, ShowUpdatedColumn: false, ShowNextEligibleColumn: true, ShowRunningProgressCount: false, ShowProgressColumn: false, ShowHistoryAction: false, ShowFolderLine: false, EnableClientFilter: true, EnableColumnResize: true, EnableSort: true, Sort: Model.Sort, SortBaseQuery: sortBaseQuery, TableKey: "soft-deleted");
     var inactiveCount = Model.Data.CompletedJobs.Count + Model.Data.SoftDeletedJobs.Count;
     var dashboardJobCount = Model.Data.ActiveJobs.Count + inactiveCount;
 }
@@ -102,7 +105,7 @@
         <div class="range-picker">
             @foreach (var range in Model.RangeLinks)
             {
-                var rangeTagFilter = new TagFilterViewModel("/", range.Key, Model.Data.AvailableTags, Model.Data.SelectedTags);
+                var rangeTagFilter = new TagFilterViewModel("/", range.Key, Model.Data.AvailableTags, Model.Data.SelectedTags, Sort: Model.Sort);
                 <a class="btn small @(range.Key == Model.Range ? "primary" : null)" href="@rangeTagFilter.SelectedHref">@range.Label</a>
             }
         </div>

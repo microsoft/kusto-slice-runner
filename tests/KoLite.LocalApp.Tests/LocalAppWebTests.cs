@@ -566,6 +566,65 @@ namespace KoLite.LocalApp.Tests
         }
 
         [Fact]
+        public async Task Dashboard_defaults_to_activity_ascending_and_sorts_by_requested_column()
+        {
+            var catalog = new SqliteJobCatalogRepository(sqlite);
+            catalog.Create(Schedule("job.charlie", "CharlieFunction", isPaused: false, queryWindowSize: "00:10:00"));
+            catalog.Create(Schedule("job.alpha", "AlphaFunction", isPaused: false, queryWindowSize: "00:15:00"));
+            catalog.Create(Schedule("job.bravo", "BravoFunction", isPaused: false, queryWindowSize: "00:05:00"));
+
+            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+
+            var defaultDashboard = await client.GetStringAsync("/");
+            var activityDescending = await client.GetStringAsync("/?sort=activity&dir=desc");
+            var scheduleAscending = await client.GetStringAsync("/?sort=schedule&dir=asc");
+            var scheduleDescending = await client.GetStringAsync("/?sort=schedule&dir=desc");
+
+            // Default is activityId ascending even though the jobs were created out of order.
+            Assert.Equal(
+                [JobId("job.alpha"), JobId("job.bravo"), JobId("job.charlie")],
+                DashboardJobOrder(defaultDashboard));
+            Assert.Equal(
+                [JobId("job.charlie"), JobId("job.bravo"), JobId("job.alpha")],
+                DashboardJobOrder(activityDescending));
+            // Schedule = query window size: bravo 5m, charlie 10m, alpha 15m.
+            Assert.Equal(
+                [JobId("job.bravo"), JobId("job.charlie"), JobId("job.alpha")],
+                DashboardJobOrder(scheduleAscending));
+            Assert.Equal(
+                [JobId("job.alpha"), JobId("job.charlie"), JobId("job.bravo")],
+                DashboardJobOrder(scheduleDescending));
+
+            // Header markup: the active column advertises its direction and links toggle it.
+            Assert.Contains("class=\"sort-link\"", defaultDashboard);
+            Assert.Contains("aria-sort=\"ascending\"", defaultDashboard);
+            Assert.Contains("href=\"/?range=1d&amp;sort=activity&amp;dir=desc\"", defaultDashboard);
+            Assert.Contains("href=\"/?range=1d&amp;sort=status&amp;dir=asc\"", defaultDashboard);
+            Assert.Contains("href=\"/?range=1d&amp;sort=schedule&amp;dir=asc\"", scheduleDescending);
+        }
+
+        [Fact]
+        public async Task Dashboard_sort_is_preserved_across_range_and_tag_filter_links()
+        {
+            var catalog = new SqliteJobCatalogRepository(sqlite);
+            catalog.Create(Schedule("job.ops.alpha", "OpsAlpha", isPaused: false, queryWindowSize: "00:15:00", tags: ["ops"]));
+            catalog.Create(Schedule("job.ops.bravo", "OpsBravo", isPaused: false, queryWindowSize: "00:05:00", tags: ["ops"]));
+
+            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+
+            var filtered = await client.GetStringAsync("/?tag=ops&sort=schedule&dir=desc");
+
+            // Sort links keep the active tag filter in their query string.
+            Assert.Contains("href=\"/?range=1d&amp;tag=ops&amp;sort=schedule&amp;dir=asc\"", filtered);
+            // Range buttons carry the current non-default sort forward.
+            Assert.Contains("range=7d&amp;tag=ops&amp;sort=schedule&amp;dir=desc", filtered);
+            // Ordering still honours the requested sort within the tag-filtered set.
+            Assert.Equal(
+                [JobId("job.ops.alpha"), JobId("job.ops.bravo")],
+                DashboardJobOrder(filtered));
+        }
+
+        [Fact]
         public async Task Dashboard_and_catalog_render_and_filter_schedule_tags()
         {
             var catalog = new SqliteJobCatalogRepository(sqlite);
@@ -1700,6 +1759,11 @@ namespace KoLite.LocalApp.Tests
         }
 
         private static DateTimeOffset At(int minutes) => new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero).AddMinutes(minutes);
+
+        private static string[] DashboardJobOrder(string html) =>
+            Regex.Matches(html, "data-dashboard-job-row=\"[^\"]*\" data-dashboard-job-id=\"(?<id>[^\"]+)\"", RegexOptions.CultureInvariant)
+                .Select(match => match.Groups["id"].Value)
+                .ToArray();
 
         private static string[] DashboardSuccessChartSeries(string html)
         {

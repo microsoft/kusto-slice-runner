@@ -14,7 +14,31 @@ namespace KoLite.LocalApp.Ui
         IReadOnlyList<string> SelectedTags,
         DashboardCharts Charts,
         IReadOnlyList<RecentFailure> RecentFailures,
-        TimeSpan SelectedRange);
+        TimeSpan SelectedRange,
+        DashboardSort Sort);
+
+    // Dashboard ordering. Default is activityId ascending; the user may sort by status, activity,
+    // schedule (query window size), or next-eligible time.
+    public sealed record DashboardSort(string Key, bool Descending)
+    {
+        public static readonly DashboardSort Default = new("activity", false);
+
+        private static readonly IReadOnlySet<string> AllowedKeys = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "activity", "status", "schedule", "next"
+        };
+
+        public static DashboardSort Parse(string? key, string? direction)
+        {
+            var normalizedKey = key is not null && AllowedKeys.Contains(key) ? key : "activity";
+            var descending = string.Equals(direction, "desc", StringComparison.OrdinalIgnoreCase);
+            return new DashboardSort(normalizedKey, descending);
+        }
+
+        public string Direction => Descending ? "desc" : "asc";
+
+        public bool IsDefault => string.Equals(Key, Default.Key, StringComparison.Ordinal) && Descending == Default.Descending;
+    }
 
     public sealed record JobTagSummary(string Name, int JobCount, bool IsSelected);
 
@@ -35,6 +59,9 @@ namespace KoLite.LocalApp.Ui
         bool EnableColumnResize = false,
         bool EnableInlineToggle = false,
         bool EnableBulkSelect = false,
+        bool EnableSort = false,
+        DashboardSort? Sort = null,
+        string SortBaseQuery = "",
         string? TableKey = null);
 
     public sealed record JobListItem(
@@ -65,8 +92,9 @@ namespace KoLite.LocalApp.Ui
         IKoLiteSqliteConnectionFactory connectionFactory,
         IClock clock)
     {
-        public DashboardPageData Get(TimeSpan selectedRange, IEnumerable<string>? selectedTags = null)
+        public DashboardPageData Get(TimeSpan selectedRange, IEnumerable<string>? selectedTags = null, DashboardSort? sort = null)
         {
+            var effectiveSort = sort ?? DashboardSort.Default;
             var now = clock.UtcNow;
             var normalizedSelectedTags = ScheduleTags.NormalizeDistinct(selectedTags ?? Array.Empty<string>());
             var lifecycleStates = lifecycleReadModel.GetLatestStates();
@@ -80,9 +108,9 @@ namespace KoLite.LocalApp.Ui
             var filteredJobs = normalizedSelectedTags.Count == 0
                 ? jobs
                 : jobs.Where(job => MatchesSelectedTags(job, normalizedSelectedTags)).ToList();
-            var activeJobs = filteredJobs.Where(j => j.LifecycleStatus != "SoftDeleted" && !j.IsCompleted).OrderBy(j => j.Record.JobId, StringComparer.Ordinal).ToList();
-            var completedJobs = filteredJobs.Where(j => j.LifecycleStatus != "SoftDeleted" && j.IsCompleted).OrderBy(j => j.Record.JobId, StringComparer.Ordinal).ToList();
-            var softDeletedJobs = filteredJobs.Where(j => j.LifecycleStatus == "SoftDeleted").OrderBy(j => j.Record.JobId, StringComparer.Ordinal).ToList();
+            var activeJobs = ApplySort(filteredJobs.Where(j => j.LifecycleStatus != "SoftDeleted" && !j.IsCompleted), effectiveSort);
+            var completedJobs = ApplySort(filteredJobs.Where(j => j.LifecycleStatus != "SoftDeleted" && j.IsCompleted), effectiveSort);
+            var softDeletedJobs = ApplySort(filteredJobs.Where(j => j.LifecycleStatus == "SoftDeleted"), effectiveSort);
             var chartJobIds = activeJobs.Select(job => job.Record.JobId).ToArray();
 
             return new DashboardPageData(
@@ -93,7 +121,30 @@ namespace KoLite.LocalApp.Ui
                 normalizedSelectedTags,
                 chartQuery.GetDashboardCharts(selectedRange, chartJobIds),
                 readModels.GetRecentFailures(10),
-                selectedRange);
+                selectedRange,
+                effectiveSort);
+        }
+
+        private static IReadOnlyList<JobListItem> ApplySort(IEnumerable<JobListItem> jobs, DashboardSort sort)
+        {
+            var ordered = sort.Key switch
+            {
+                "status" => sort.Descending
+                    ? jobs.OrderByDescending(j => j.StatusText, StringComparer.OrdinalIgnoreCase)
+                    : jobs.OrderBy(j => j.StatusText, StringComparer.OrdinalIgnoreCase),
+                "schedule" => sort.Descending
+                    ? jobs.OrderByDescending(j => j.Definition.QueryWindowSize)
+                    : jobs.OrderBy(j => j.Definition.QueryWindowSize),
+                "next" => sort.Descending
+                    ? jobs.OrderByDescending(j => j.NextSlice.EligibleAtUtc ?? DateTimeOffset.MaxValue)
+                    : jobs.OrderBy(j => j.NextSlice.EligibleAtUtc ?? DateTimeOffset.MaxValue),
+                _ => sort.Descending
+                    ? jobs.OrderByDescending(j => j.Record.ActivityId, StringComparer.OrdinalIgnoreCase)
+                    : jobs.OrderBy(j => j.Record.ActivityId, StringComparer.OrdinalIgnoreCase),
+            };
+
+            // Deterministic tie-break so equal sort keys keep a stable, human-friendly order.
+            return ordered.ThenBy(j => j.Record.ActivityId, StringComparer.OrdinalIgnoreCase).ToList();
         }
 
         public JobListItem? GetJob(string jobId)

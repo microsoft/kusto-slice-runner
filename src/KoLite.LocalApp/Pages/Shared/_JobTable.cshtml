@@ -3,6 +3,17 @@
 @{
     var tableCss = Model.ShowProgressColumn ? "ko-table job-table" : "ko-table job-table job-table-dashboard";
     var enableDashboardFeatures = Model.EnableClientFilter || Model.EnableColumnResize;
+
+    string sortHref(string key)
+    {
+        var descending = Model.Sort is not null && string.Equals(Model.Sort.Key, key, StringComparison.Ordinal) && !Model.Sort.Descending;
+        var prefix = string.IsNullOrEmpty(Model.SortBaseQuery) ? string.Empty : Model.SortBaseQuery + "&";
+        return $"/?{prefix}sort={key}&dir={(descending ? "desc" : "asc")}";
+    }
+
+    string sortIndicator(string key) => Model.Sort is not null && string.Equals(Model.Sort.Key, key, StringComparison.Ordinal) ? (Model.Sort.Descending ? "\u25be" : "\u25b4") : string.Empty;
+
+    string sortAria(string key) => Model.Sort is not null && string.Equals(Model.Sort.Key, key, StringComparison.Ordinal) ? (Model.Sort.Descending ? "descending" : "ascending") : "none";
 }
 
 <section class="card @Model.SectionCssClass" data-dashboard-job-section="@enableDashboardFeatures.ToString().ToLowerInvariant()" data-dashboard-section-key="@Model.TableKey">
@@ -50,16 +61,34 @@
                         {
                             <th class="select-col"><input type="checkbox" class="bulk-select-all" data-bulk-select-all data-bulk-section="@Model.TableKey" aria-label="Select all jobs in @Model.Title" /></th>
                         }
-                        @if (Model.EnableColumnResize)
-                        {
-                            <th data-dashboard-column-key="status">Status<button class="column-resize-handle" type="button" data-column-key="status" aria-label="Resize Status column" title="Resize Status column"></button></th>
-                            <th data-dashboard-column-key="activity">Activity<button class="column-resize-handle" type="button" data-column-key="activity" aria-label="Resize Activity column" title="Resize Activity column"></button></th>
-                        }
-                        else
-                        {
-                            <th>Status</th>
-                            <th>Activity</th>
-                        }
+                        <th data-dashboard-column-key="@(Model.EnableColumnResize ? "status" : null)" aria-sort="@(Model.EnableSort ? sortAria("status") : null)">
+                            @if (Model.EnableSort)
+                            {
+                                <a class="sort-link" href="@sortHref("status")">Status <span class="sort-indicator" aria-hidden="true">@sortIndicator("status")</span></a>
+                            }
+                            else
+                            {
+                                @:Status
+                            }
+                            @if (Model.EnableColumnResize)
+                            {
+                                <button class="column-resize-handle" type="button" data-column-key="status" aria-label="Resize Status column" title="Resize Status column"></button>
+                            }
+                        </th>
+                        <th data-dashboard-column-key="@(Model.EnableColumnResize ? "activity" : null)" aria-sort="@(Model.EnableSort ? sortAria("activity") : null)">
+                            @if (Model.EnableSort)
+                            {
+                                <a class="sort-link" href="@sortHref("activity")">Activity <span class="sort-indicator" aria-hidden="true">@sortIndicator("activity")</span></a>
+                            }
+                            else
+                            {
+                                @:Activity
+                            }
+                            @if (Model.EnableColumnResize)
+                            {
+                                <button class="column-resize-handle" type="button" data-column-key="activity" aria-label="Resize Activity column" title="Resize Activity column"></button>
+                            }
+                        </th>
                         @if (Model.ShowDefinitionColumns)
                         {
                             @if (Model.EnableColumnResize)
@@ -71,14 +100,20 @@
                                 <th>Function / Output</th>
                             }
                         }
-                        @if (Model.EnableColumnResize)
-                        {
-                            <th data-dashboard-column-key="schedule">Schedule<button class="column-resize-handle" type="button" data-column-key="schedule" aria-label="Resize Schedule column" title="Resize Schedule column"></button></th>
-                        }
-                        else
-                        {
-                            <th>Schedule</th>
-                        }
+                        <th data-dashboard-column-key="@(Model.EnableColumnResize ? "schedule" : null)" aria-sort="@(Model.EnableSort ? sortAria("schedule") : null)">
+                            @if (Model.EnableSort)
+                            {
+                                <a class="sort-link" href="@sortHref("schedule")">Schedule <span class="sort-indicator" aria-hidden="true">@sortIndicator("schedule")</span></a>
+                            }
+                            else
+                            {
+                                @:Schedule
+                            }
+                            @if (Model.EnableColumnResize)
+                            {
+                                <button class="column-resize-handle" type="button" data-column-key="schedule" aria-label="Resize Schedule column" title="Resize Schedule column"></button>
+                            }
+                        </th>
                         @if (Model.ShowProgressColumn)
                         {
                             @if (Model.EnableColumnResize)
@@ -92,14 +127,20 @@
                         }
                         @if (Model.ShowNextEligibleColumn)
                         {
-                            @if (Model.EnableColumnResize)
-                            {
-                                <th data-dashboard-column-key="next">Next eligible<button class="column-resize-handle" type="button" data-column-key="next" aria-label="Resize Next eligible column" title="Resize Next eligible column"></button></th>
-                            }
-                            else
-                            {
-                                <th>Next eligible</th>
-                            }
+                            <th data-dashboard-column-key="@(Model.EnableColumnResize ? "next" : null)" aria-sort="@(Model.EnableSort ? sortAria("next") : null)">
+                                @if (Model.EnableSort)
+                                {
+                                    <a class="sort-link" href="@sortHref("next")">Next eligible <span class="sort-indicator" aria-hidden="true">@sortIndicator("next")</span></a>
+                                }
+                                else
+                                {
+                                    @:Next eligible
+                                }
+                                @if (Model.EnableColumnResize)
+                                {
+                                    <button class="column-resize-handle" type="button" data-column-key="next" aria-label="Resize Next eligible column" title="Resize Next eligible column"></button>
+                                }
+                            </th>
                         }
                         @if (Model.ShowUpdatedColumn)
                         {

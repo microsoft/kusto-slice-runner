@@ -7,79 +7,15 @@ namespace KoLite.Local.Sqlite.Migrations
 {
     public sealed class KoLiteSqliteMigrator
     {
-        private const int InitialSchemaVersion = 1;
+        private const int BaselineVersion = 1;
+        private const string BaselineName = "baseline-guid-schema";
 
+        // The schema is a single, idempotent baseline: a fresh database gets the full GUID-identity
+        // schema directly (no historical migration chain to replay). A legacy pre-consolidation
+        // ledger (the old 1..6 chain) is collapsed to this baseline once, in place, on first run.
         private static readonly SqliteMigration[] Migrations =
         [
-            new(InitialSchemaVersion, "initial-local-first-schema", InitialSchemaSql),
-            new(2, "repair-batches-job-association", """
-                ALTER TABLE repair_batches ADD COLUMN job_id TEXT NULL;
-
-                UPDATE repair_batches
-                SET job_id = (
-                    SELECT repair_slices.job_id
-                    FROM repair_slices
-                    WHERE repair_slices.repair_batch_id = repair_batches.repair_batch_id
-                    GROUP BY repair_slices.job_id
-                    ORDER BY COUNT(*) DESC, repair_slices.job_id
-                    LIMIT 1
-                )
-                WHERE job_id IS NULL
-                  AND EXISTS (
-                      SELECT 1
-                      FROM repair_slices
-                      WHERE repair_slices.repair_batch_id = repair_batches.repair_batch_id
-                  );
-
-                CREATE INDEX IF NOT EXISTS ix_repair_batches_job ON repair_batches(job_id);
-                """),
-            new(3, "rerun-batches", """
-                CREATE TABLE IF NOT EXISTS rerun_batches (
-                    rerun_batch_id TEXT NOT NULL PRIMARY KEY,
-                    root_job_id TEXT NOT NULL,
-                    root_start_utc TEXT NOT NULL,
-                    root_end_utc TEXT NOT NULL,
-                    requested_by TEXT NULL,
-                    reason TEXT NOT NULL,
-                    status TEXT NOT NULL,
-                    kusto_cleanup_acknowledged INTEGER NOT NULL DEFAULT 0 CHECK (kusto_cleanup_acknowledged IN (0, 1)),
-                    kusto_cleanup_commands TEXT NOT NULL DEFAULT '',
-                    summary_json TEXT NOT NULL DEFAULT '{}',
-                    requested_at_utc TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-                    completed_at_utc TEXT NULL,
-                    FOREIGN KEY (root_job_id) REFERENCES job_definitions(job_id) ON DELETE CASCADE
-                );
-
-                CREATE TABLE IF NOT EXISTS rerun_slices (
-                    rerun_slice_id TEXT NOT NULL PRIMARY KEY,
-                    rerun_batch_id TEXT NOT NULL,
-                    job_id TEXT NOT NULL,
-                    slice_start_utc TEXT NOT NULL,
-                    slice_end_utc TEXT NOT NULL,
-                    role TEXT NOT NULL,
-                    previous_state TEXT NULL,
-                    previous_attempt INTEGER NULL,
-                    status TEXT NOT NULL,
-                    blocker_reason TEXT NULL,
-                    snapshot_json TEXT NOT NULL DEFAULT '{}',
-                    reset_at_utc TEXT NULL,
-                    created_at_utc TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-                    updated_at_utc TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-                    FOREIGN KEY (rerun_batch_id) REFERENCES rerun_batches(rerun_batch_id) ON DELETE CASCADE,
-                    FOREIGN KEY (job_id) REFERENCES job_definitions(job_id) ON DELETE CASCADE
-                );
-
-                CREATE INDEX IF NOT EXISTS ix_rerun_batches_root_requested ON rerun_batches(root_job_id, requested_at_utc);
-                CREATE INDEX IF NOT EXISTS ix_rerun_slices_batch_status ON rerun_slices(rerun_batch_id, status);
-                CREATE INDEX IF NOT EXISTS ix_rerun_slices_job_slice ON rerun_slices(job_id, slice_start_utc, slice_end_utc);
-                """),
-            new(4, "drop-activity-cursors", """
-                DROP TABLE IF EXISTS activity_cursors;
-                """),
-            new(5, "slice-attempts-job-completed-index", """
-                CREATE INDEX IF NOT EXISTS ix_slice_attempts_job_completed ON slice_attempts(job_id, completed_at_utc);
-                """),
-            new(6, "rekey-activity-id-to-guid", null, RekeyActivityIdToGuidMigration.Apply, "v6:rekey-activity-id-to-guid:1"),
+            new(BaselineVersion, BaselineName, BaselineSchemaSql),
         ];
 
         private readonly IKoLiteSqliteConnectionFactory connectionFactory;
@@ -97,40 +33,43 @@ namespace KoLite.Local.Sqlite.Migrations
             Migrate(connection);
         }
 
-        public void Migrate(SqliteConnection connection) => Migrate(connection, LatestVersion);
-
-        // Applies migrations only up to and including throughVersion. Primarily a test/ops hook
-        // for reconstructing an older schema state; production startup calls Migrate(connection).
-        public void Migrate(SqliteConnection connection, int throughVersion)
+        public void Migrate(SqliteConnection connection)
         {
             ArgumentNullException.ThrowIfNull(connection);
             EnsureLedger(connection);
+            CollapseLegacyLedger(connection);
 
             foreach (var migration in Migrations)
             {
-                if (migration.Version > throughVersion)
-                {
-                    break;
-                }
-
                 if (HasApplied(connection, migration))
                 {
                     continue;
                 }
 
                 using var transaction = connection.BeginTransaction();
-                if (!string.IsNullOrEmpty(migration.Sql))
-                {
-                    ExecuteNonQuery(connection, transaction, migration.Sql);
-                }
-
-                migration.Code?.Invoke(connection, transaction);
+                ExecuteNonQuery(connection, transaction, migration.Sql);
                 InsertLedger(connection, transaction, migration);
                 transaction.Commit();
             }
 
-            var target = Math.Min(throughVersion, LatestVersion);
-            SetMetadata(connection, "schema_version", target.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            SetMetadata(connection, "schema_version", LatestVersion.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
+
+        // One-time, in-place collapse of a pre-consolidation ledger to the single baseline. Detected
+        // precisely by the legacy version-1 migration name, so it never fires on a baseline database
+        // or on any future post-baseline migration. The idempotent baseline that follows makes no
+        // schema change to an already-provisioned database.
+        private static void CollapseLegacyLedger(SqliteConnection connection)
+        {
+            using var check = connection.CreateCommand();
+            check.CommandText = "SELECT 1 FROM schema_migrations WHERE version = 1 AND name <> $baseline LIMIT 1;";
+            check.Parameters.AddWithValue("$baseline", BaselineName);
+            if (check.ExecuteScalar() is null)
+            {
+                return;
+            }
+
+            ExecuteNonQuery(connection, null, "DELETE FROM schema_migrations;");
         }
 
         private static void EnsureLedger(SqliteConnection connection)
@@ -156,7 +95,7 @@ namespace KoLite.Local.Sqlite.Migrations
                 return false;
             }
 
-            var expectedChecksum = Sha256(migration.ChecksumMaterial);
+            var expectedChecksum = Sha256(migration.Sql);
             if (!StringComparer.Ordinal.Equals(appliedChecksum, expectedChecksum))
             {
                 throw new InvalidOperationException($"SQLite migration {migration.Version} ({migration.Name}) checksum mismatch. Expected {expectedChecksum}, found {appliedChecksum}.");
@@ -175,7 +114,7 @@ namespace KoLite.Local.Sqlite.Migrations
                 """;
             command.Parameters.AddWithValue("$version", migration.Version);
             command.Parameters.AddWithValue("$name", migration.Name);
-            command.Parameters.AddWithValue("$checksum", Sha256(migration.ChecksumMaterial));
+            command.Parameters.AddWithValue("$checksum", Sha256(migration.Sql));
             command.ExecuteNonQuery();
         }
 
@@ -208,16 +147,9 @@ namespace KoLite.Local.Sqlite.Migrations
             return Convert.ToHexString(bytes).ToLowerInvariant();
         }
 
-        private sealed record SqliteMigration(int Version, string Name, string? Sql, Action<SqliteConnection, SqliteTransaction>? Code = null, string? CodeChecksum = null)
-        {
-            // Material the ledger checksum is computed from. SQL migrations hash their SQL text;
-            // code migrations hash an explicit, reviewer-bumped checksum string so that changing
-            // the delegate body without bumping the string is detected as drift.
-            public string ChecksumMaterial => Sql ?? CodeChecksum
-                ?? throw new InvalidOperationException($"Migration {Version} ({Name}) has neither SQL nor a code checksum.");
-        }
+        private sealed record SqliteMigration(int Version, string Name, string Sql);
 
-        private const string InitialSchemaSql = """
+        private const string BaselineSchemaSql = """
             CREATE TABLE IF NOT EXISTS app_metadata (
                 key TEXT NOT NULL PRIMARY KEY,
                 value TEXT NOT NULL,
@@ -232,6 +164,7 @@ namespace KoLite.Local.Sqlite.Migrations
 
             CREATE TABLE IF NOT EXISTS job_definitions (
                 job_id TEXT NOT NULL PRIMARY KEY,
+                activity_id TEXT NOT NULL,
                 display_name TEXT NOT NULL,
                 description TEXT NULL,
                 query_ref TEXT NULL,
@@ -309,16 +242,6 @@ namespace KoLite.Local.Sqlite.Migrations
                     REFERENCES current_slice_state(job_id, slice_start_utc, slice_end_utc) ON DELETE CASCADE
             );
 
-            CREATE TABLE IF NOT EXISTS activity_cursors (
-                cursor_name TEXT NOT NULL PRIMARY KEY,
-                job_id TEXT NULL,
-                cursor_value TEXT NOT NULL,
-                cursor_kind TEXT NOT NULL,
-                payload_json TEXT NOT NULL DEFAULT '{}',
-                updated_at_utc TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-                FOREIGN KEY (job_id) REFERENCES job_definitions(job_id) ON DELETE CASCADE
-            );
-
             CREATE TABLE IF NOT EXISTS failure_summary_runs (
                 run_id TEXT NOT NULL PRIMARY KEY,
                 job_id TEXT NULL,
@@ -380,6 +303,7 @@ namespace KoLite.Local.Sqlite.Migrations
 
             CREATE TABLE IF NOT EXISTS repair_batches (
                 repair_batch_id TEXT NOT NULL PRIMARY KEY,
+                job_id TEXT NULL,
                 requested_by TEXT NULL,
                 reason TEXT NOT NULL,
                 status TEXT NOT NULL,
@@ -447,22 +371,62 @@ namespace KoLite.Local.Sqlite.Migrations
                 recorded_at_utc TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
             );
 
+            CREATE TABLE IF NOT EXISTS rerun_batches (
+                rerun_batch_id TEXT NOT NULL PRIMARY KEY,
+                root_job_id TEXT NOT NULL,
+                root_start_utc TEXT NOT NULL,
+                root_end_utc TEXT NOT NULL,
+                requested_by TEXT NULL,
+                reason TEXT NOT NULL,
+                status TEXT NOT NULL,
+                kusto_cleanup_acknowledged INTEGER NOT NULL DEFAULT 0 CHECK (kusto_cleanup_acknowledged IN (0, 1)),
+                kusto_cleanup_commands TEXT NOT NULL DEFAULT '',
+                summary_json TEXT NOT NULL DEFAULT '{}',
+                requested_at_utc TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+                completed_at_utc TEXT NULL,
+                FOREIGN KEY (root_job_id) REFERENCES job_definitions(job_id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS rerun_slices (
+                rerun_slice_id TEXT NOT NULL PRIMARY KEY,
+                rerun_batch_id TEXT NOT NULL,
+                job_id TEXT NOT NULL,
+                slice_start_utc TEXT NOT NULL,
+                slice_end_utc TEXT NOT NULL,
+                role TEXT NOT NULL,
+                previous_state TEXT NULL,
+                previous_attempt INTEGER NULL,
+                status TEXT NOT NULL,
+                blocker_reason TEXT NULL,
+                snapshot_json TEXT NOT NULL DEFAULT '{}',
+                reset_at_utc TEXT NULL,
+                created_at_utc TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+                updated_at_utc TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+                FOREIGN KEY (rerun_batch_id) REFERENCES rerun_batches(rerun_batch_id) ON DELETE CASCADE,
+                FOREIGN KEY (job_id) REFERENCES job_definitions(job_id) ON DELETE CASCADE
+            );
+
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_job_definitions_activity_id ON job_definitions(activity_id);
             CREATE INDEX IF NOT EXISTS ix_job_definition_events_job_recorded ON job_definition_events(job_id, recorded_at_utc);
             CREATE INDEX IF NOT EXISTS ix_slice_state_events_slice_recorded ON slice_state_events(job_id, slice_start_utc, slice_end_utc, recorded_at_utc);
             CREATE INDEX IF NOT EXISTS ix_current_slice_state_state_due ON current_slice_state(state, updated_at_utc);
             CREATE INDEX IF NOT EXISTS ix_work_queue_ready ON work_queue(queue_name, state, available_at_utc, priority DESC);
             CREATE INDEX IF NOT EXISTS ix_work_queue_slice ON work_queue(job_id, slice_start_utc, slice_end_utc);
-            CREATE INDEX IF NOT EXISTS ix_activity_cursors_job ON activity_cursors(job_id);
             CREATE INDEX IF NOT EXISTS ix_failure_summary_runs_job_updated ON failure_summary_runs(job_id, updated_at_utc);
             CREATE INDEX IF NOT EXISTS ix_operational_logs_job_recorded ON operational_logs(job_id, recorded_at_utc);
             CREATE INDEX IF NOT EXISTS ix_scheduled_slices_due ON scheduled_slices(status, due_at_utc);
             CREATE INDEX IF NOT EXISTS ix_slice_attempts_slice_attempt ON slice_attempts(job_id, slice_start_utc, slice_end_utc, attempt);
+            CREATE INDEX IF NOT EXISTS ix_slice_attempts_job_completed ON slice_attempts(job_id, completed_at_utc);
+            CREATE INDEX IF NOT EXISTS ix_repair_batches_job ON repair_batches(job_id);
             CREATE INDEX IF NOT EXISTS ix_repair_slices_batch_status ON repair_slices(repair_batch_id, status);
             CREATE INDEX IF NOT EXISTS ix_repair_slices_job_slice ON repair_slices(job_id, slice_start_utc, slice_end_utc);
             CREATE INDEX IF NOT EXISTS ix_retention_runs_policy_started ON retention_runs(policy_name, started_at_utc);
             CREATE INDEX IF NOT EXISTS ix_purge_runs_job_requested ON purge_runs(job_id, requested_at_utc);
             CREATE INDEX IF NOT EXISTS ix_job_lifecycle_events_job_recorded ON job_lifecycle_events(job_id, recorded_at_utc);
             CREATE INDEX IF NOT EXISTS ix_system_audit_subject_recorded ON system_audit(subject_type, subject_id, recorded_at_utc);
+            CREATE INDEX IF NOT EXISTS ix_rerun_batches_root_requested ON rerun_batches(root_job_id, requested_at_utc);
+            CREATE INDEX IF NOT EXISTS ix_rerun_slices_batch_status ON rerun_slices(rerun_batch_id, status);
+            CREATE INDEX IF NOT EXISTS ix_rerun_slices_job_slice ON rerun_slices(job_id, slice_start_utc, slice_end_utc);
             """;
     }
 }

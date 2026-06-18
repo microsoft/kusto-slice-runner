@@ -7,7 +7,8 @@ namespace KoLite.LocalApp.Ui
         string? Range,
         IReadOnlyList<JobTagSummary> Tags,
         IReadOnlyList<string> SelectedTags,
-        bool Bare = false)
+        bool Bare = false,
+        DashboardSort? Sort = null)
     {
         public bool HasTags => Tags.Count > 0 || SelectedTags.Count > 0;
 
@@ -33,6 +34,12 @@ namespace KoLite.LocalApp.Ui
             }
 
             query.AddRange(ScheduleTags.NormalizeDistinct(tags).Select(tag => "tag=" + Uri.EscapeDataString(tag)));
+            if (Sort is not null && !Sort.IsDefault)
+            {
+                query.Add("sort=" + Uri.EscapeDataString(Sort.Key));
+                query.Add("dir=" + Sort.Direction);
+            }
+
             return query.Count == 0 ? BasePath : BasePath + "?" + string.Join("&", query);
         }
     }
