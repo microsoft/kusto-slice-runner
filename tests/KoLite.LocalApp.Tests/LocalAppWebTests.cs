@@ -16,7 +16,6 @@ using KoLite.Local.Sqlite.State;
 using KoLite.LocalApp.Ui;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
@@ -1620,8 +1619,7 @@ namespace KoLite.LocalApp.Tests
         public void Dispose()
         {
             factory.Dispose();
-            SqliteConnection.ClearAllPools();
-            if (Directory.Exists(testDirectory)) Directory.Delete(testDirectory, recursive: true);
+            TestCleanup.DeleteDirectoryWithRetry(testDirectory);
         }
 
         private (int Count, string? LatestPropertiesJson) SchedulerPassLogSnapshot()

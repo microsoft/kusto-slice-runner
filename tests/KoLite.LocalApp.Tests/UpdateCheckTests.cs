@@ -446,14 +446,7 @@ namespace KoLite.LocalApp.Tests
 
         public void Dispose()
         {
-            try
-            {
-                Directory.Delete(testDirectory, recursive: true);
-            }
-            catch (IOException)
-            {
-                // Best-effort cleanup of the temporary database directory.
-            }
+            TestCleanup.DeleteDirectoryWithRetry(testDirectory);
         }
 
         private sealed class FixedClock : IClock

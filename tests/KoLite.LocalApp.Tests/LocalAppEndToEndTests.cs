@@ -17,7 +17,6 @@ using KoLite.Local.Sqlite.Queue;
 using KoLite.Local.Sqlite.Repair;
 using KoLite.Local.Sqlite.State;
 using Microsoft.AspNetCore.Mvc.Testing;
-using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -148,8 +147,7 @@ namespace KoLite.LocalApp.Tests
         public void Dispose()
         {
             factory.Dispose();
-            SqliteConnection.ClearAllPools();
-            if (Directory.Exists(testDirectory)) Directory.Delete(testDirectory, recursive: true);
+            TestCleanup.DeleteDirectoryWithRetry(testDirectory);
         }
 
         private async Task ImportSchedule(HttpClient client, string scheduleJson)

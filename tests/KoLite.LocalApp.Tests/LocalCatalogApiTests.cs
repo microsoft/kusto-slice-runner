@@ -240,14 +240,7 @@ namespace KoLite.LocalApp.Tests
         public void Dispose()
         {
             factory.Dispose();
-            try
-            {
-                Directory.Delete(testDirectory, recursive: true);
-            }
-            catch (IOException)
-            {
-                // Best-effort cleanup; the SQLite file may still be held briefly on Windows.
-            }
+            TestCleanup.DeleteDirectoryWithRetry(testDirectory);
         }
     }
 }
