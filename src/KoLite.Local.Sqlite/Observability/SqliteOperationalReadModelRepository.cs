@@ -10,6 +10,7 @@ namespace KoLite.Local.Sqlite.Observability
     public sealed record QueueStatusSummary(string QueueName, int QueuedCount, int LeasedCount, int CompletedCount, int DeadLetteredCount, int ExpiredLeaseCount);
     public sealed record SliceStatusReadout(string JobId, DateTimeOffset SliceStartUtc, DateTimeOffset SliceEndUtc, string Status, int Attempt, int? SuccessfulAttempt, string? LatestAttemptStatus, DateTimeOffset? LastAttemptUpdatedAtUtc, DateTimeOffset UpdatedAtUtc);
     public sealed record RetentionCleanupResult(string RetentionRunId, int LogsDeleted, int AttemptsDeleted, int ScheduledSlicesDeleted);
+    public sealed record SliceThroughputSample(int SucceededCount, DateTimeOffset? FirstCompletedUtc, DateTimeOffset? LastCompletedUtc);
 
     public sealed class SqliteOperationalReadModelRepository
     {
@@ -107,6 +108,22 @@ namespace KoLite.Local.Sqlite.Observability
                 """); cmd.Add("$j", jobId); using var r = cmd.ExecuteReader(); var results = new List<SliceStatusReadout>();
             while (r.Read()) results.Add(new SliceStatusReadout(r.GetString(0), SqliteStorage.ReadUtc(r, "slice_start_utc"), SqliteStorage.ReadUtc(r, "slice_end_utc"), r.GetString(3), r.GetInt32(4), r.IsDBNull(5) ? null : r.GetInt32(5), r.IsDBNull(6) ? null : r.GetString(6), r.IsDBNull(7) ? null : DateTimeOffset.Parse(r.GetString(7), System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal), SqliteStorage.ReadUtc(r, "updated_at_utc")));
             return results;
+        }
+
+        public SliceThroughputSample GetRecentSucceededThroughput(string jobId, DateTimeOffset sinceUtc)
+        {
+            using var c = connectionFactory.OpenConnection();
+            using var cmd = SqliteStorage.Command(c, null, """
+                SELECT COUNT(*) AS succeeded_count, MIN(completed_at_utc) AS first_completed, MAX(completed_at_utc) AS last_completed
+                FROM slice_attempts
+                WHERE job_id = $j AND status = 'Succeeded' AND completed_at_utc IS NOT NULL AND completed_at_utc >= $since;
+                """);
+            cmd.Add("$j", jobId); cmd.Add("$since", SqliteStorage.Utc(sinceUtc));
+            using var r = cmd.ExecuteReader(); r.Read();
+            return new SliceThroughputSample(
+                r.IsDBNull(0) ? 0 : r.GetInt32(0),
+                SqliteStorage.ReadNullableUtc(r, "first_completed"),
+                SqliteStorage.ReadNullableUtc(r, "last_completed"));
         }
 
         public RetentionCleanupResult CleanupOldReadModels(DateTimeOffset cutoffUtc, int batchSize = 500)

@@ -1,5 +1,7 @@
 using System.Globalization;
 using KoLite.Local.Core.Schedules;
+using KoLite.Local.Core.Scheduling;
+using KoLite.Local.Core.Time;
 using KoLite.Local.Sqlite.Catalog;
 using KoLite.Local.Sqlite.Observability;
 using KoLite.Local.Sqlite.Queue;
@@ -43,7 +45,8 @@ namespace KoLite.LocalApp.Ui
         IReadOnlyList<SliceAttemptReadout> RecentAttempts,
         IReadOnlyList<OperationalLogReadout> RecentLogs,
         IReadOnlyList<SliceEventReadout> RecentEvents,
-        bool HasStarted);
+        bool HasStarted,
+        CatchUpProjection CatchUp);
 
     public sealed record SliceDetailsPageData(
         JobCatalogRecord Job,
@@ -55,13 +58,31 @@ namespace KoLite.LocalApp.Ui
         IReadOnlyList<OperationalLogReadout> Logs,
         IReadOnlyList<SliceEventReadout> Events);
 
-    public sealed class JobDetailsPageQuery(
-        SqliteJobCatalogRepository catalog,
-        SqliteOperationalReadModelRepository readModels,
-        SqliteWorkQueueRepository queue,
-        LifecycleReadModel lifecycle,
-        OperationalDetailsReadModel operationalDetails)
+    public sealed class JobDetailsPageQuery
     {
+        private readonly SqliteJobCatalogRepository catalog;
+        private readonly SqliteOperationalReadModelRepository readModels;
+        private readonly SqliteWorkQueueRepository queue;
+        private readonly LifecycleReadModel lifecycle;
+        private readonly OperationalDetailsReadModel operationalDetails;
+        private readonly IClock clock;
+
+        public JobDetailsPageQuery(
+            SqliteJobCatalogRepository catalog,
+            SqliteOperationalReadModelRepository readModels,
+            SqliteWorkQueueRepository queue,
+            LifecycleReadModel lifecycle,
+            OperationalDetailsReadModel operationalDetails,
+            IClock clock)
+        {
+            this.catalog = catalog;
+            this.readModels = readModels;
+            this.queue = queue;
+            this.lifecycle = lifecycle;
+            this.operationalDetails = operationalDetails;
+            this.clock = clock;
+        }
+
         public const int DefaultSliceHistoryCellLimit = 240;
         public const int FullSliceHistoryCellLimit = 20_000;
         private static readonly TimeSpan HourSliceHistoryRowSpan = TimeSpan.FromHours(1);
@@ -82,12 +103,14 @@ namespace KoLite.LocalApp.Ui
             var statuses = readModels.GetSliceStatus(jobId);
             var queueItems = queue.List(jobId);
             var sliceHistory = BuildSliceHistory(job.Definition, statuses, queueItems, fromUtc, toUtc, sliceHistoryCellLimit);
+            var catalogHistory = CatalogHistoryDiffBuilder.Build(catalog.History(jobId));
+            var catchUp = BuildCatchUp(job, job.Definition, statuses, catalogHistory);
             return new JobDetailsPageData(
                 job,
                 job.Definition,
                 summary,
                 lifecycleState,
-                CatalogHistoryDiffBuilder.Build(catalog.History(jobId)),
+                catalogHistory,
                 sliceHistory.Rows,
                 sliceHistory.Range,
                 statuses,
@@ -95,7 +118,35 @@ namespace KoLite.LocalApp.Ui
                 operationalDetails.GetAttempts(jobId, take: 25),
                 operationalDetails.GetLogs(jobId, take: 25),
                 operationalDetails.GetEvents(jobId, take: 25),
-                catalog.HasStarted(jobId));
+                catalog.HasStarted(jobId),
+                catchUp);
+        }
+
+        // Estimates how long the job will take to work through its eligible backlog and reach its
+        // normal delay-bounded frontier. The throughput sample only counts executions since the
+        // last schedule change (capped at the recent lookback) so a definition edit does not skew
+        // the rate with executions that ran under a different definition.
+        private CatchUpProjection BuildCatchUp(
+            JobCatalogRecord job,
+            JobDefinition definition,
+            IReadOnlyList<SliceStatusReadout> statuses,
+            IReadOnlyList<CatalogHistoryDisplayRow> catalogHistory)
+        {
+            var now = clock.UtcNow;
+            var completed = statuses.Where(s => string.Equals(s.Status, "Completed", StringComparison.Ordinal)).ToList();
+            DateTimeOffset? completedFrontier = completed.Count == 0 ? null : completed.Max(s => s.SliceEndUtc);
+
+            var lastDefinitionChange = catalogHistory
+                .Where(h => h.IsInitialDefinition || h.HasScheduleChanges)
+                .Select(h => (DateTimeOffset?)h.RecordedAtUtc)
+                .FirstOrDefault();
+
+            var options = CatchUpOptions.Default;
+            var sinceUtc = CatchUpEstimator.ResolveThroughputWindowStart(now, lastDefinitionChange, options.MaxThroughputLookback);
+            var throughput = readModels.GetRecentSucceededThroughput(job.JobId, sinceUtc);
+            var sample = new CatchUpThroughputSample(throughput.SucceededCount, throughput.FirstCompletedUtc, throughput.LastCompletedUtc);
+
+            return CatchUpEstimator.Estimate(now, definition, job.IsEnabled, completedFrontier, completed.Count, sample, options);
         }
 
         public SliceDetailsPageData? GetSlice(string jobId, DateTimeOffset sliceStartUtc, DateTimeOffset sliceEndUtc)

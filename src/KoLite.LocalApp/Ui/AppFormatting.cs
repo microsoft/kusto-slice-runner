@@ -24,6 +24,34 @@ namespace KoLite.LocalApp.Ui
 
         public static string Duration(TimeSpan value) => value.ToString("c", CultureInfo.InvariantCulture);
 
+        // Coarse, human-friendly approximation for projected/elapsed spans (e.g. "~45 min",
+        // "~3.2 h", "~3.2 days"). Used by the catch-up estimate where exact precision is noise.
+        public static string ApproxDuration(TimeSpan value)
+        {
+            if (value < TimeSpan.Zero)
+            {
+                value = TimeSpan.Zero;
+            }
+
+            var totalMinutes = value.TotalMinutes;
+            if (totalMinutes < 1)
+            {
+                return "< 1 min";
+            }
+
+            if (totalMinutes < 90)
+            {
+                return $"~{Math.Round(totalMinutes).ToString("0", CultureInfo.InvariantCulture)} min";
+            }
+
+            if (value.TotalHours < 36)
+            {
+                return $"~{value.TotalHours.ToString("0.#", CultureInfo.InvariantCulture)} h";
+            }
+
+            return $"~{value.TotalDays.ToString("0.#", CultureInfo.InvariantCulture)} days";
+        }
+
         public static string Percent(int numerator, int denominator) => denominator <= 0 ? "n/a" : ((double)numerator / denominator).ToString("P1", CultureInfo.InvariantCulture);
 
         public static string StateCss(string state) => state switch

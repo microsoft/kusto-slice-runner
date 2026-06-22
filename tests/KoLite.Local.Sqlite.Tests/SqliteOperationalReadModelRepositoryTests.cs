@@ -97,6 +97,40 @@ namespace KoLite.Local.Sqlite.Tests
             Assert.Equal(1, Count("retention_runs"));
         }
 
+        [Fact]
+        public void Recent_throughput_counts_only_succeeded_completions_within_window()
+        {
+            foreach (var (start, end) in new[] { (At(0), At(5)), (At(5), At(10)), (At(10), At(15)), (At(15), At(20)), (At(20), At(25)) })
+            {
+                state.Append($"slice-{start:HHmm}", JobId("job.obs"), start, end, DurableSliceStatus.Completed, expectedVersion: 0);
+            }
+
+            readModels.RecordAttempt("succ-1", JobId("job.obs"), At(0), At(5), 1, "Succeeded", "worker", At(60), At(70));
+            readModels.RecordAttempt("succ-2", JobId("job.obs"), At(5), At(10), 1, "Succeeded", "worker", At(80), At(90));
+            readModels.RecordAttempt("succ-3", JobId("job.obs"), At(10), At(15), 1, "Succeeded", "worker", At(100), At(110));
+            readModels.RecordAttempt("succ-old", JobId("job.obs"), At(15), At(20), 1, "Succeeded", "worker", At(10), At(20));
+            readModels.RecordAttempt("retry-in-window", JobId("job.obs"), At(20), At(25), 1, "FailedRetryable", "worker", At(95), At(96));
+
+            var sample = readModels.GetRecentSucceededThroughput(JobId("job.obs"), At(60));
+
+            Assert.Equal(3, sample.SucceededCount);
+            Assert.Equal(At(70), sample.FirstCompletedUtc);
+            Assert.Equal(At(110), sample.LastCompletedUtc);
+        }
+
+        [Fact]
+        public void Recent_throughput_is_empty_when_no_completions_in_window()
+        {
+            state.Append("slice-empty", JobId("job.obs"), At(0), At(5), DurableSliceStatus.Completed, expectedVersion: 0);
+            readModels.RecordAttempt("succ-1", JobId("job.obs"), At(0), At(5), 1, "Succeeded", "worker", At(60), At(70));
+
+            var sample = readModels.GetRecentSucceededThroughput(JobId("job.obs"), At(1000));
+
+            Assert.Equal(0, sample.SucceededCount);
+            Assert.Null(sample.FirstCompletedUtc);
+            Assert.Null(sample.LastCompletedUtc);
+        }
+
         private int Count(string table)
         {
             using var c = factory.OpenConnection(); using var cmd = c.CreateCommand(); cmd.CommandText = $"SELECT COUNT(*) FROM {table};"; return Convert.ToInt32(cmd.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture);

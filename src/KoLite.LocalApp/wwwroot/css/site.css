@@ -845,3 +845,14 @@ h3 { font-size: 16px; margin-bottom: 10px; }
   border-top: 1px solid var(--border);
 }
 .update-badge-links a { color: var(--primary); }
+
+/* Catch-up estimate (job details) */
+.catch-up-card { border-left: 4px solid var(--info); }
+.catch-up-card.catch-up-warning { border-left-color: var(--warning); background: #fffbe6; }
+.catch-up-header { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+.catch-up-headline { font-size: 1.05rem; font-weight: 600; }
+.catch-up-detail { display: flex; flex-wrap: wrap; gap: 8px 28px; margin: 0 0 8px; }
+.catch-up-metric { display: flex; flex-direction: column; }
+.catch-up-metric dt { color: var(--muted); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.02em; }
+.catch-up-metric dd { margin: 0; font-weight: 600; }
+.catch-up-note { margin: 0; font-size: 0.85rem; }

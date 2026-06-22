@@ -122,6 +122,14 @@ Stop the running process before publishing again because published DLLs can be l
 
 This checkout does not include service install, publish helper, or diagnostics helper scripts. If service hosting is needed, publish first, use your service manager's normal process registration, and pass the same safety flags shown above.
 
+## Catch-up estimate
+
+The **Job details** page (`/jobs/{jobId}`) shows a catch-up estimate card above the tabs **only when the estimate is useful**: the job must be enabled and not paused, it must have a real eligible backlog (more than a couple of slices behind, so a job that just became eligible for its next slice is not flagged), and the projected catch-up time must be at least 30 minutes. A job running at its normal cadence shows no card.
+
+- **Calculation.** The backlog is the eligible-but-incomplete slices (those whose window ends at or before `now - delayFromUtcNow`, capped by `endOn`) multiplied by `queryWindowSize`. The processing rate `R` (data-time completed per wall-clock time) is measured from recent successful slice completions, then the projected catch-up time is `backlog / (R - 1)` — the `- 1` accounts for "now" continuing to advance while the job works. The card reports the backlog, the recent rate (as a multiple of real time), and the estimated catch-up time and ETA. A job never catches up to the literal current time; it converges to its configured `delayFromUtcNow` lag.
+- **Throughput window.** Only completions since the last schedule change are sampled (capped at the last 6 hours), so editing a job's definition does not skew the rate with executions that ran under the previous definition. Right after a change there may be too little data to estimate, in which case no card is shown until enough completions accumulate.
+- **Not keeping up.** If the backlog is real but the recent rate is at or below real time (`R ≤ 1`), the card switches to a **Not keeping up** warning instead of an ETA — at the current rate the job will not catch up, so investigate failures, throughput, or `maxParallelism`.
+
 ## Diagnostics
 
 Use `/status/health` to confirm the database path, scheduler options, Kusto auth mode, worker-pool state, and shutdown state.
