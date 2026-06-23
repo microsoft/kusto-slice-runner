@@ -147,7 +147,7 @@ namespace KoLite.LocalApp.Ui
             var throughput = readModels.GetRecentSucceededThroughput(job.JobId, sinceUtc);
             var sample = new CatchUpThroughputSample(throughput.SucceededCount, throughput.FirstCompletedUtc, throughput.LastCompletedUtc);
 
-            return CatchUpEstimator.Estimate(now, definition, job.IsEnabled, completedFrontier, completed.Count, sample, options);
+            return CatchUpEstimator.Estimate(now, definition, job.IsEnabled, completedFrontier, completed.Count, sample, lastDefinitionChange, options);
         }
 
         public SliceDetailsPageData? GetSlice(string jobId, DateTimeOffset sliceStartUtc, DateTimeOffset sliceEndUtc)

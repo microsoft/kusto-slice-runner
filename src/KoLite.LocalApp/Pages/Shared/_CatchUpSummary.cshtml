@@ -9,21 +9,52 @@
 
     var ci = CultureInfo.InvariantCulture;
     var notKeepingUp = Model.Status == CatchUpStatus.NotKeepingUp;
+    var collectingData = Model.Status == CatchUpStatus.InsufficientData;
     var cardClass = notKeepingUp ? "card catch-up-card catch-up-warning" : "card catch-up-card catch-up-info";
     var badgeClass = notKeepingUp ? "badge-warning" : "badge-info";
     var badgeText = notKeepingUp ? "Not keeping up" : "Catching up";
-    var headline = notKeepingUp
-        ? "Backlog is not shrinking at the recent rate"
-        : $"{(Model.ProjectedCatchUp is { } projected ? AppFormatting.ApproxDuration(projected) : "")} to catch up";
+
+    string headline;
+    if (notKeepingUp)
+    {
+        headline = "Backlog is not shrinking at the recent rate";
+    }
+    else if (collectingData)
+    {
+        headline = "Collecting data to estimate catch-up time";
+    }
+    else
+    {
+        headline = $"{(Model.ProjectedCatchUp is { } projected ? AppFormatting.ApproxDuration(projected) : "")} to catch up";
+    }
 
     var backlogText = $"{AppFormatting.ApproxDuration(Model.BacklogDataTime)} of data ({Model.BacklogSlices.ToString("N0", ci)} slices)";
     string? rateText = Model.SlicesPerHour is { } perHour && Model.RealTimeMultiple is { } multiple
         ? $"~{perHour.ToString("0.#", ci)} slices/h ({multiple.ToString("0.#", ci)}\u00d7 real time)"
         : null;
     var targetText = AppFormatting.Iso(Model.TargetFrontierUtc);
-    var note = notKeepingUp
-        ? $"At the recent processing rate this job will not catch up to its target frontier ({targetText}). Investigate failures, throughput, or parallelism."
-        : $"Projected to reach its normal delay-bounded frontier ({targetText}). It never reaches the literal current time because of the configured delay.";
+
+    // Concrete gating, surfaced so the operator knows exactly what the card is waiting for.
+    var requiredSamples = Model.RequiredThroughputSamples.ToString("N0", ci);
+    var requiredSpanText = AppFormatting.ApproxDuration(Model.RequiredThroughputSpan);
+    var collectedText = $"{Model.ObservedThroughputSamples.ToString("N0", ci)} of {requiredSamples} completions";
+
+    string note;
+    if (notKeepingUp)
+    {
+        note = $"At the recent processing rate this job will not catch up to its target frontier ({targetText}). Investigate failures, throughput, or parallelism.";
+    }
+    else if (collectingData)
+    {
+        var reason = Model.ThroughputWindowBoundedByDefinitionChange
+            ? "This job's definition changed recently, so KO Lite is collecting fresh execution data under the new definition"
+            : "KO Lite is collecting recent execution data";
+        note = $"{reason} before it can project a catch-up time. The estimate appears once at least {requiredSamples} slices complete successfully over at least {requiredSpanText}.";
+    }
+    else
+    {
+        note = $"Projected to reach its normal delay-bounded frontier ({targetText}). It never reaches the literal current time because of the configured delay.";
+    }
 }
 <section class="@cardClass" aria-label="Catch-up estimate">
     <div class="catch-up-header">
@@ -35,6 +66,13 @@
             <dt>Behind by</dt>
             <dd>@backlogText</dd>
         </div>
+        @if (collectingData)
+        {
+            <div class="catch-up-metric">
+                <dt>Data collected</dt>
+                <dd>@collectedText</dd>
+            </div>
+        }
         @if (rateText is not null)
         {
             <div class="catch-up-metric">
@@ -42,7 +80,7 @@
                 <dd>@rateText</dd>
             </div>
         }
-        @if (!notKeepingUp && Model.EtaUtc is { } eta)
+        @if (!notKeepingUp && !collectingData && Model.EtaUtc is { } eta)
         {
             <div class="catch-up-metric">
                 <dt>Estimated caught up</dt>

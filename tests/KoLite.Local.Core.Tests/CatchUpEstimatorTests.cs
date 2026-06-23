@@ -109,9 +109,15 @@ namespace KoLite.Local.Core.Tests
                 Sample(count: 2, first: "2026-01-10T20:00:00Z", last: "2026-01-10T22:00:00Z"));
 
             Assert.Equal(CatchUpStatus.InsufficientData, projection.Status);
-            Assert.False(projection.ShouldDisplay);
+            Assert.True(projection.ShouldDisplay);
             Assert.Equal(40, projection.BacklogSlices);
             Assert.Null(projection.RealTimeMultiple);
+            // No definition change supplied: the sample window is the recent lookback floor.
+            Assert.False(projection.ThroughputWindowBoundedByDefinitionChange);
+            Assert.Equal(Utc("2026-01-10T18:00:00Z"), projection.ThroughputWindowStartUtc);
+            Assert.Equal(2, projection.ObservedThroughputSamples);
+            Assert.Equal(3, projection.RequiredThroughputSamples);
+            Assert.Equal(TimeSpan.FromMinutes(10), projection.RequiredThroughputSpan);
         }
 
         [Fact]
@@ -126,6 +132,29 @@ namespace KoLite.Local.Core.Tests
                 Sample(count: 5, first: "2026-01-10T21:55:00Z", last: "2026-01-10T22:00:00Z"));
 
             Assert.Equal(CatchUpStatus.InsufficientData, projection.Status);
+            Assert.True(projection.ShouldDisplay);
+            Assert.Equal(5, projection.ObservedThroughputSamples);
+        }
+
+        [Fact]
+        public void Insufficient_data_after_recent_definition_change_is_bounded_by_change()
+        {
+            // A definition change 1h ago shortens the sample window to start at the change, so only a
+            // couple of completions exist under the new definition => InsufficientData, still shown.
+            var projection = CatchUpEstimator.Estimate(
+                Utc("2026-01-11T00:00:00Z"),
+                Job(window: TimeSpan.FromHours(1), delay: TimeSpan.Zero),
+                isEnabled: true,
+                completedFrontierUtc: Utc("2026-01-09T08:00:00Z"),
+                completedSliceCount: 200,
+                Sample(count: 2, first: "2026-01-10T23:10:00Z", last: "2026-01-10T23:40:00Z"),
+                lastDefinitionChangeUtc: Utc("2026-01-10T23:00:00Z"));
+
+            Assert.Equal(CatchUpStatus.InsufficientData, projection.Status);
+            Assert.True(projection.ShouldDisplay);
+            Assert.True(projection.ThroughputWindowBoundedByDefinitionChange);
+            Assert.Equal(Utc("2026-01-10T23:00:00Z"), projection.ThroughputWindowStartUtc);
+            Assert.Equal(2, projection.ObservedThroughputSamples);
         }
 
         [Fact]
