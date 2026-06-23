@@ -6,6 +6,10 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.0" />
+    <!-- Override the vulnerable native SQLite that Microsoft.Data.Sqlite pulls in transitively
+         (SQLitePCLRaw.lib.e_sqlite3 2.1.11 - CVE-2025-6965 / GHSA-2m69-gcr7-jv3q). The 3.0.x bundle
+         ships SQLite >= 3.50.2. Drop this once Microsoft.Data.Sqlite references a fixed SQLitePCLRaw. -->
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.3" />
   </ItemGroup>
 
   <PropertyGroup>
