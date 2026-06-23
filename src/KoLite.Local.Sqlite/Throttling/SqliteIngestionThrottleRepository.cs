@@ -94,6 +94,24 @@ namespace KoLite.Local.Sqlite.Throttling
             return results;
         }
 
+        // Distinct job ids that hit an ingestion throttle on a cluster within the window. Used to keep
+        // the throttled job itself in the advisory even when it is momentarily between in-flight slices.
+        public IReadOnlySet<string> ListThrottledJobIds(string clusterUri, DateTimeOffset sinceUtc)
+        {
+            using var c = connectionFactory.OpenConnection();
+            using var cmd = SqliteStorage.Command(c, null, "SELECT DISTINCT job_id FROM ingestion_throttle_observations WHERE cluster_uri = $cluster AND observed_at_utc >= $since;");
+            cmd.Add("$cluster", clusterUri);
+            cmd.Add("$since", SqliteStorage.Utc(sinceUtc));
+            using var r = cmd.ExecuteReader();
+            var ids = new HashSet<string>(StringComparer.Ordinal);
+            while (r.Read())
+            {
+                ids.Add(r.GetString(0));
+            }
+
+            return ids;
+        }
+
         // Deletes observations older than the cutoff. Used by read-model retention to bound growth;
         // the rolling-window trigger uses a far shorter window, so pruning never affects detection.
         public int Prune(DateTimeOffset olderThanUtc)

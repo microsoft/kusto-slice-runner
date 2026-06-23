@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Net;
 using System.Text.Json;
 using KoLite.Local.Core.Orchestration;
+using KoLite.Local.Core.Throttling;
 using KoLite.Local.Core.Time;
 using KoLite.Local.Kusto.Execution;
 using KoLite.Local.Sqlite.Catalog;
@@ -42,6 +43,8 @@ namespace KoLite.LocalApp
             builder.Services.AddScoped<SqliteJobLifecycleService>();
             builder.Services.AddSingleton<SqliteIngestionThrottleRepository>();
             builder.Services.AddSingleton<IngestionThrottleObserver>();
+            builder.Services.AddSingleton(_ => ResolveThrottleAdvisorOptions(builder.Configuration));
+            builder.Services.AddScoped<SqliteThrottleAdvisorReadModel>();
             builder.Services.AddScoped<SqliteRerunService>();
             builder.Services.AddScoped<SqliteRepairService>();
             builder.Services.AddScoped<DashboardPageQuery>();
@@ -289,6 +292,30 @@ namespace KoLite.LocalApp
                 ManagedIdentityClientId = configuration["KoLite:Kusto:ManagedIdentityClientId"]
             };
         }
+
+        // Binds KoLite:Throttling:* to the advisory options. Every value is optional and falls back to
+        // the safe defaults; invalid or non-positive numbers are ignored rather than rejected.
+        static ThrottleAdvisorOptions ResolveThrottleAdvisorOptions(IConfiguration configuration)
+        {
+            var defaults = ThrottleAdvisorOptions.Default;
+            return new ThrottleAdvisorOptions
+            {
+                Enabled = bool.TryParse(configuration["KoLite:Throttling:Enabled"], out var enabled) ? enabled : defaults.Enabled,
+                Window = TimeSpan.FromMinutes(ReadPositiveDouble(configuration, "KoLite:Throttling:WindowMinutes", defaults.Window.TotalMinutes)),
+                MinThrottledSlices = ReadPositiveInt(configuration, "KoLite:Throttling:MinThrottledSlices", defaults.MinThrottledSlices),
+                DurationLookback = TimeSpan.FromHours(ReadPositiveDouble(configuration, "KoLite:Throttling:DurationLookbackHours", defaults.DurationLookback.TotalHours)),
+                MinDurationSamples = ReadPositiveInt(configuration, "KoLite:Throttling:MinDurationSamples", defaults.MinDurationSamples),
+                DurationPercentile = Math.Clamp(ReadPositiveDouble(configuration, "KoLite:Throttling:DurationPercentile", defaults.DurationPercentile), 0.01, 1.0),
+                KeepUpSafetyFactor = ReadPositiveDouble(configuration, "KoLite:Throttling:KeepUpSafetyFactor", defaults.KeepUpSafetyFactor),
+                ObservationRetention = TimeSpan.FromDays(ReadPositiveDouble(configuration, "KoLite:Throttling:ObservationRetentionDays", defaults.ObservationRetention.TotalDays))
+            };
+        }
+
+        private static int ReadPositiveInt(IConfiguration configuration, string key, int defaultValue) =>
+            int.TryParse(configuration[key], NumberStyles.Integer, CultureInfo.InvariantCulture, out var value) && value >= 1 ? value : defaultValue;
+
+        private static double ReadPositiveDouble(IConfiguration configuration, string key, double defaultValue) =>
+            double.TryParse(configuration[key], NumberStyles.Float, CultureInfo.InvariantCulture, out var value) && value > 0 ? value : defaultValue;
     }
 
     public sealed record LocalBackgroundSchedulerOptions(bool Enabled, TimeSpan TickInterval, bool LogEveryPass)
