@@ -27,9 +27,6 @@ namespace KoLite.Local.Core.Throttling
         // Safety margin above the bare keep-up parallelism (see ParallelismRecommendationOptions).
         public double KeepUpSafetyFactor { get; init; } = 1.5;
 
-        // Observations older than this are pruned by read-model retention.
-        public TimeSpan ObservationRetention { get; init; } = TimeSpan.FromDays(7);
-
         public static ThrottleAdvisorOptions Default { get; } = new();
 
         public ParallelismRecommendationOptions ToRecommendationOptions() =>

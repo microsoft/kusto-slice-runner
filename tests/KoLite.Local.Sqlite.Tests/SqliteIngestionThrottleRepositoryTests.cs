@@ -75,19 +75,6 @@ namespace KoLite.Local.Sqlite.Tests
         }
 
         [Fact]
-        public void Prune_removes_observations_older_than_cutoff()
-        {
-            var now = DateTimeOffset.Parse("2026-06-23T22:00:00Z");
-            Record("a", "https://a.kusto.windows.net", "2026-06-20T00:00:00Z", now.AddDays(-3), capacity: 18);
-            Record("a", "https://a.kusto.windows.net", "2026-06-23T00:00:00Z", now.AddMinutes(-5), capacity: 18);
-
-            var deleted = repository.Prune(now.AddDays(-1));
-
-            Assert.Equal(1, deleted);
-            Assert.Single(repository.SummarizeWindow(now.AddDays(-30)));
-        }
-
-        [Fact]
         public void Reported_capacity_may_be_null()
         {
             var now = DateTimeOffset.Parse("2026-06-23T22:00:00Z");

@@ -56,7 +56,6 @@ dotnet run --project .\src\KoLite.LocalApp\KoLite.LocalApp.csproj -- --Connectio
 | `KoLite:Throttling:MinDurationSamples` | `5` | Minimum successful samples before a keep-up floor is estimated. |
 | `KoLite:Throttling:DurationPercentile` | `0.75` | Percentile of successful slice durations used as the robust duration estimate. |
 | `KoLite:Throttling:KeepUpSafetyFactor` | `1.5` | Margin above the bare keep-up parallelism (`1.0` = exactly keep up). |
-| `KoLite:Throttling:ObservationRetentionDays` | `7` | Throttle observations older than this are pruned by read-model retention. |
 | `KoLite:UpdateCheck:Enabled` | `true` | Periodically checks GitHub for newer KO Lite commits. Set `false` to disable. |
 | `KoLite:UpdateCheck:Interval` | `01:00:00` | How often to poll GitHub. Must be greater than zero. |
 | `KoLite:UpdateCheck:Repository` | `microsoft/kusto-slice-runner` | `owner/repo` to compare against. |

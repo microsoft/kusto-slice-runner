@@ -111,15 +111,5 @@ namespace KoLite.Local.Sqlite.Throttling
 
             return ids;
         }
-
-        // Deletes observations older than the cutoff. Used by read-model retention to bound growth;
-        // the rolling-window trigger uses a far shorter window, so pruning never affects detection.
-        public int Prune(DateTimeOffset olderThanUtc)
-        {
-            using var c = connectionFactory.OpenConnection();
-            using var cmd = SqliteStorage.Command(c, null, "DELETE FROM ingestion_throttle_observations WHERE observed_at_utc < $cutoff;");
-            cmd.Add("$cutoff", SqliteStorage.Utc(olderThanUtc));
-            return cmd.ExecuteNonQuery();
-        }
     }
 }
