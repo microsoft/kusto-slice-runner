@@ -41,7 +41,9 @@ Base URL defaults to `http://127.0.0.1:5057`.
 | POST | `/api/jobs/import` | Body is schedule JSON (single object **or** array). Returns `{ "created", "updated", "total", "items": [ { "jobId", "action", "catalogVersion" } ] }`. `400` with `{ "error" }` on JSON, validation, or mutation-policy failure. |
 
 The database path is also reported as `databasePath` by `GET /status/health`,
-which an agent can read to confirm which instance it is talking to.
+which an agent can read to confirm which instance it is talking to. The
+`scripts\Get-KoLiteDatabase.ps1` helper prints this path directly (and falls
+back to a best-effort guess when the app is stopped).
 
 ## Examples
 

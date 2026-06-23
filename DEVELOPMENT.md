@@ -47,3 +47,5 @@ dotnet run --project .\src\KoLite.LocalApp\KoLite.LocalApp.csproj -- --Connectio
 ```
 
 Use the [operations runbook](operations-runbook.md) for live scheduling, configuration, diagnostics, and rerun guidance.
+
+The example above uses a `ko-lite-dev.db` sandbox; `ko-lite-review.db` is the runbook's review sandbox. These distinct names are intentional — `ko-lite.db` is only the default path used when no connection string is supplied. To find which database an instance is actually using, run `.\scripts\Get-KoLiteDatabase.ps1` (or read `databasePath` from `/status/health`).

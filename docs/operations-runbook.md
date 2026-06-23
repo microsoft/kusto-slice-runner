@@ -120,7 +120,7 @@ dotnet "$publishDir\KoLite.LocalApp.dll" --ConnectionStrings:KoLiteSqlite="$db" 
 
 Stop the running process before publishing again because published DLLs can be locked while the app is running.
 
-This checkout does not include service install, publish helper, or diagnostics helper scripts. If service hosting is needed, publish first, use your service manager's normal process registration, and pass the same safety flags shown above.
+This checkout does not include service install or publish helper scripts. If service hosting is needed, publish first, use your service manager's normal process registration, and pass the same safety flags shown above.
 
 ## Catch-up estimate
 
@@ -131,6 +131,8 @@ The **Job details** page (`/jobs/{jobId}`) shows a catch-up estimate card above 
 - **Not keeping up.** If the backlog is real but the recent rate is at or below real time (`R ≤ 1`), the card switches to a **Not keeping up** warning instead of an ETA — at the current rate the job will not catch up, so investigate failures, throughput, or `maxParallelism`.
 
 ## Diagnostics
+
+Run `.\scripts\Get-KoLiteDatabase.ps1` to print the in-use SQLite database path. While the app is running it reports the authoritative `databasePath` from `/status/health`; while the app is stopped it reports the default and flags the most likely live file (ignoring backup/copy files and `*.db-wal` / `*.db-shm` sidecars). Pass `-BaseUrl` for a non-default endpoint. `ko-lite.db` is only the default when no connection string is supplied — `/status/health` is the source of truth for the running instance, and the app also logs the resolved path at startup.
 
 Use `/status/health` to confirm the database path, scheduler options, Kusto auth mode, worker-pool state, and shutdown state.
 

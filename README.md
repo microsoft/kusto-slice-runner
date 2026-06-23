@@ -39,6 +39,8 @@ dotnet run --project .\src\KoLite.LocalApp\KoLite.LocalApp.csproj
 
 Open `http://127.0.0.1:5057` and check `http://127.0.0.1:5057/status/health`
 
+`/status/health` reports the in-use `databasePath`; `scripts\Get-KoLiteDatabase.ps1` prints it directly (and makes a best-effort guess when the app is stopped).
+
 You should be able to kill it at any point and it will restart without duplicating data (thanks to ingest-by tags) but to avoid any chance of issues, execute scripts\Stop-KoLiteApp.ps1. It will wait for the workers to drain and then shut down gracefully.
 
 ## Screenshots

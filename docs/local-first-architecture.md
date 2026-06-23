@@ -13,7 +13,7 @@ KO Lite runs as a local ASP.NET Core Razor Pages app with hosted background serv
 | Kusto execution | `src\KoLite.Local.Kusto` | Builds `.set-or-append` commands, configures auth, executes live Kusto writes, and classifies Kusto errors. |
 | Update-check service | `src\KoLite.LocalApp` | Periodically compares the built git commit against the remote branch HEAD via the GitHub CLI and surfaces a top-bar badge (up to date, update available, ahead of published, diverged, or unavailable) plus `/status/health` fields; read-only and failure-tolerant. |
 | Local management API | `src\KoLite.LocalApp` | Loopback-only JSON API (`/api/jobs*`) that lets a same-machine agent read jobs and create/update schedules through the validated catalog import path. Exposes no enable/disable, delete, Kusto, rerun, or repair surface. |
-| Operational scripts | `scripts` | Publish, run, UI-only run, drain shutdown, service metadata, diagnostics, and crash-recovery inspection. |
+| Operational scripts | `scripts` | Publish, run, UI-only run, drain shutdown, in-use database reporting, service metadata, diagnostics, and crash-recovery inspection. |
 
 ## Data flow
 

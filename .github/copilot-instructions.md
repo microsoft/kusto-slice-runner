@@ -30,7 +30,7 @@ For targeted changes, run the narrow relevant test project first, then decide wh
 - `src\KoLite.Local.Kusto` contains live Kusto request building, authentication, execution, and error classification.
 - `src\KoLite.LocalApp` contains the ASP.NET Core/Razor dashboard, hosted scheduler and worker services, health/shutdown endpoints, UI read models, and static assets.
 - `tests\KoLite.Local.*` mirrors the active solution with unit, integration, web, and local end-to-end tests.
-- `scripts` contains `Stop-KoLiteApp.ps1` (graceful drain shutdown of the local app) and `copy-chartjs.mjs` (refreshes the bundled Chart.js assets, run via `npm ci`).
+- `scripts` contains `Stop-KoLiteApp.ps1` (graceful drain shutdown of the local app), `Get-KoLiteDatabase.ps1` (reports the in-use local SQLite database path), and `copy-chartjs.mjs` (refreshes the bundled Chart.js assets, run via `npm ci`).
 
 ## Key conventions
 
