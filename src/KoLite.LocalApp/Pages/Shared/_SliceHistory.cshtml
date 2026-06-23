@@ -6,6 +6,7 @@
 }
 else
 {
+    var hasStalled = Model.Any(row => row.Cells.Any(cell => string.Equals(cell.State, "Stalled", StringComparison.Ordinal)));
     <div class="slice-history-grid">
         @foreach (var row in Model)
         {
@@ -37,7 +38,10 @@ else
         <span><span class="legend-color completed-after-retry"></span>Completed after retry</span>
         <span><span class="legend-color queued"></span>Queued</span>
         <span><span class="legend-color running"></span>Running</span>
-        <span><span class="legend-color stalled"></span>Stalled (orphaned lease)</span>
+        @if (hasStalled)
+        {
+            <span><span class="legend-color stalled"></span>Stalled (orphaned lease)</span>
+        }
         <span><span class="legend-color waiting"></span>Waiting</span>
         <span><span class="legend-color failed Failed"></span>Failed/dead-lettered</span>
         <span><span class="legend-color missing Missing"></span>Missing/not eligible</span>

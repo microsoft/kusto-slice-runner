@@ -1737,6 +1737,42 @@ namespace KoLite.LocalApp.Tests
             Assert.Equal("Stalled (orphaned lease)", cell.StatusLabel);
         }
 
+        [Fact]
+        public async Task History_legend_shows_the_stalled_key_when_a_slice_is_stalled()
+        {
+            var catalog = new SqliteJobCatalogRepository(sqlite);
+            var state = new SqliteSliceStateRepository(sqlite);
+            var queue = new SqliteWorkQueueRepository(sqlite);
+            catalog.Create(Schedule("job.legend.stalled", "LegendStalledFunction", isPaused: false));
+            // A Leased queue row whose lock is far in the past renders the slice as Stalled (orphaned lease).
+            state.AcquireLease("legend-stalled-lease", JobId("job.legend.stalled"), At(0), At(5), "stale-worker", TimeSpan.FromMinutes(5), At(10));
+            queue.Enqueue(JobId("job.legend.stalled"), At(0), At(5), "normal|legend-stalled", At(0));
+            Assert.NotNull(queue.Claim("default", "stale-worker", TimeSpan.FromMinutes(5), At(10)));
+
+            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+            var html = await client.GetStringAsync($"/jobs/{JobId("job.legend.stalled")}/history?from=2026-01-01T00%3A00%3A00Z&to=2026-01-01T00%3A05%3A00Z");
+
+            // The conditional legend key is rendered only when a slice in the window is stalled.
+            Assert.Contains("legend-color stalled", html, StringComparison.Ordinal);
+            Assert.Contains("Stalled (orphaned lease)", html, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public async Task History_legend_hides_the_stalled_key_when_no_slice_is_stalled()
+        {
+            var catalog = new SqliteJobCatalogRepository(sqlite);
+            var state = new SqliteSliceStateRepository(sqlite);
+            catalog.Create(Schedule("job.legend.healthy", "LegendHealthyFunction", isPaused: false));
+            state.Append("legend-healthy-s0", JobId("job.legend.healthy"), At(0), At(5), DurableSliceStatus.Completed, expectedVersion: 0);
+
+            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+            var html = await client.GetStringAsync($"/jobs/{JobId("job.legend.healthy")}/history?from=2026-01-01T00%3A00%3A00Z&to=2026-01-01T00%3A05%3A00Z");
+
+            // The legend still renders its static keys, but the Stalled key is omitted when nothing is stalled.
+            Assert.Contains("legend-color running", html, StringComparison.Ordinal);
+            Assert.DoesNotContain("legend-color stalled", html, StringComparison.Ordinal);
+        }
+
         private void SeedOperationalData()
         {
             var catalog = new SqliteJobCatalogRepository(sqlite);
