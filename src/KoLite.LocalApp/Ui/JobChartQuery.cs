@@ -127,38 +127,37 @@ namespace KoLite.LocalApp.Ui
 
         private readonly IKoLiteSqliteConnectionFactory connectionFactory;
         private readonly IClock clock;
+        private readonly BucketedTimeSeries timeSeries;
 
         public JobChartQuery(IKoLiteSqliteConnectionFactory connectionFactory, IClock clock)
         {
             this.connectionFactory = connectionFactory;
             this.clock = clock;
+            this.timeSeries = new BucketedTimeSeries(connectionFactory);
         }
 
         public DashboardCharts GetDashboardCharts(TimeSpan range, IEnumerable<string>? jobIds = null)
         {
-            var bucketSize = BucketSizeFor(range);
-            var until = AlignUp(clock.UtcNow, bucketSize);
-            var since = AlignDown(clock.UtcNow.Subtract(range), bucketSize);
+            var window = timeSeries.CreateWindow(clock.UtcNow, range);
             var includedJobIds = jobIds?.ToHashSet(StringComparer.Ordinal);
             var chartJobIds = GetJobIds(includedJobIds);
             var labels = GetJobLabels();
-            var buckets = EnumerateBuckets(since, until, bucketSize);
 
-            var attemptCounts = InitializeCounts(chartJobIds, buckets.Count);
-            foreach (var row in ReadAttemptOutcomes(since, until))
+            var attemptCounts = InitializeCounts(chartJobIds, window.Count);
+            foreach (var row in ReadAttemptOutcomes(window))
             {
-                AddOutcome(attemptCounts, buckets, since, bucketSize, row.JobId, row.CompletedAtUtc, row.Succeeded);
+                AddOutcome(attemptCounts, window, row.JobId, row.CompletedAtUtc, row.Succeeded);
             }
 
-            var finalCounts = InitializeCounts(chartJobIds, buckets.Count);
-            foreach (var row in ReadFinalOutcomes(since, until))
+            var finalCounts = InitializeCounts(chartJobIds, window.Count);
+            foreach (var row in ReadFinalOutcomes(window))
             {
-                AddOutcome(finalCounts, buckets, since, bucketSize, row.JobId, row.CompletedAtUtc, row.Succeeded);
+                AddOutcome(finalCounts, window, row.JobId, row.CompletedAtUtc, row.Succeeded);
             }
 
             return new DashboardCharts(
-                BuildChart("Success Rate By Function", chartJobIds, labels, buckets, attemptCounts, since, until, bucketSize),
-                BuildChart("Success Rate After Retries by function", chartJobIds, labels, buckets, finalCounts, since, until, bucketSize));
+                BuildChart("Success Rate By Function", chartJobIds, labels, window, attemptCounts),
+                BuildChart("Success Rate After Retries by function", chartJobIds, labels, window, finalCounts));
         }
 
         public JobDetailsCharts GetJobDetailsCharts(string jobId, TimeSpan range)
@@ -168,16 +167,13 @@ namespace KoLite.LocalApp.Ui
                 throw new ArgumentException("Job id is required.", nameof(jobId));
             }
 
-            var bucketSize = BucketSizeFor(range);
-            var until = AlignUp(clock.UtcNow, bucketSize);
-            var since = AlignDown(clock.UtcNow.Subtract(range), bucketSize);
-            var buckets = EnumerateBuckets(since, until, bucketSize);
+            var window = timeSeries.CreateWindow(clock.UtcNow, range);
 
             return new JobDetailsCharts(
                 jobId,
                 range,
-                BuildJobAttemptResultChart(jobId, buckets, since, until, bucketSize),
-                BuildJobSuccessfulDurationChart(jobId, buckets, since, until, bucketSize));
+                BuildJobAttemptResultChart(jobId, window),
+                BuildJobSuccessfulDurationChart(jobId, window));
         }
 
         private IReadOnlyList<string> GetJobIds(IReadOnlySet<string>? includedJobIds = null)
@@ -218,10 +214,10 @@ namespace KoLite.LocalApp.Ui
             return labels;
         }
 
-        private JobAttemptResultChart BuildJobAttemptResultChart(string jobId, IReadOnlyList<DateTimeOffset> buckets, DateTimeOffset since, DateTimeOffset until, TimeSpan bucketSize)
+        private JobAttemptResultChart BuildJobAttemptResultChart(string jobId, BucketWindow window)
         {
-            var counts = Enumerable.Range(0, buckets.Count).Select(_ => new JobAttemptResultCounts()).ToArray();
-            foreach (var row in ReadJobAttemptResultCounts(jobId, since, until, bucketSize))
+            var counts = Enumerable.Range(0, window.Count).Select(_ => new JobAttemptResultCounts()).ToArray();
+            foreach (var row in ReadJobAttemptResultCounts(jobId, window))
             {
                 if (row.BucketIndex < 0 || row.BucketIndex >= counts.Length)
                 {
@@ -244,23 +240,23 @@ namespace KoLite.LocalApp.Ui
 
             return new JobAttemptResultChart(
                 "Query Results by Time of Execution",
-                buckets.Select((bucket, index) => new JobAttemptResultPoint(bucket, counts[index].SuccessCount, counts[index].RetryCount, counts[index].ErrorCount)).ToArray(),
-                since,
-                until,
-                bucketSize);
+                window.Buckets.Select((bucket, index) => new JobAttemptResultPoint(bucket, counts[index].SuccessCount, counts[index].RetryCount, counts[index].ErrorCount)).ToArray(),
+                window.Since,
+                window.Until,
+                window.BucketSize);
         }
 
-        private JobSuccessfulDurationChart BuildJobSuccessfulDurationChart(string jobId, IReadOnlyList<DateTimeOffset> buckets, DateTimeOffset since, DateTimeOffset until, TimeSpan bucketSize)
+        private JobSuccessfulDurationChart BuildJobSuccessfulDurationChart(string jobId, BucketWindow window)
         {
-            var durations = Enumerable.Range(0, buckets.Count).Select(_ => new DurationBucket()).ToArray();
+            var durations = Enumerable.Range(0, window.Count).Select(_ => new DurationBucket()).ToArray();
             var metricsCount = 0;
             var fallbackCount = 0;
             var recoveredCount = 0;
             var missingCount = 0;
-            foreach (var sample in ReadSuccessfulDurationSamples(jobId, since, until))
+            foreach (var sample in ReadSuccessfulDurationSamples(jobId, window))
             {
-                var index = (int)((sample.CompletedAtUtc.ToUniversalTime() - since).Ticks / bucketSize.Ticks);
-                if (index < 0 || index >= durations.Length)
+                var index = window.IndexOf(sample.CompletedAtUtc);
+                if (index < 0)
                 {
                     continue;
                 }
@@ -297,26 +293,24 @@ namespace KoLite.LocalApp.Ui
 
             return new JobSuccessfulDurationChart(
                 "Successful Query Duration by Time of Execution",
-                buckets.Select((bucket, index) => new JobSuccessfulDurationPoint(
+                window.Buckets.Select((bucket, index) => new JobSuccessfulDurationPoint(
                     bucket,
                     durations[index].Count,
                     durations[index].MissingDurationCount,
                     durations[index].Count == 0 ? null : durations[index].TotalMilliseconds / durations[index].Count)).ToArray(),
-                since,
-                until,
-                bucketSize,
+                window.Since,
+                window.Until,
+                window.BucketSize,
                 metricsCount,
                 fallbackCount,
                 recoveredCount,
                 missingCount);
         }
 
-        private IReadOnlyList<JobAttemptResultCount> ReadJobAttemptResultCounts(string jobId, DateTimeOffset since, DateTimeOffset until, TimeSpan bucketSize)
+        private IReadOnlyList<JobAttemptResultCount> ReadJobAttemptResultCounts(string jobId, BucketWindow window)
         {
-            using var connection = connectionFactory.OpenConnection();
-            using var command = connection.CreateCommand();
             var statusParameters = string.Join(", ", JobAttemptStatusTaxonomy.ChartedStatuses.Select((_, index) => "$status" + index.ToString(CultureInfo.InvariantCulture)));
-            command.CommandText = $"""
+            var commandText = $"""
                 SELECT CAST((unixepoch(sa.completed_at_utc) - unixepoch($since)) / $bucket_seconds AS INTEGER) bucket_index,
                        sa.status,
                        COUNT(*) attempt_count
@@ -329,33 +323,27 @@ namespace KoLite.LocalApp.Ui
                 GROUP BY bucket_index, sa.status
                 ORDER BY bucket_index, sa.status;
                 """;
-            command.Add("$job", jobId);
-            command.Add("$since", SqliteUi.FormatUtc(since));
-            command.Add("$until", SqliteUi.FormatUtc(until));
-            command.Add("$bucket_seconds", Math.Max(1L, (long)bucketSize.TotalSeconds));
-            for (var i = 0; i < JobAttemptStatusTaxonomy.ChartedStatuses.Count; i++)
-            {
-                command.Add("$status" + i.ToString(CultureInfo.InvariantCulture), JobAttemptStatusTaxonomy.ChartedStatuses[i]);
-            }
-
-            using var reader = command.ExecuteReader();
-            var results = new List<JobAttemptResultCount>();
-            while (reader.Read())
-            {
-                results.Add(new JobAttemptResultCount(
+            return timeSeries.ReadWindow(
+                commandText,
+                window,
+                command =>
+                {
+                    command.Add("$job", jobId);
+                    command.Add("$bucket_seconds", window.BucketSeconds);
+                    for (var i = 0; i < JobAttemptStatusTaxonomy.ChartedStatuses.Count; i++)
+                    {
+                        command.Add("$status" + i.ToString(CultureInfo.InvariantCulture), JobAttemptStatusTaxonomy.ChartedStatuses[i]);
+                    }
+                },
+                reader => new JobAttemptResultCount(
                     reader.GetInt32(0),
                     reader.GetString(1),
                     Convert.ToInt32(reader.GetInt64(2), CultureInfo.InvariantCulture)));
-            }
-
-            return results;
         }
 
-        private IReadOnlyList<SuccessfulDurationSample> ReadSuccessfulDurationSamples(string jobId, DateTimeOffset since, DateTimeOffset until)
+        private IReadOnlyList<SuccessfulDurationSample> ReadSuccessfulDurationSamples(string jobId, BucketWindow window)
         {
-            using var connection = connectionFactory.OpenConnection();
-            using var command = connection.CreateCommand();
-            command.CommandText = """
+            const string commandText = """
                 SELECT sa.completed_at_utc,
                        sa.started_at_utc,
                        (
@@ -377,38 +365,33 @@ namespace KoLite.LocalApp.Ui
                   AND sa.completed_at_utc < $until
                 ORDER BY sa.completed_at_utc;
                 """;
-            command.Add("$job", jobId);
-            command.Add("$since", SqliteUi.FormatUtc(since));
-            command.Add("$until", SqliteUi.FormatUtc(until));
-            using var reader = command.ExecuteReader();
-            var results = new List<SuccessfulDurationSample>();
-            while (reader.Read())
-            {
-                DateTimeOffset? startedAtUtc = null;
-                if (!reader.IsDBNull(1))
+            return timeSeries.ReadWindow(
+                commandText,
+                window,
+                command => command.Add("$job", jobId),
+                reader =>
                 {
-                    startedAtUtc = SqliteUi.ParseUtc(reader.GetString(1));
-                }
-                else if (!reader.IsDBNull(2))
-                {
-                    startedAtUtc = SqliteUi.ParseUtc(reader.GetString(2));
-                }
+                    DateTimeOffset? startedAtUtc = null;
+                    if (!reader.IsDBNull(1))
+                    {
+                        startedAtUtc = SqliteUi.ParseUtc(reader.GetString(1));
+                    }
+                    else if (!reader.IsDBNull(2))
+                    {
+                        startedAtUtc = SqliteUi.ParseUtc(reader.GetString(2));
+                    }
 
-                results.Add(new SuccessfulDurationSample(
-                    SqliteUi.ParseUtc(reader.GetString(0)),
-                    startedAtUtc,
-                    reader.IsDBNull(1) && !reader.IsDBNull(2),
-                    reader.GetString(3)));
-            }
-
-            return results;
+                    return new SuccessfulDurationSample(
+                        SqliteUi.ParseUtc(reader.GetString(0)),
+                        startedAtUtc,
+                        reader.IsDBNull(1) && !reader.IsDBNull(2),
+                        reader.GetString(3));
+                });
         }
 
-        private IReadOnlyList<AttemptOutcome> ReadAttemptOutcomes(DateTimeOffset since, DateTimeOffset until)
+        private IReadOnlyList<AttemptOutcome> ReadAttemptOutcomes(BucketWindow window)
         {
-            using var connection = connectionFactory.OpenConnection();
-            using var command = connection.CreateCommand();
-            command.CommandText = """
+            const string commandText = """
                 SELECT sa.job_id, sa.completed_at_utc, sa.status
                 FROM slice_attempts sa
                 INNER JOIN job_definitions jd ON jd.job_id = sa.job_id
@@ -418,27 +401,23 @@ namespace KoLite.LocalApp.Ui
                   AND sa.status IN ('Succeeded','Failed','FailedRetryable','DeadLettered','LeaseLost')
                 ORDER BY sa.job_id, sa.completed_at_utc, sa.attempt;
                 """;
-            command.Add("$since", SqliteUi.FormatUtc(since));
-            command.Add("$until", SqliteUi.FormatUtc(until));
-            using var reader = command.ExecuteReader();
-            var results = new List<AttemptOutcome>();
-            while (reader.Read())
-            {
-                var status = reader.GetString(2);
-                results.Add(new AttemptOutcome(
-                    reader.GetString(0),
-                    SqliteUi.ParseUtc(reader.GetString(1)),
-                    StringComparer.Ordinal.Equals(status, "Succeeded")));
-            }
-
-            return results;
+            return timeSeries.ReadWindow(
+                commandText,
+                window,
+                bindParameters: null,
+                reader =>
+                {
+                    var status = reader.GetString(2);
+                    return new AttemptOutcome(
+                        reader.GetString(0),
+                        SqliteUi.ParseUtc(reader.GetString(1)),
+                        StringComparer.Ordinal.Equals(status, "Succeeded"));
+                });
         }
 
-        private IReadOnlyList<AttemptOutcome> ReadFinalOutcomes(DateTimeOffset since, DateTimeOffset until)
+        private IReadOnlyList<AttemptOutcome> ReadFinalOutcomes(BucketWindow window)
         {
-            using var connection = connectionFactory.OpenConnection();
-            using var command = connection.CreateCommand();
-            command.CommandText = """
+            const string commandText = """
                 SELECT css.job_id, css.updated_at_utc, css.state
                 FROM current_slice_state css
                 INNER JOIN job_definitions jd ON jd.job_id = css.job_id
@@ -455,20 +434,18 @@ namespace KoLite.LocalApp.Ui
                   )
                 ORDER BY css.job_id, css.updated_at_utc;
                 """;
-            command.Add("$since", SqliteUi.FormatUtc(since));
-            command.Add("$until", SqliteUi.FormatUtc(until));
-            using var reader = command.ExecuteReader();
-            var results = new List<AttemptOutcome>();
-            while (reader.Read())
-            {
-                var status = reader.GetString(2);
-                results.Add(new AttemptOutcome(
-                    reader.GetString(0),
-                    SqliteUi.ParseUtc(reader.GetString(1)),
-                    StringComparer.Ordinal.Equals(status, "Completed")));
-            }
-
-            return results;
+            return timeSeries.ReadWindow(
+                commandText,
+                window,
+                bindParameters: null,
+                reader =>
+                {
+                    var status = reader.GetString(2);
+                    return new AttemptOutcome(
+                        reader.GetString(0),
+                        SqliteUi.ParseUtc(reader.GetString(1)),
+                        StringComparer.Ordinal.Equals(status, "Completed"));
+                });
         }
 
         private static TimeSpan? TryReadDurationFromMetricsJson(string metricsJson)
@@ -538,9 +515,7 @@ namespace KoLite.LocalApp.Ui
 
         private static void AddOutcome(
             Dictionary<string, BucketCounts[]> counts,
-            IReadOnlyList<DateTimeOffset> buckets,
-            DateTimeOffset since,
-            TimeSpan bucketSize,
+            BucketWindow window,
             string jobId,
             DateTimeOffset completedAtUtc,
             bool succeeded)
@@ -550,8 +525,8 @@ namespace KoLite.LocalApp.Ui
                 return;
             }
 
-            var index = (int)((completedAtUtc.ToUniversalTime() - since).Ticks / bucketSize.Ticks);
-            if (index < 0 || index >= buckets.Count)
+            var index = window.IndexOf(completedAtUtc);
+            if (index < 0)
             {
                 return;
             }
@@ -567,50 +542,16 @@ namespace KoLite.LocalApp.Ui
             string title,
             IReadOnlyList<string> jobIds,
             IReadOnlyDictionary<string, string> labels,
-            IReadOnlyList<DateTimeOffset> buckets,
-            IReadOnlyDictionary<string, BucketCounts[]> counts,
-            DateTimeOffset since,
-            DateTimeOffset until,
-            TimeSpan bucketSize)
+            BucketWindow window,
+            IReadOnlyDictionary<string, BucketCounts[]> counts)
         {
             var series = jobIds
                 .Select(jobId => new SuccessRateSeries(
                     jobId,
                     labels.TryGetValue(jobId, out var label) ? label : jobId,
-                    buckets.Select((bucket, index) => new SuccessRatePoint(bucket, counts[jobId][index].Numerator, counts[jobId][index].Denominator)).ToArray()))
+                    window.Buckets.Select((bucket, index) => new SuccessRatePoint(bucket, counts[jobId][index].Numerator, counts[jobId][index].Denominator)).ToArray()))
                 .ToArray();
-            return new SuccessRateChart(title, series, since, until, bucketSize);
-        }
-
-        private static IReadOnlyList<DateTimeOffset> EnumerateBuckets(DateTimeOffset since, DateTimeOffset until, TimeSpan bucketSize)
-        {
-            var buckets = new List<DateTimeOffset>();
-            for (var bucket = since; bucket < until; bucket = bucket.Add(bucketSize))
-            {
-                buckets.Add(bucket);
-            }
-
-            return buckets;
-        }
-
-        private static TimeSpan BucketSizeFor(TimeSpan range)
-        {
-            if (range <= TimeSpan.FromHours(1)) return TimeSpan.FromMinutes(1);
-            if (range <= TimeSpan.FromDays(1)) return TimeSpan.FromHours(1);
-            if (range <= TimeSpan.FromDays(7)) return TimeSpan.FromHours(6);
-            return TimeSpan.FromDays(1);
-        }
-
-        private static DateTimeOffset AlignDown(DateTimeOffset value, TimeSpan bucketSize)
-        {
-            var utc = value.ToUniversalTime();
-            return new DateTimeOffset(utc.Ticks - utc.Ticks % bucketSize.Ticks, TimeSpan.Zero);
-        }
-
-        private static DateTimeOffset AlignUp(DateTimeOffset value, TimeSpan bucketSize)
-        {
-            var down = AlignDown(value, bucketSize);
-            return down == value.ToUniversalTime() ? down : down.Add(bucketSize);
+            return new SuccessRateChart(title, series, window.Since, window.Until, window.BucketSize);
         }
 
         private sealed record AttemptOutcome(string JobId, DateTimeOffset CompletedAtUtc, bool Succeeded);
