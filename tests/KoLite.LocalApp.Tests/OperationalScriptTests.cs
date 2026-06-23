@@ -30,6 +30,34 @@ namespace KoLite.LocalApp.Tests
             Assert.Contains("Invoke-RestMethod -Method Get", script, StringComparison.Ordinal);
         }
 
+        [Fact]
+        public void Publish_script_publishes_copies_helper_scripts_and_prints_deployed_path()
+        {
+            var script = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "scripts", "Publish-KoLiteApp.ps1"));
+
+            Assert.Contains("[switch]$DryRun", script, StringComparison.Ordinal);
+            Assert.Contains("if ($DryRun)", script, StringComparison.Ordinal);
+            Assert.Contains("dotnet publish", script, StringComparison.Ordinal);
+            Assert.Contains("KoLite.LocalApp.csproj", script, StringComparison.Ordinal);
+            Assert.Contains("Copy-Item", script, StringComparison.Ordinal);
+            Assert.Contains("Stop-KoLiteApp.ps1", script, StringComparison.Ordinal);
+            Assert.Contains("Start-KoLiteApp.ps1", script, StringComparison.Ordinal);
+            Assert.Contains("Deployed path:", script, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void Start_script_runs_published_dll_from_deployed_folder()
+        {
+            var script = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "scripts", "Start-KoLiteApp.ps1"));
+
+            Assert.Contains("[switch]$DryRun", script, StringComparison.Ordinal);
+            Assert.Contains("if ($DryRun)", script, StringComparison.Ordinal);
+            Assert.Contains("KoLite.LocalApp.dll", script, StringComparison.Ordinal);
+            Assert.Contains("$PSScriptRoot", script, StringComparison.Ordinal);
+            Assert.Contains("run-app", script, StringComparison.Ordinal);
+            Assert.Contains("& dotnet", script, StringComparison.Ordinal);
+        }
+
         public static IEnumerable<object[]> OperationalScripts()
         {
             var scriptsDirectory = Path.Combine(FindRepositoryRoot(), "scripts");

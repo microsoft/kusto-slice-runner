@@ -43,6 +43,18 @@ Open `http://127.0.0.1:5057` and check `http://127.0.0.1:5057/status/health`
 
 You should be able to kill it at any point and it will restart without duplicating data (thanks to ingest-by tags) but to avoid any chance of issues, execute scripts\Stop-KoLiteApp.ps1. It will wait for the workers to drain and then shut down gracefully.
 
+## Run from a deployed copy
+
+Running `dotnet run` from the repository locks the build output, so `dotnet build` and `dotnet test` fail while the app is running. To keep the repository free for build/test, deploy the latest build to an isolated folder and run it from there:
+
+```powershell
+.\scripts\Publish-KoLiteApp.ps1            # publish (Release) to %LOCALAPPDATA%\KoLite\run-app and copy the start/stop scripts in
+cd "$env:LOCALAPPDATA\KoLite\run-app"
+.\Start-KoLiteApp.ps1                      # run the deployed copy (Ctrl+C to stop)
+```
+
+`Publish-KoLiteApp.ps1` prints the full deployed path when it finishes. Use `-OutputDirectory` to deploy elsewhere and `-StopRunning` to gracefully drain a running instance before re-publishing. See the [operations runbook](docs/operations-runbook.md#published-output) for the full options.
+
 ## Screenshots
 
 Job overview:

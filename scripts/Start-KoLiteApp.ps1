@@ -1,0 +1,86 @@
+<#
+.SYNOPSIS
+Runs a published KO Lite local app from a deployed folder.
+
+.DESCRIPTION
+Starts the published KoLite.LocalApp.dll in the foreground (Ctrl+C to stop), the same way
+'dotnet run' behaves during development, but from an isolated deployed copy instead of the
+repository build output. Running from a deployed folder keeps the repository bin/obj output
+free, so 'dotnet build' and 'dotnet test' are not blocked by the running app holding
+KoLite.LocalApp.dll/.exe.
+
+The app directory is resolved automatically:
+
+1. If KoLite.LocalApp.dll exists next to this script (the script was copied into the deployed
+   folder by Publish-KoLiteApp.ps1), that folder is used.
+2. Otherwise the default deploy directory %LOCALAPPDATA%\KoLite\run-app is used.
+
+By default no extra configuration flags are passed, so the deployed run behaves exactly like
+starting the app with no parameters today: the background scheduler is enabled (live), Kusto
+auth is AzureCli, and the default SQLite database %LOCALAPPDATA%\KoLite\ko-lite.db is used.
+Pass overrides through -AppArguments, for example a disposable database with the scheduler
+disabled:
+
+  -AppArguments '--ConnectionStrings:KoLiteSqlite=...','--KoLite:Scheduler:Enabled=false'
+
+.PARAMETER AppDirectory
+Folder that contains the published KoLite.LocalApp.dll. Defaults to the script folder when a
+published DLL is present there, otherwise %LOCALAPPDATA%\KoLite\run-app.
+
+.PARAMETER AppArguments
+Additional arguments passed through to the app (configuration overrides). Defaults to none,
+which matches running the app with no parameters.
+
+.PARAMETER DryRun
+Print the resolved entrypoint and the exact 'dotnet' command without starting the app.
+
+.EXAMPLE
+.\Start-KoLiteApp.ps1
+
+.EXAMPLE
+.\Start-KoLiteApp.ps1 -AppArguments '--KoLite:Scheduler:Enabled=false'
+#>
+param(
+    [string]$AppDirectory,
+    [string[]]$AppArguments = @(),
+    [switch]$DryRun
+)
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+
+$dllName = 'KoLite.LocalApp.dll'
+$defaultDeployDirectory = Join-Path (Join-Path $env:LOCALAPPDATA 'KoLite') 'run-app'
+
+if ([string]::IsNullOrWhiteSpace($AppDirectory)) {
+    if (Test-Path -LiteralPath (Join-Path $PSScriptRoot $dllName)) {
+        $AppDirectory = $PSScriptRoot
+    } else {
+        $AppDirectory = $defaultDeployDirectory
+    }
+}
+
+$dllPath = Join-Path $AppDirectory $dllName
+
+$commandPreview = "dotnet `"$dllPath`""
+if (@($AppArguments).Count -gt 0) {
+    $commandPreview += ' ' + ($AppArguments -join ' ')
+}
+
+Write-Host 'KO Lite start (deployed copy)'
+Write-Host "AppDirectory: $AppDirectory"
+Write-Host "Entrypoint  : $dllPath"
+Write-Host "Command     : $commandPreview"
+
+if ($DryRun) {
+    Write-Host 'DryRun: the app is not started.'
+    return
+}
+
+if (-not (Test-Path -LiteralPath $dllPath)) {
+    throw "Could not find $dllName in '$AppDirectory'. Publish first with scripts\Publish-KoLiteApp.ps1, or pass -AppDirectory."
+}
+
+Write-Host 'Starting the deployed app (press Ctrl+C to stop)...'
+& dotnet $dllPath @AppArguments
+exit $LASTEXITCODE
