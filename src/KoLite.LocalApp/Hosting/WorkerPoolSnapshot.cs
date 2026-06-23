@@ -1,0 +1,33 @@
+namespace KoLite.LocalApp
+{
+    internal sealed record WorkerPoolSnapshot(
+        string Mode,
+        bool Enabled,
+        string EnabledSource,
+        int? MaxConcurrency,
+        string MaxConcurrencySource,
+        string MaxConcurrencyDisplay,
+        string IdleDelay,
+        string IdleDelaySource,
+        int MaxDispatchStartsPerCycle,
+        string MaxDispatchStartsPerCycleSource,
+        int ActiveWorkerCount,
+        int? AvailableSlots,
+        int ClaimableBacklog,
+        int ActiveQueueRows,
+        int QueuedQueueRows,
+        int LeasedQueueRows,
+        int ExpiredLeaseRows,
+        bool IsIdle,
+        bool IsSaturated,
+        long DispatchCycles,
+        long IdleCycles,
+        long SaturatedCycles,
+        long Starts,
+        long Succeeded,
+        long RetryableFailures,
+        long DeadLettered,
+        long Faulted,
+        IReadOnlyList<string> ActiveWorkerIds,
+        DateTimeOffset? LastUpdatedAtUtc);
+}
