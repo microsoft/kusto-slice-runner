@@ -5,6 +5,12 @@ tool can read jobs and create/update schedules without clicking through the
 dashboard. The API is hosted by the running app, so it starts and stops with the
 dashboard, scheduler, and worker.
 
+A companion **read-only diagnostics API** (`/api/diagnostics/...` and
+`/api/jobs/{jobId}/...`) surfaces the operational read models that otherwise only
+render as dashboard HTML, so an agent can investigate a job (slice states, leases,
+throughput, history, logs, audit, reruns/repairs) entirely over HTTP. See
+[Read-only diagnostics](#read-only-diagnostics) below.
+
 The companion agent skill `ko-lite-job-manager` drives this API; the file-only
 authoring skill `ko-lite-schedule-json` does not upload.
 
@@ -72,6 +78,78 @@ $skill = '.\.github\skills\ko-lite-job-manager\scripts\Invoke-KoLiteJobApi.ps1'
 & $skill -Action Health
 & $skill -Action Get-Jobs
 & $skill -Action Import -Path .\my-job.json
+```
+
+## Read-only diagnostics
+
+A strictly **read-only** family of endpoints surfaces the operational read models
+that power the dashboard, plus a few cross-job and time-bucketed queries that the
+HTML pages do not expose. It performs **no** writes, no Kusto, and no
+scheduler/rerun/repair mutation — it only reads existing local state. Every route
+is **loopback-only** (same guard as the catalog API).
+
+**Bounded by default.** List and time-series routes are capped and windowed so a
+single call never scans the whole local store:
+
+- `take` — row cap, clamped to `[1, 1000]` (default `100`; `slices`/`throughput`
+  default higher but never exceed the cap).
+- `from` / `to` — ISO-8601 UTC bounds. Log/throughput/audit routes default to the
+  **last 24h** when omitted.
+- `bucket` — time-series bucket size: `5m`, `30m`, `1h`, `90s`, or plain seconds
+  (clamped to `[60s, 1d]`; default `30m`).
+- Filters: `state`, `level`, `category`, `action`, `subjectType`, `subjectId`,
+  `groupBy=job` (throughput), `jobId` (global routes), `batchId` (rerun/repair detail).
+
+`{jobId}` accepts the permanent GUID **or** the mutable `activityId` (mirroring the
+dashboard's bookmark redirect). Unknown jobs return `404` with `{ "error" }`.
+
+### Per-job — `/api/jobs/{jobId}/…`
+
+| Route | Returns |
+| --- | --- |
+| `GET …/status` | Identity + `maxParallelism`/paused/started + slice-state counts (`missing/queued/running/completed/failed/deadLettered/dependencyBlocked`) + queue counts. |
+| `GET …/slices` | Materialized slice states **with lease fields** (`leaseOwner`, `leaseExpiresAtUtc`, `leaseExpired`, `attempt`, `lastError*`). Filters: `state`, `from`, `to`, `take`. |
+| `GET …/attempts` | Recent slice attempts (incl. in-flight `Started` rows with no `completedAtUtc`). Optional exact slice via `start`/`end`; `take`. |
+| `GET …/events` | Slice-state event timeline. Optional exact slice via `start`/`end`; `take`. |
+| `GET …/logs` | Operational logs. Filters: `level`, `category`, `from`, `to`, `take`. |
+| `GET …/queue` | Work-queue items for the job incl. `lockedBy`/`lockedUntilUtc`. |
+| `GET …/history` | Catalog version history **with a computed JSON diff** per version (e.g. a `maxParallelism` change). |
+| `GET …/throughput` | Succeeded-completion series bucketed over `[from, to)` + a throughput `sample`. Params: `from`, `to`, `bucket`. |
+| `GET …/dependencies` | Declared upstreams (resolved) + a live-evaluated sample of `DependencyBlocked` slices with their missing upstream slices. |
+
+### Cross-job / global — `/api/diagnostics/…`
+
+| Route | Returns |
+| --- | --- |
+| `GET …/worker-pool` | Worker-pool snapshot (same shape as `GET /status/health.workerPool`): in-flight workers, queued/leased/**expired-lease** counts, saturation, cycle counters. |
+| `GET …/running-slices` | **All** currently `Running` slices (optionally `jobId`) with lease owner/expiry, **oldest first** — the fingerprint of a stalled, lease-pinned job. |
+| `GET …/throughput` | Global completion series; `groupBy=job` splits each bucket per job ("is the whole app stalled or just one job?"). |
+| `GET …/queue` | Queue status summary (`queued/leased/completed/deadLettered/expiredLease`). |
+| `GET …/logs` | Operational logs across all jobs. Filters: `jobId`, `level`, `category`, `from`, `to`, `take`. |
+| `GET …/failures` | Recent failed/dead-lettered slices + persisted failure-summary runs. |
+| `GET …/audit` | System audit trail (rerun planned/executed, lifecycle, …). Filters: `subjectType`, `subjectId`, `action`, `from`, `to`. |
+| `GET …/reruns` | Rerun-batch listing (`jobId` filter); `?batchId=` returns one batch with its slices. |
+| `GET …/repairs` | Repair-batch listing (`jobId` filter); `?batchId=` returns that batch's repair slices. |
+
+### Examples
+
+```powershell
+$base = 'http://127.0.0.1:5057'
+
+# Is the whole app stalled, or just one job? Compare global vs. per-job throughput.
+Invoke-RestMethod "$base/api/diagnostics/throughput?bucket=30m&groupBy=job" |
+    Select-Object -Expand buckets
+
+# Find slices pinned by hung leases (oldest first) - the stall fingerprint.
+Invoke-RestMethod "$base/api/diagnostics/running-slices" |
+    Select-Object -Expand runningSlices |
+    Format-Table jobId, leaseOwner, leaseExpired, updatedAtUtc
+
+# Per-job status, lease-bearing slices, and the catalog diff that changed maxParallelism.
+Invoke-RestMethod "$base/api/jobs/SampleAnalytics.BuildEcu5MinProfile/status"
+Invoke-RestMethod "$base/api/jobs/SampleAnalytics.BuildEcu5MinProfile/slices?state=Running"
+Invoke-RestMethod "$base/api/jobs/SampleAnalytics.BuildEcu5MinProfile/history" |
+    Select-Object -Expand history
 ```
 
 ## Related

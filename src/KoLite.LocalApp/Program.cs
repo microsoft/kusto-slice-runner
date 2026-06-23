@@ -35,6 +35,7 @@ namespace KoLite.LocalApp
             builder.Services.AddSingleton<KoLiteSqliteMigrator>();
             builder.Services.AddScoped<SqliteJobCatalogRepository>();
             builder.Services.AddScoped<SqliteOperationalReadModelRepository>();
+            builder.Services.AddScoped<SqliteDiagnosticsReadModelRepository>();
             builder.Services.AddScoped<SqliteWorkQueueRepository>();
             builder.Services.AddScoped<SqliteSliceStateRepository>();
             builder.Services.AddScoped<SqliteJobLifecycleService>();
@@ -254,6 +255,8 @@ namespace KoLite.LocalApp
             });
 
             LocalCatalogApi.Map(app);
+
+            LocalDiagnosticsApi.Map(app);
 
             app.MapRazorPages();
 
