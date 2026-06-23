@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Net;
 using System.Text.Json;
 using KoLite.Local.Core.Orchestration;
+using KoLite.Local.Core.Throttling;
 using KoLite.Local.Core.Time;
 using KoLite.Local.Kusto.Execution;
 using KoLite.Local.Sqlite.Catalog;
@@ -15,6 +16,7 @@ using KoLite.Local.Sqlite.Queue;
 using KoLite.Local.Sqlite.Repair;
 using KoLite.Local.Sqlite.Rerun;
 using KoLite.Local.Sqlite.State;
+using KoLite.Local.Sqlite.Throttling;
 using KoLite.LocalApp.Api;
 using KoLite.LocalApp.Ui;
 using KoLite.LocalApp.Updates;
@@ -39,6 +41,10 @@ namespace KoLite.LocalApp
             builder.Services.AddScoped<SqliteWorkQueueRepository>();
             builder.Services.AddScoped<SqliteSliceStateRepository>();
             builder.Services.AddScoped<SqliteJobLifecycleService>();
+            builder.Services.AddSingleton<SqliteIngestionThrottleRepository>();
+            builder.Services.AddSingleton<IngestionThrottleObserver>();
+            builder.Services.AddSingleton(_ => ResolveThrottleAdvisorOptions(builder.Configuration));
+            builder.Services.AddScoped<SqliteThrottleAdvisorReadModel>();
             builder.Services.AddScoped<SqliteRerunService>();
             builder.Services.AddScoped<SqliteRepairService>();
             builder.Services.AddScoped<DashboardPageQuery>();
@@ -286,6 +292,29 @@ namespace KoLite.LocalApp
                 ManagedIdentityClientId = configuration["KoLite:Kusto:ManagedIdentityClientId"]
             };
         }
+
+        // Binds KoLite:Throttling:* to the advisory options. Every value is optional and falls back to
+        // the safe defaults; invalid or non-positive numbers are ignored rather than rejected.
+        static ThrottleAdvisorOptions ResolveThrottleAdvisorOptions(IConfiguration configuration)
+        {
+            var defaults = ThrottleAdvisorOptions.Default;
+            return new ThrottleAdvisorOptions
+            {
+                Enabled = bool.TryParse(configuration["KoLite:Throttling:Enabled"], out var enabled) ? enabled : defaults.Enabled,
+                Window = TimeSpan.FromMinutes(ReadPositiveDouble(configuration, "KoLite:Throttling:WindowMinutes", defaults.Window.TotalMinutes)),
+                MinThrottledSlices = ReadPositiveInt(configuration, "KoLite:Throttling:MinThrottledSlices", defaults.MinThrottledSlices),
+                DurationLookback = TimeSpan.FromHours(ReadPositiveDouble(configuration, "KoLite:Throttling:DurationLookbackHours", defaults.DurationLookback.TotalHours)),
+                MinDurationSamples = ReadPositiveInt(configuration, "KoLite:Throttling:MinDurationSamples", defaults.MinDurationSamples),
+                DurationPercentile = Math.Clamp(ReadPositiveDouble(configuration, "KoLite:Throttling:DurationPercentile", defaults.DurationPercentile), 0.01, 1.0),
+                KeepUpSafetyFactor = ReadPositiveDouble(configuration, "KoLite:Throttling:KeepUpSafetyFactor", defaults.KeepUpSafetyFactor)
+            };
+        }
+
+        private static int ReadPositiveInt(IConfiguration configuration, string key, int defaultValue) =>
+            int.TryParse(configuration[key], NumberStyles.Integer, CultureInfo.InvariantCulture, out var value) && value >= 1 ? value : defaultValue;
+
+        private static double ReadPositiveDouble(IConfiguration configuration, string key, double defaultValue) =>
+            double.TryParse(configuration[key], NumberStyles.Float, CultureInfo.InvariantCulture, out var value) && value > 0 ? value : defaultValue;
     }
 
     public sealed record LocalBackgroundSchedulerOptions(bool Enabled, TimeSpan TickInterval, bool LogEveryPass)
@@ -581,10 +610,14 @@ namespace KoLite.LocalApp
     internal sealed class LoggingLocalWorkerProgressSink : ILocalWorkerProgressSink
     {
         private readonly ILogger<LoggingLocalWorkerProgressSink> logger;
+        private readonly IngestionThrottleObserver throttleObserver;
 
-        public LoggingLocalWorkerProgressSink(ILogger<LoggingLocalWorkerProgressSink> logger)
+        public LoggingLocalWorkerProgressSink(
+            ILogger<LoggingLocalWorkerProgressSink> logger,
+            IngestionThrottleObserver throttleObserver)
         {
             this.logger = logger;
+            this.throttleObserver = throttleObserver;
         }
 
         public void RecordStarted(LocalWorkerProgressEvent progress)
@@ -599,6 +632,8 @@ namespace KoLite.LocalApp
 
         public void RecordFinished(LocalWorkerProgressEvent progress)
         {
+            TryRecordIngestionThrottle(progress);
+
             if (progress.Status == LocalWorkerProgressStatus.Succeeded)
             {
                 logger.LogInformation(
@@ -634,6 +669,22 @@ namespace KoLite.LocalApp
                 progress.Status,
                 progress.ErrorCode,
                 progress.ErrorMessage);
+        }
+
+        // Records an observation when a slice attempt failed specifically because of Kusto
+        // ingestion-capacity throttling (429, CapacityPolicy/Ingestion). Best-effort and isolated:
+        // a recording failure is logged but never propagated, so detection cannot destabilize the
+        // worker. The observer ignores non-throttle outcomes and events without a resolved cluster.
+        private void TryRecordIngestionThrottle(LocalWorkerProgressEvent progress)
+        {
+            try
+            {
+                throttleObserver.Observe(progress);
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Failed to record ingestion throttle observation for job {JobId}.", progress.JobId);
+            }
         }
     }
 

@@ -13,6 +13,7 @@ using KoLite.Local.Sqlite.Observability;
 using KoLite.Local.Sqlite.Orchestration;
 using KoLite.Local.Sqlite.Queue;
 using KoLite.Local.Sqlite.State;
+using KoLite.Local.Sqlite.Throttling;
 using KoLite.LocalApp.Ui;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
@@ -1805,6 +1806,73 @@ namespace KoLite.LocalApp.Tests
             catalog.Create(Schedule("job.paused", "PausedFunction", isPaused: true));
             state.Append("paused-s0", JobId("job.paused"), At(0), At(5), DurableSliceStatus.Queued, expectedVersion: 0);
             queue.Enqueue(JobId("job.paused"), At(0), At(5), "paused-queue-s0", At(0));
+        }
+
+        [Fact]
+        public async Task Throttling_advisor_surfaces_ranks_and_applies_a_recommendation()
+        {
+            var jobId = SeedThrottledJob("job.throttled", maxParallelism: 8, durationMinutes: 12);
+            using var client = factory.CreateClient();
+
+            var page = await client.GetStringAsync("/throttling");
+            Assert.Contains("job.throttled", page);
+            Assert.Contains("Reduce to 4", page); // keep-up floor = ceil(12/5 * 1.5) = 4
+
+            var dashboard = await client.GetStringAsync("/");
+            Assert.Contains("under sustained ingestion throttling", dashboard);
+
+            // Guardrail: a reduction below the keep-up floor (4) is rejected and the job is unchanged.
+            var rejectToken = await ReadFormToken(client, "/throttling");
+            using var rejected = await PostFormValues(client, "/throttling/apply", rejectToken, new[]
+            {
+                new KeyValuePair<string, string>("jobId", jobId),
+                new KeyValuePair<string, string>("expectedVersion", "1"),
+                new KeyValuePair<string, string>("newMaxParallelism", "2")
+            });
+            rejected.EnsureSuccessStatusCode();
+            Assert.Equal(8, new SqliteJobCatalogRepository(sqlite).Get(jobId)!.Definition.MaxParallelism);
+
+            // Applying the recommended floor succeeds and reduces maxParallelism.
+            var applyToken = await ReadFormToken(client, "/throttling");
+            using var applied = await PostFormValues(client, "/throttling/apply", applyToken, new[]
+            {
+                new KeyValuePair<string, string>("jobId", jobId),
+                new KeyValuePair<string, string>("expectedVersion", "1"),
+                new KeyValuePair<string, string>("newMaxParallelism", "4")
+            });
+            applied.EnsureSuccessStatusCode();
+            Assert.Equal(4, new SqliteJobCatalogRepository(sqlite).Get(jobId)!.Definition.MaxParallelism);
+        }
+
+        private string SeedThrottledJob(string activityId, int maxParallelism, int durationMinutes)
+        {
+            const string cluster = "https://kolite-example.invalid";
+            var catalog = new SqliteJobCatalogRepository(sqlite);
+            var state = new SqliteSliceStateRepository(sqlite);
+            var readModels = new SqliteOperationalReadModelRepository(sqlite);
+            var throttle = new SqliteIngestionThrottleRepository(sqlite);
+
+            var jobId = catalog.Create(Schedule(activityId, "ThrottleFn", isPaused: false, maxParallelism: maxParallelism)).JobId;
+            var now = DateTimeOffset.UtcNow;
+
+            // Six successful slice durations within the last hour give a stable p75 duration estimate.
+            for (var i = 0; i < 6; i++)
+            {
+                var sliceStart = new DateTimeOffset(2026, 6, 23, 0, 0, 0, TimeSpan.Zero).AddMinutes(i * 5);
+                var sliceEnd = sliceStart.AddMinutes(5);
+                state.Append($"{jobId}-st-{i}", jobId, sliceStart, sliceEnd, DurableSliceStatus.Completed, expectedVersion: 0);
+                var startedAt = now.AddMinutes(-40 + i);
+                readModels.RecordAttempt($"{jobId}-att-{i}", jobId, sliceStart, sliceEnd, 1, "Succeeded", "worker", startedAt, startedAt.AddMinutes(durationMinutes));
+            }
+
+            // Three distinct throttled slices within the window mark the cluster as sustained.
+            foreach (var minute in new[] { 1, 2, 3 })
+            {
+                var sliceStart = new DateTimeOffset(2026, 6, 23, 6, 0, 0, TimeSpan.Zero).AddMinutes(minute * 5);
+                throttle.Record(new IngestionThrottleObservation(jobId, cluster, sliceStart, sliceStart.AddMinutes(5), Attempt: 2, ReportedCapacity: 18, now.AddMinutes(-minute)));
+            }
+
+            return jobId;
         }
 
         private async Task<FormToken> ReadFormToken(HttpClient client, string path)

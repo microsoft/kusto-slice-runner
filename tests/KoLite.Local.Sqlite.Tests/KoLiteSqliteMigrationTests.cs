@@ -100,10 +100,10 @@ namespace KoLite.Local.Sqlite.Tests
 
             using (var connection = factory.OpenConnection())
             {
-                Assert.Equal(1, QueryInt(connection, "SELECT COUNT(*) FROM schema_migrations;"));
+                Assert.Equal(KoLiteSqliteMigrator.LatestVersion, QueryInt(connection, "SELECT COUNT(*) FROM schema_migrations;"));
                 Assert.Equal("baseline-guid-schema", QueryString(connection, "SELECT name FROM schema_migrations WHERE version = 1;"));
                 Assert.Equal(BaselineSchemaChecksum, QueryString(connection, "SELECT checksum FROM schema_migrations WHERE version = 1;"));
-                Assert.Equal("1", QueryString(connection, "SELECT value FROM app_metadata WHERE key = 'schema_version';"));
+                Assert.Equal(KoLiteSqliteMigrator.LatestVersion.ToString(), QueryString(connection, "SELECT value FROM app_metadata WHERE key = 'schema_version';"));
                 Assert.Equal("my.job", QueryString(connection, "SELECT activity_id FROM job_definitions WHERE job_id = 'guid1';"));
             }
 
@@ -111,7 +111,7 @@ namespace KoLite.Local.Sqlite.Tests
             migrator.Migrate();
             using (var connection = factory.OpenConnection())
             {
-                Assert.Equal(1, QueryInt(connection, "SELECT COUNT(*) FROM schema_migrations;"));
+                Assert.Equal(KoLiteSqliteMigrator.LatestVersion, QueryInt(connection, "SELECT COUNT(*) FROM schema_migrations;"));
             }
         }
 
@@ -161,6 +161,7 @@ namespace KoLite.Local.Sqlite.Tests
                 "purge_runs",
                 "job_lifecycle_events",
                 "system_audit",
+                "ingestion_throttle_observations",
             };
 
             foreach (var table in expectedTables)
@@ -190,6 +191,8 @@ namespace KoLite.Local.Sqlite.Tests
                 "ix_purge_runs_job_requested",
                 "ix_job_lifecycle_events_job_recorded",
                 "ix_system_audit_subject_recorded",
+                "ix_ingestion_throttle_cluster_observed",
+                "ix_ingestion_throttle_job",
             };
 
             foreach (var index in expectedIndexes)

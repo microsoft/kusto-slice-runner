@@ -1,0 +1,115 @@
+@page "/throttling"
+@using KoLite.Local.Core.Throttling
+@using KoLite.LocalApp.Ui
+@model KoLite.LocalApp.Pages.Throttling.IndexModel
+@{
+    ViewData["Title"] = "Throttling advisor";
+
+    static string StatusBadge(ParallelismRecommendationStatus status) => status switch
+    {
+        ParallelismRecommendationStatus.Recommended => "badge-info",
+        ParallelismRecommendationStatus.AtOrBelowKeepUpFloor => "badge-warning",
+        _ => "badge-neutral"
+    };
+
+    static string StatusLabel(ParallelismRecommendationStatus status) => status switch
+    {
+        ParallelismRecommendationStatus.Recommended => "Over-provisioned",
+        ParallelismRecommendationStatus.AtOrBelowKeepUpFloor => "At keep-up floor",
+        _ => "Insufficient data"
+    };
+}
+
+<div class="page-heading">
+    <div>
+        <h1>Ingestion throttling advisor</h1>
+        <p class="muted">Clusters where KO Lite slices are being throttled by the Kusto ingestion capacity policy (429, CapacityPolicy/Ingestion), with suggested per-job maxParallelism reductions.</p>
+    </div>
+    <div class="button-row">
+        <a class="btn" href="/throttling">Refresh</a>
+    </div>
+</div>
+
+@if (!string.IsNullOrEmpty(Model.StatusMessage))
+{
+    <div class="alert @(Model.StatusIsError ? "danger" : "success")" role="status">@Model.StatusMessage</div>
+}
+
+@if (Model.Advisories.Count == 0)
+{
+    <div class="card">
+        <p class="empty">No clusters are currently under sustained ingestion throttling. This page lists recommendations only while throttling is active.</p>
+    </div>
+}
+else
+{
+    <div class="alert warning" role="note">
+        Ingestion capacity is shared across every job (and every other tool) hitting a cluster, so the throttled slice is not necessarily the biggest pressure source &mdash; and trimming KO Lite may not clear throttling if external load dominates. Consider the cluster's ingestion <strong>capacity policy</strong> / scaling as well. Reductions below the keep-up floor are blocked so a job can still keep up with real time.
+    </div>
+
+    foreach (var advisory in Model.Advisories)
+    {
+        <div class="card section-block">
+            <div class="card-header">
+                <h3 class="text-truncate" title="@advisory.ClusterUri">@advisory.ClusterUri</h3>
+            </div>
+            <p class="muted">
+                @advisory.ThrottledSliceCount throttled slice(s) (@advisory.ObservationCount observation(s)) in the last @AppFormatting.ApproxDuration(advisory.Window)
+                @if (advisory.LatestReportedCapacity is { } capacity)
+                {
+                    <text>&middot; reported ingestion capacity: <span class="strong">@capacity</span></text>
+                }
+                &middot; latest @AppFormatting.Local(advisory.LatestObservedUtc)
+            </p>
+
+            <div class="table-wrap">
+                <table class="ko-table">
+                    <thead>
+                        <tr>
+                            <th>Job</th>
+                            <th>In&nbsp;flight</th>
+                            <th>Current</th>
+                            <th>Keep-up floor</th>
+                            <th>Slice p75</th>
+                            <th>Slices/day</th>
+                            <th>Headroom</th>
+                            <th>Status</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var rec in advisory.Recommendations)
+                        {
+                            <tr>
+                                <td><a href="/jobs/@Uri.EscapeDataString(rec.JobId)">@rec.ActivityId</a></td>
+                                <td>@rec.InFlightCount</td>
+                                <td>@rec.CurrentMaxParallelism</td>
+                                <td>@(rec.KeepUpFloor?.ToString() ?? "—")</td>
+                                <td>@(rec.ObservedSliceDuration is { } d ? AppFormatting.ApproxDuration(d) : "—")</td>
+                                <td>@rec.SlicesPerDay.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)</td>
+                                <td>@(rec.Headroom?.ToString() ?? "—")</td>
+                                <td><span class="badge @StatusBadge(rec.Status)">@StatusLabel(rec.Status)</span></td>
+                                <td>
+                                    @if (rec.Status == ParallelismRecommendationStatus.Recommended && rec.RecommendedMaxParallelism is { } target)
+                                    {
+                                        <form method="post" action="/throttling/apply" class="inline-form">
+                                            @Html.AntiForgeryToken()
+                                            <input type="hidden" name="jobId" value="@rec.JobId" />
+                                            <input type="hidden" name="expectedVersion" value="@rec.CatalogVersion" />
+                                            <input type="hidden" name="newMaxParallelism" value="@target" />
+                                            <button class="btn" type="submit">Reduce to @target</button>
+                                        </form>
+                                    }
+                                    else
+                                    {
+                                        <span class="muted">No change</span>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    }
+}

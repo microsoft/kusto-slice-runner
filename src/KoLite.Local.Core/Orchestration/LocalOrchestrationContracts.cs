@@ -88,7 +88,8 @@ namespace KoLite.Local.Core.Orchestration
         string? ErrorCode = null,
         string? ErrorMessage = null,
         bool IsRetryable = false,
-        bool DeadLettered = false);
+        bool DeadLettered = false,
+        string? ClusterUri = null);
 
     public interface ILocalWorkerProgressSink
     {

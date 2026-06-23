@@ -23,6 +23,7 @@ If you're familiar with [scheduled Kusto jobs](https://learn.microsoft.com/kusto
 - Schedules due time slices from enabled jobs into a local SQLite queue.
 - Executes live Kusto `.set-or-append` commands for each claimed slice.
 - Tracks queue state, slice history, attempts, logs, failures, and success-rate charts.
+- Detects Kusto ingestion-capacity throttling (429) and recommends per-job `maxParallelism` reductions that never starve a job below the parallelism it needs to keep up; operators apply them explicitly.
 - Plans historical reruns and local state repair while leaving destructive Kusto cleanup to the operator.
 - Exposes a localhost-only JSON API so a same-machine agent can read jobs and create/update schedules through the same validated import path the dashboard uses.
 - Periodically checks GitHub (via the `gh` CLI) for newer KO Lite commits and shows an update badge in the top bar.
