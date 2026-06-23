@@ -20,8 +20,36 @@ else
             <a class="btn" href="/jobs/@Uri.EscapeDataString(Model.Data.Job.JobId)">Back to details</a>
         </div>
     </div>
+    @if (Model.StatusMessage is not null)
+    {
+        <div class="alert success">@Model.StatusMessage</div>
+    }
+    @if (Model.ErrorMessage is not null)
+    {
+        <div class="alert danger">@Model.ErrorMessage</div>
+    }
+    @if (Model.Data.IsOrphaned)
+    {
+        <section class="card">
+            <div class="card-header"><h2>Orphaned lease</h2><span class="badge badge-warning">Stalled</span></div>
+            <p class="muted">This slice is still held by a lease whose lock has expired without recording a terminal result. A previous attempt faulted or its process stopped after the lease was taken. The output may already be in Kusto; re-running is idempotent (ingest-by) and will not duplicate it.</p>
+            @if (Model.Data.Job.IsEnabled)
+            {
+                <form method="post" action="/jobs/@Uri.EscapeDataString(Model.Data.Job.JobId)/slices?handler=Recover">
+                    @Html.AntiForgeryToken()
+                    <input type="hidden" name="start" value="@AppFormatting.Iso(Model.Data.SliceStartUtc)" />
+                    <input type="hidden" name="end" value="@AppFormatting.Iso(Model.Data.SliceEndUtc)" />
+                    <button class="btn primary" type="submit">Recover (re-queue) this slice</button>
+                </form>
+            }
+            else
+            {
+                <div class="alert warning">The job is paused or deleted, so this orphaned slice will not recover automatically. Resume the job to let it recover on the next dispatch.</div>
+            }
+        </section>
+    }
     <section class="summary-grid">
-        <div class="stat-card"><span class="stat-label">Status</span><strong>@(Model.Data.Status?.Status ?? "Missing")</strong></div>
+        <div class="stat-card"><span class="stat-label">Status</span><strong>@(Model.Data.IsOrphaned ? "Stalled (orphaned lease)" : (Model.Data.Status?.Status ?? "Missing"))</strong></div>
         <div class="stat-card"><span class="stat-label">Attempt</span><strong>@(Model.Data.Status?.Attempt ?? 0)</strong></div>
         <div class="stat-card"><span class="stat-label">Queue rows</span><strong>@Model.Data.QueueItems.Count</strong></div>
         <div class="stat-card"><span class="stat-label">Attempts</span><strong>@Model.Data.Attempts.Count</strong></div>

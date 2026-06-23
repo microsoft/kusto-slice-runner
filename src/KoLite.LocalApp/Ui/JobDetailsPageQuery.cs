@@ -56,7 +56,8 @@ namespace KoLite.LocalApp.Ui
         IReadOnlyList<DurableWorkItem> QueueItems,
         IReadOnlyList<SliceAttemptReadout> Attempts,
         IReadOnlyList<OperationalLogReadout> Logs,
-        IReadOnlyList<SliceEventReadout> Events);
+        IReadOnlyList<SliceEventReadout> Events,
+        bool IsOrphaned);
 
     public sealed class JobDetailsPageQuery
     {
@@ -160,15 +161,20 @@ namespace KoLite.LocalApp.Ui
             var status = readModels.GetSliceStatus(jobId)
                 .FirstOrDefault(s => s.SliceStartUtc == sliceStartUtc && s.SliceEndUtc == sliceEndUtc);
 
+            var now = clock.UtcNow;
+            var queueItems = queue.List(jobId).Where(q => q.SliceStartUtc == sliceStartUtc && q.SliceEndUtc == sliceEndUtc).ToList();
+            var isOrphaned = queueItems.Any(q => IsOrphanedLease(q, now));
+
             return new SliceDetailsPageData(
                 job,
                 sliceStartUtc,
                 sliceEndUtc,
                 status,
-                queue.List(jobId).Where(q => q.SliceStartUtc == sliceStartUtc && q.SliceEndUtc == sliceEndUtc).ToList(),
+                queueItems,
                 operationalDetails.GetAttempts(jobId, sliceStartUtc, sliceEndUtc, 100),
                 operationalDetails.GetLogs(jobId, sliceStartUtc, sliceEndUtc, 100),
-                operationalDetails.GetEvents(jobId, sliceStartUtc, sliceEndUtc, 100));
+                operationalDetails.GetEvents(jobId, sliceStartUtc, sliceEndUtc, 100),
+                isOrphaned);
         }
 
         private static SliceHistoryBuildResult BuildSliceHistory(JobDefinition definition, IReadOnlyList<SliceStatusReadout> statuses, IReadOnlyList<DurableWorkItem> queueItems, DateTimeOffset? fromUtc, DateTimeOffset? toUtc, int cellLimit)
@@ -318,6 +324,10 @@ namespace KoLite.LocalApp.Ui
             {
                 lines.Add(new SliceHistoryTooltipLine("Queue", AppFormatting.StatusLabel(activeQueueItem.State.ToString())));
                 lines.Add(new SliceHistoryTooltipLine("Available", AppFormatting.Iso(activeQueueItem.AvailableAtUtc)));
+                if (activeQueueItem.LockedUntilUtc is { } lockedUntil)
+                {
+                    lines.Add(new SliceHistoryTooltipLine("Lease until", AppFormatting.Iso(lockedUntil)));
+                }
                 lines.Add(new SliceHistoryTooltipLine(
                     "Queue attempts",
                     $"{activeQueueItem.Attempts.ToString(CultureInfo.InvariantCulture)}/{activeQueueItem.MaxAttempts.ToString(CultureInfo.InvariantCulture)}"));
@@ -340,6 +350,14 @@ namespace KoLite.LocalApp.Ui
         private static int DisplayAttempt(SliceStatusReadout? status, DurableWorkItem? activeQueueItem) =>
             Math.Max(Math.Max(status?.Attempt ?? 0, status?.SuccessfulAttempt ?? 0), activeQueueItem?.Attempts ?? 0);
 
+        // A queue lease is "orphaned" once it is still Leased but its lock has already expired: the prior
+        // worker neither completed nor released it (e.g. it faulted or the process was killed). Such a
+        // slice renders distinctly from a healthy Running slice and offers an operator recovery action.
+        private static bool IsOrphanedLease(DurableWorkItem? activeQueueItem, DateTimeOffset now) =>
+            activeQueueItem is { State: DurableWorkQueueState.Leased }
+            && activeQueueItem.LockedUntilUtc is { } lockedUntil
+            && lockedUntil.ToUniversalTime() <= now.ToUniversalTime();
+
         private static string VisualState(SliceStatusReadout? status, DurableWorkItem? activeQueueItem, JobDefinition definition, DateTimeOffset sliceStart, DateTimeOffset sliceEnd, DateTimeOffset now)
         {
             var durableState = status?.Status;
@@ -360,7 +378,7 @@ namespace KoLite.LocalApp.Ui
 
             if (string.Equals(durableState, "Running", StringComparison.Ordinal) || activeQueueItem?.State == DurableWorkQueueState.Leased)
             {
-                return "Running";
+                return IsOrphanedLease(activeQueueItem, now) ? "Stalled" : "Running";
             }
 
             if (activeQueueItem?.State == DurableWorkQueueState.Queued)

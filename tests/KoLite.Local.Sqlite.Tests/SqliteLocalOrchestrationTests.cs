@@ -476,6 +476,75 @@ namespace KoLite.Local.Sqlite.Tests
             Assert.Equal(DurableSliceStatus.Completed, state.Get(JobId("job.complete.crash"), At(0), At(5)).Status);
         }
 
+        [Fact]
+        public async Task Worker_releases_lease_and_retries_when_executor_faults_after_starting()
+        {
+            catalog.Create(Schedule("job.fault", maxParallelism: 1));
+            Scheduler(maxSlicesPerTick: 1).Tick();
+            var faulting = new ThrowingExecutor(new TimeoutException("kusto stalled after append"));
+            var worker = Worker(faulting, new LocalWorkerOptions(WorkerId: "fault-worker", VisibilityTimeout: TimeSpan.FromMinutes(5)));
+
+            var faulted = await worker.RunOnceAsync();
+
+            // The attempt is released and retried instead of leaving an orphaned Leased/Running row.
+            Assert.True(faulted.Executed);
+            Assert.False(faulted.Succeeded);
+            Assert.False(faulted.DeadLettered);
+            Assert.Equal(1, faulting.StartedCount);
+            var releasedItem = Assert.Single(queue.List(JobId("job.fault")));
+            Assert.Equal(DurableWorkQueueState.Queued, releasedItem.State);
+            Assert.Equal(1, releasedItem.Attempts);
+            Assert.Equal(DurableSliceStatus.Failed, state.Get(JobId("job.fault"), At(0), At(5)).Status);
+
+            clock.Advance(TimeSpan.FromMinutes(2));
+            var recovery = new RecordingExecutor();
+            var freshWorker = Worker(recovery, new LocalWorkerOptions(WorkerId: "fresh-worker", VisibilityTimeout: TimeSpan.FromMinutes(5)));
+            var recovered = await freshWorker.RunOnceAsync();
+
+            Assert.True(recovered.Succeeded);
+            Assert.Single(recovery.Requests);
+            var completedItem = Assert.Single(queue.List(JobId("job.fault")));
+            Assert.Equal(2, completedItem.Attempts);
+            Assert.Equal(DurableWorkQueueState.Completed, completedItem.State);
+            Assert.Equal(DurableSliceStatus.Completed, state.Get(JobId("job.fault"), At(0), At(5)).Status);
+        }
+
+        [Fact]
+        public async Task Worker_times_out_and_releases_lease_when_execution_exceeds_deadline()
+        {
+            catalog.Create(Schedule("job.timeout", maxParallelism: 1, queryTimeout: "00:00:00.2500000"));
+            Scheduler(maxSlicesPerTick: 1).Tick();
+            var hanging = new CancellationAwareExecutor();
+            var worker = Worker(hanging, new LocalWorkerOptions(WorkerId: "timeout-worker", VisibilityTimeout: TimeSpan.FromMinutes(5), ClientTimeoutBuffer: TimeSpan.Zero));
+
+            var timedOut = await worker.RunOnceAsync();
+
+            Assert.True(timedOut.Executed);
+            Assert.False(timedOut.Succeeded);
+            Assert.Equal(1, hanging.StartedCount);
+            var releasedItem = Assert.Single(queue.List(JobId("job.timeout")));
+            Assert.Equal(DurableWorkQueueState.Queued, releasedItem.State);
+            Assert.Equal(DurableSliceStatus.Failed, state.Get(JobId("job.timeout"), At(0), At(5)).Status);
+        }
+
+        [Fact]
+        public async Task Worker_rethrows_and_keeps_lease_when_host_cancellation_is_requested()
+        {
+            catalog.Create(Schedule("job.cancel", maxParallelism: 1));
+            Scheduler(maxSlicesPerTick: 1).Tick();
+            var hanging = new CancellationAwareExecutor();
+            var worker = Worker(hanging, new LocalWorkerOptions(WorkerId: "cancel-worker", VisibilityTimeout: TimeSpan.FromMinutes(5)));
+            using var cts = new CancellationTokenSource();
+            cts.Cancel();
+
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => worker.RunOnceAsync(cts.Token));
+
+            // Emergency cancellation records no terminal state; the lease is left for later recovery.
+            var leasedItem = Assert.Single(queue.List(JobId("job.cancel")));
+            Assert.Equal(DurableWorkQueueState.Leased, leasedItem.State);
+            Assert.Equal(DurableSliceStatus.Running, state.Get(JobId("job.cancel"), At(0), At(5)).Status);
+        }
+
         private SqliteLocalScheduler Scheduler(int maxSlicesPerTick, IClock? schedulerClock = null) => new(catalog, state, queue, observability, schedulerClock ?? clock, new LocalSchedulerOptions(MaxSlicesPerTick: maxSlicesPerTick));
         private SqliteLocalWorker Worker(ILocalSliceOutputExecutor executor, LocalWorkerOptions? options = null, ILocalWorkerProgressSink? progressSink = null) => new(catalog, state, queue, observability, executor, clock, options, progressSink);
 
@@ -513,6 +582,33 @@ namespace KoLite.Local.Sqlite.Tests
             {
                 Requests.Add(slice);
                 return Task.FromResult(results.Count == 0 ? LocalSliceOutputResult.Success($"test://{slice.ToKey().Value}") : results.Dequeue());
+            }
+        }
+
+        // Models an executor whose call faults with an exception the executor layer does not classify
+        // (e.g. the Kusto append landed but the client then threw). The worker must release and retry.
+        private sealed class ThrowingExecutor : ILocalSliceOutputExecutor
+        {
+            private readonly Exception error;
+            public ThrowingExecutor(Exception error) => this.error = error;
+            public int StartedCount { get; private set; }
+            public Task<LocalSliceOutputResult> ExecuteAsync(JobDefinition job, SliceRange slice, CancellationToken cancellationToken = default)
+            {
+                StartedCount++;
+                throw error;
+            }
+        }
+
+        // Models a hung Kusto call that honors cancellation: it never returns until the (linked)
+        // execution-deadline or host token cancels it, surfacing as an OperationCanceledException.
+        private sealed class CancellationAwareExecutor : ILocalSliceOutputExecutor
+        {
+            public int StartedCount { get; private set; }
+            public async Task<LocalSliceOutputResult> ExecuteAsync(JobDefinition job, SliceRange slice, CancellationToken cancellationToken = default)
+            {
+                StartedCount++;
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
+                return LocalSliceOutputResult.Success($"test://{slice.ToKey().Value}");
             }
         }
 

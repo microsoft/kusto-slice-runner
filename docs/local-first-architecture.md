@@ -41,6 +41,8 @@ SQLite files are local runtime state and are not source artifacts. The main data
 
 The app uses local queue leases sized from the larger of worker visibility timeout and job `queryTimeout`, plus a fixed buffer. This prevents reclaiming work while a valid Kusto request is still running, but crash recovery can take longer for jobs with long query timeouts.
 
+Each execution attempt has a client-side deadline (job `queryTimeout` plus a small buffer) kept below the lease duration, so a hung call is cancelled and released rather than holding the lease open. An attempt that faults or times out abandons and retries its queue item immediately, and expired (orphaned) leases are reclaimed on the next dispatch cycle once past a short grace margin — not only when the worker pool is idle. Re-execution is idempotent (`ingest-by`), so recovery never duplicates output. Orphaned leases on paused or soft-deleted jobs are not auto-recovered (consistent with pause semantics); they surface as **Stalled** in the window history and can be recovered from the slice detail page once the job is enabled. See [operations runbook](operations-runbook.md#orphaned-leases-and-recovery).
+
 ## Safety boundaries
 
 - User-facing fake/offline execution is not registered in the local app.

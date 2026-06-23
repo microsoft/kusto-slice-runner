@@ -116,7 +116,7 @@ namespace KoLite.Local.Sqlite.Orchestration
         {
             var claimStartedAtUtc = clock.UtcNow;
             var item = includeExpiredLeases
-                ? queue.Claim(options.QueueName, options.WorkerId, options.EffectiveVisibilityTimeout, claimStartedAtUtc, options.EnforceJobParallelism)
+                ? queue.Claim(options.QueueName, options.WorkerId, options.EffectiveVisibilityTimeout, claimStartedAtUtc, options.EnforceJobParallelism, options.EffectiveOrphanReclaimGrace)
                 : queue.ClaimQueued(options.QueueName, options.WorkerId, options.EffectiveVisibilityTimeout, claimStartedAtUtc, options.EnforceJobParallelism);
             if (item is null) return new LocalWorkerRunResult(false, null, false, false, false, null);
 
@@ -164,7 +164,50 @@ namespace KoLite.Local.Sqlite.Orchestration
             observability.RecordAttempt(AttemptId(item), item.JobId, item.SliceStartUtc, item.SliceEndUtc, item.Attempts, "Started", options.WorkerId, startedAtUtc, null);
             observability.RecordLog("Information", "Slice dispatched.", "worker", item.JobId, item.SliceStartUtc, item.SliceEndUtc);
             progressSink.RecordStarted(progress);
-            var result = await executor.ExecuteAsync(jobRecord.Definition, slice, cancellationToken).ConfigureAwait(false);
+
+            var executionTimeout = options.EffectiveExecutionTimeout(jobRecord.Definition);
+            LocalSliceOutputResult result;
+            using (var executionCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+            {
+                if (executionTimeout < TimeSpan.MaxValue)
+                {
+                    executionCts.CancelAfter(executionTimeout);
+                }
+
+                try
+                {
+                    result = await executor.ExecuteAsync(jobRecord.Definition, slice, executionCts.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    // Host shutdown / emergency cancellation: leave the lease in place and record no
+                    // terminal state. Normal expired-lease recovery picks the slice back up later.
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    // Any other fault (including our own execution-timeout cancellation) happens after
+                    // the Kusto append may have already succeeded, but we cannot confirm it. Release the
+                    // lease immediately and retry instead of leaving an orphaned Leased/Running row; the
+                    // re-run is idempotent (ingest-by), so it never duplicates output.
+                    var faultedAtUtc = clock.UtcNow;
+                    var timedOut = executionCts.IsCancellationRequested;
+                    var code = timedOut ? "WorkerExecutionTimeout" : "WorkerFaulted";
+                    var message = timedOut
+                        ? $"Slice execution exceeded the {executionTimeout} execution timeout."
+                        : ex.Message;
+                    observability.RecordLog(
+                        "Warning",
+                        timedOut ? "Slice execution timed out; releasing the lease for retry." : "Slice execution faulted; releasing the lease for retry.",
+                        "worker",
+                        item.JobId,
+                        item.SliceStartUtc,
+                        item.SliceEndUtc,
+                        JsonSerializer.Serialize(new { code, message }),
+                        ex.ToString());
+                    return FailSlice(item, lease, progress, code, message, isRetryable: true, faultedAtUtc);
+                }
+            }
 
             if (result.Succeeded)
             {
@@ -184,38 +227,45 @@ namespace KoLite.Local.Sqlite.Orchestration
                 return new LocalWorkerRunResult(true, item.QueueItemId, true, completed, false, completed ? null : "Slice lease lost before completion.");
             }
 
-            var reason = string.IsNullOrWhiteSpace(result.ErrorMessage) ? result.ErrorCode ?? "Execution failed." : result.ErrorMessage!;
-            var shouldRetry = result.IsRetryable && item.Attempts < Math.Max(1, options.MaxAttempts);
-            var payloadJson = JsonSerializer.Serialize(new { result.ErrorCode, result.ErrorMessage, result.IsRetryable });
-            var failedAtUtc = clock.UtcNow;
+            return FailSlice(item, lease, progress, result.ErrorCode, result.ErrorMessage, result.IsRetryable, clock.UtcNow);
+        }
+
+        // Records a non-success terminal outcome for the current attempt and releases the queue item.
+        // Shared by the executor-reported failure path and the unhandled-fault/timeout catch so both
+        // promptly Abandon (retry) or DeadLetter the slice instead of leaving the lease to expire.
+        private LocalWorkerRunResult FailSlice(DurableWorkItem item, DurableSliceState lease, LocalWorkerProgressEvent progress, string? errorCode, string? errorMessage, bool isRetryable, DateTimeOffset failedAtUtc)
+        {
+            var reason = string.IsNullOrWhiteSpace(errorMessage) ? errorCode ?? "Execution failed." : errorMessage!;
+            var shouldRetry = isRetryable && item.Attempts < Math.Max(1, options.MaxAttempts);
+            var payloadJson = JsonSerializer.Serialize(new { ErrorCode = errorCode, ErrorMessage = errorMessage, IsRetryable = isRetryable });
             if (shouldRetry)
             {
                 state.FailLease($"fail|{item.QueueItemId}|{item.Attempts}", item.JobId, item.SliceStartUtc, item.SliceEndUtc, options.WorkerId, lease.LeaseToken!, failedAtUtc, reason, payloadJson);
                 queue.Abandon(item.QueueItemId, options.WorkerId, failedAtUtc + RetryDelay(item.Attempts));
-                observability.RecordAttempt(AttemptId(item), item.JobId, item.SliceStartUtc, item.SliceEndUtc, item.Attempts, "FailedRetryable", options.WorkerId, null, failedAtUtc, result.ErrorCode, result.ErrorMessage);
+                observability.RecordAttempt(AttemptId(item), item.JobId, item.SliceStartUtc, item.SliceEndUtc, item.Attempts, "FailedRetryable", options.WorkerId, null, failedAtUtc, errorCode, errorMessage);
                 observability.RecordLog("Warning", "Slice failed and was scheduled for retry.", "worker", item.JobId, item.SliceStartUtc, item.SliceEndUtc, payloadJson);
                 progressSink.RecordFinished(progress with
                 {
                     Status = LocalWorkerProgressStatus.FailedRetryable,
                     CompletedAtUtc = failedAtUtc,
-                    ErrorCode = result.ErrorCode,
-                    ErrorMessage = result.ErrorMessage,
-                    IsRetryable = result.IsRetryable
+                    ErrorCode = errorCode,
+                    ErrorMessage = errorMessage,
+                    IsRetryable = isRetryable
                 });
                 return new LocalWorkerRunResult(true, item.QueueItemId, true, false, false, reason);
             }
 
             state.DeadLetterLease($"deadletter|{item.QueueItemId}|{item.Attempts}", item.JobId, item.SliceStartUtc, item.SliceEndUtc, options.WorkerId, lease.LeaseToken!, failedAtUtc, reason, payloadJson);
             queue.DeadLetter(item.QueueItemId, options.WorkerId);
-            observability.RecordAttempt(AttemptId(item), item.JobId, item.SliceStartUtc, item.SliceEndUtc, item.Attempts, "DeadLettered", options.WorkerId, null, failedAtUtc, result.ErrorCode, result.ErrorMessage);
+            observability.RecordAttempt(AttemptId(item), item.JobId, item.SliceStartUtc, item.SliceEndUtc, item.Attempts, "DeadLettered", options.WorkerId, null, failedAtUtc, errorCode, errorMessage);
             observability.RecordLog("Error", "Slice dead-lettered.", "worker", item.JobId, item.SliceStartUtc, item.SliceEndUtc, payloadJson);
             progressSink.RecordFinished(progress with
             {
                 Status = LocalWorkerProgressStatus.DeadLettered,
                 CompletedAtUtc = failedAtUtc,
-                ErrorCode = result.ErrorCode,
-                ErrorMessage = result.ErrorMessage,
-                IsRetryable = result.IsRetryable,
+                ErrorCode = errorCode,
+                ErrorMessage = errorMessage,
+                IsRetryable = isRetryable,
                 DeadLettered = true
             });
             return new LocalWorkerRunResult(true, item.QueueItemId, true, false, true, reason);

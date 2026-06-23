@@ -234,6 +234,45 @@ namespace KoLite.Local.Sqlite.Tests
             Assert.Equal(0, queue.CountClaimable("default", At(10), enforceJobParallelism: true));
         }
 
+        [Fact]
+        public void Claim_only_reclaims_expired_lease_after_grace_margin()
+        {
+            queue.Enqueue(JobId("job.queue"), At(0), At(5), "graced", At(10));
+            var leased = queue.Claim("default", "stale", TimeSpan.FromMinutes(1), At(10));
+            Assert.NotNull(leased);
+
+            // Lease expires at At(11); 30s later is still inside a 1-minute grace, so it is not reclaimable.
+            Assert.Null(queue.Claim("default", "fresh", TimeSpan.FromMinutes(5), At(11).AddSeconds(30), expiredLeaseGrace: TimeSpan.FromMinutes(1)));
+            Assert.Equal(0, queue.CountClaimable("default", At(11).AddSeconds(30), expiredLeaseGrace: TimeSpan.FromMinutes(1)));
+
+            // Beyond the grace it becomes reclaimable.
+            Assert.Equal(1, queue.CountClaimable("default", At(12).AddSeconds(30), expiredLeaseGrace: TimeSpan.FromMinutes(1)));
+            var reclaimed = queue.Claim("default", "fresh", TimeSpan.FromMinutes(5), At(12).AddSeconds(30), expiredLeaseGrace: TimeSpan.FromMinutes(1));
+            Assert.NotNull(reclaimed);
+            Assert.Equal(leased!.QueueItemId, reclaimed!.QueueItemId);
+            Assert.Equal(2, reclaimed.Attempts);
+        }
+
+        [Fact]
+        public void Requeue_expired_lease_resets_only_an_expired_leased_row()
+        {
+            queue.Enqueue(JobId("job.queue"), At(0), At(5), "requeue", At(10));
+            var leased = queue.Claim("default", "stale", TimeSpan.FromMinutes(5), At(10));
+            Assert.NotNull(leased);
+
+            // Still held: a non-expired lease is never reset.
+            Assert.False(queue.RequeueExpiredLease(JobId("job.queue"), At(0), At(5), At(12), At(12)));
+            Assert.Equal(DurableWorkQueueState.Leased, queue.Get(leased!.QueueItemId)!.State);
+
+            // After expiry the orphaned row is reset to Queued and made available again.
+            Assert.True(queue.RequeueExpiredLease(JobId("job.queue"), At(0), At(5), At(20), At(20)));
+            var requeued = queue.Get(leased.QueueItemId)!;
+            Assert.Equal(DurableWorkQueueState.Queued, requeued.State);
+            Assert.Null(requeued.LockedBy);
+            Assert.Null(requeued.LockedUntilUtc);
+            Assert.Equal(At(20), requeued.AvailableAtUtc);
+        }
+
         private static DateTimeOffset At(int minutes) => new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero).AddMinutes(minutes);
 
         private static string JobId(string activityId)

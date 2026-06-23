@@ -1660,6 +1660,83 @@ namespace KoLite.LocalApp.Tests
             return workerIds;
         }
 
+        [Fact]
+        public async Task Slice_detail_recovers_an_orphaned_lease_for_an_enabled_job()
+        {
+            var catalog = new SqliteJobCatalogRepository(sqlite);
+            var state = new SqliteSliceStateRepository(sqlite);
+            var queue = new SqliteWorkQueueRepository(sqlite);
+            catalog.Create(Schedule("job.orphan.web", "OrphanWebFunction", isPaused: false));
+            // Running slice plus a Leased queue row whose lock is far in the past (orphaned vs real now).
+            state.AcquireLease("orphan-web-lease", JobId("job.orphan.web"), At(0), At(5), "stale-worker", TimeSpan.FromMinutes(5), At(10));
+            queue.Enqueue(JobId("job.orphan.web"), At(0), At(5), "normal|orphan-web", At(0));
+            Assert.NotNull(queue.Claim("default", "stale-worker", TimeSpan.FromMinutes(5), At(10)));
+
+            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+            var slicePath = $"/jobs/{JobId("job.orphan.web")}/slices?start=2026-01-01T00%3A00%3A00Z&end=2026-01-01T00%3A05%3A00Z";
+
+            var token = await ReadFormToken(client, slicePath);
+            var html = await client.GetStringAsync(slicePath);
+            Assert.Contains("Orphaned lease", html, StringComparison.Ordinal);
+            Assert.Contains("Recover (re-queue) this slice", html, StringComparison.Ordinal);
+
+            using var recover = await PostForm(client, $"/jobs/{JobId("job.orphan.web")}/slices?handler=Recover", token, new Dictionary<string, string>
+            {
+                ["start"] = "2026-01-01T00:00:00Z",
+                ["end"] = "2026-01-01T00:05:00Z"
+            });
+
+            Assert.Equal(HttpStatusCode.OK, recover.StatusCode);
+            var recoverHtml = await recover.Content.ReadAsStringAsync();
+            Assert.Contains("re-queued", recoverHtml, StringComparison.Ordinal);
+            var item = Assert.Single(queue.List(JobId("job.orphan.web")));
+            Assert.Equal(DurableWorkQueueState.Queued, item.State);
+            Assert.Equal(DurableSliceStatus.Queued, state.Get(JobId("job.orphan.web"), At(0), At(5)).Status);
+        }
+
+        [Fact]
+        public async Task Slice_detail_warns_without_recover_button_for_a_paused_job()
+        {
+            var catalog = new SqliteJobCatalogRepository(sqlite);
+            var state = new SqliteSliceStateRepository(sqlite);
+            var queue = new SqliteWorkQueueRepository(sqlite);
+            var created = catalog.Create(Schedule("job.orphan.paused.web", "OrphanPausedFunction", isPaused: false));
+            state.AcquireLease("orphan-paused-lease", JobId("job.orphan.paused.web"), At(0), At(5), "stale-worker", TimeSpan.FromMinutes(5), At(10));
+            queue.Enqueue(JobId("job.orphan.paused.web"), At(0), At(5), "normal|orphan-paused", At(0));
+            Assert.NotNull(queue.Claim("default", "stale-worker", TimeSpan.FromMinutes(5), At(10)));
+            catalog.SetEnabled(JobId("job.orphan.paused.web"), enabled: false, expectedVersion: created.CatalogVersion);
+
+            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+            var html = await client.GetStringAsync($"/jobs/{JobId("job.orphan.paused.web")}/slices?start=2026-01-01T00%3A00%3A00Z&end=2026-01-01T00%3A05%3A00Z");
+
+            Assert.Contains("Orphaned lease", html, StringComparison.Ordinal);
+            Assert.Contains("paused or deleted", html, StringComparison.Ordinal);
+            Assert.DoesNotContain("Recover (re-queue) this slice", html, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void Job_details_grid_marks_an_orphaned_expired_lease_as_stalled()
+        {
+            var clock = new ManualClock(At(20));
+            var catalog = new SqliteJobCatalogRepository(sqlite);
+            var state = new SqliteSliceStateRepository(sqlite);
+            var queue = new SqliteWorkQueueRepository(sqlite);
+            var readModels = new SqliteOperationalReadModelRepository(sqlite);
+            catalog.Create(Schedule("job.stalled", "StalledFunction", isPaused: false));
+            state.AcquireLease("stalled-lease", JobId("job.stalled"), At(0), At(5), "stale-worker", TimeSpan.FromMinutes(5), At(10));
+            queue.Enqueue(JobId("job.stalled"), At(0), At(5), "normal|stalled", At(0));
+            Assert.NotNull(queue.Claim("default", "stale-worker", TimeSpan.FromMinutes(5), At(10)));
+
+            var query = new JobDetailsPageQuery(catalog, readModels, queue, new LifecycleReadModel(sqlite), new OperationalDetailsReadModel(sqlite), clock);
+            var data = query.Get(JobId("job.stalled"));
+
+            Assert.NotNull(data);
+            var cell = data!.SliceHistory.SelectMany(r => r.Cells).Single(c => c.SliceStartUtc == At(0));
+            Assert.Equal("Stalled", cell.State);
+            Assert.Equal("stalled", cell.CssClass);
+            Assert.Equal("Stalled (orphaned lease)", cell.StatusLabel);
+        }
+
         private void SeedOperationalData()
         {
             var catalog = new SqliteJobCatalogRepository(sqlite);

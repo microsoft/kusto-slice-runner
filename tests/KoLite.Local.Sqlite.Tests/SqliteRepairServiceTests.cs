@@ -161,6 +161,49 @@ namespace KoLite.Local.Sqlite.Tests
             if (Directory.Exists(testDirectory)) Directory.Delete(testDirectory, recursive: true);
         }
 
+        [Fact]
+        public void Recover_orphaned_slice_requeues_an_expired_running_lease_for_enabled_job()
+        {
+            catalog.Create(Schedule("job.orphan"));
+            // Running slice plus a Leased queue row whose locks expired at At(11) (clock is At(20)).
+            state.AcquireLease("orphan-lease", JobId("job.orphan"), At(0), At(5), "stale-worker", TimeSpan.FromMinutes(1), At(10));
+            queue.Enqueue(JobId("job.orphan"), At(0), At(5), "normal|orphan", At(0));
+            Assert.NotNull(queue.Claim("default", "stale-worker", TimeSpan.FromMinutes(1), At(10)));
+
+            var recovered = Service().RecoverOrphanedSlice(JobId("job.orphan"), At(0), At(5), "operator", "manual recovery");
+
+            Assert.True(recovered);
+            var item = Assert.Single(queue.List(JobId("job.orphan")));
+            Assert.Equal(DurableWorkQueueState.Queued, item.State);
+            Assert.Equal(DurableSliceStatus.Queued, state.Get(JobId("job.orphan"), At(0), At(5)).Status);
+        }
+
+        [Fact]
+        public void Recover_orphaned_slice_refuses_a_paused_job()
+        {
+            var created = catalog.Create(Schedule("job.orphan.paused"));
+            state.AcquireLease("orphan-paused-lease", JobId("job.orphan.paused"), At(0), At(5), "stale-worker", TimeSpan.FromMinutes(1), At(10));
+            catalog.SetEnabled(JobId("job.orphan.paused"), enabled: false, expectedVersion: created.CatalogVersion);
+
+            var ex = Assert.Throws<InvalidOperationException>(() =>
+                Service().RecoverOrphanedSlice(JobId("job.orphan.paused"), At(0), At(5), "operator", "manual recovery"));
+
+            Assert.Contains("paused", ex.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(DurableSliceStatus.Running, state.Get(JobId("job.orphan.paused"), At(0), At(5)).Status);
+        }
+
+        [Fact]
+        public void Recover_orphaned_slice_returns_false_when_nothing_is_orphaned()
+        {
+            catalog.Create(Schedule("job.orphan.none"));
+            state.Append("completed", JobId("job.orphan.none"), At(0), At(5), DurableSliceStatus.Completed, expectedVersion: 0);
+
+            var recovered = Service().RecoverOrphanedSlice(JobId("job.orphan.none"), At(0), At(5), "operator", "manual recovery");
+
+            Assert.False(recovered);
+            Assert.Equal(DurableSliceStatus.Completed, state.Get(JobId("job.orphan.none"), At(0), At(5)).Status);
+        }
+
         private SqliteRepairService Service() => new(factory, catalog, state, queue, clock);
         private static DateTimeOffset At(int minutes) => new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero).AddMinutes(minutes);
 

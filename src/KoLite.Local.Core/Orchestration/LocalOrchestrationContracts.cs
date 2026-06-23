@@ -29,12 +29,22 @@ namespace KoLite.Local.Core.Orchestration
         TimeSpan? InitialRetryDelay = null,
         TimeSpan? MaxRetryDelay = null,
         double BackoffFactor = 2.0,
-        bool EnforceJobParallelism = false)
+        bool EnforceJobParallelism = false,
+        TimeSpan? ClientTimeoutBuffer = null,
+        TimeSpan? OrphanReclaimGrace = null)
     {
         public static TimeSpan QueryTimeoutLeaseBuffer { get; } = TimeSpan.FromMinutes(2);
         public TimeSpan EffectiveVisibilityTimeout => VisibilityTimeout ?? TimeSpan.FromMinutes(5);
         public TimeSpan EffectiveInitialRetryDelay => InitialRetryDelay ?? TimeSpan.FromMinutes(1);
         public TimeSpan EffectiveMaxRetryDelay => MaxRetryDelay ?? TimeSpan.FromMinutes(5);
+
+        // Extra time granted to the client-side execution deadline beyond the job's Kusto server
+        // timeout, so the server's own timeout error can surface first. Kept below the lease buffer.
+        public TimeSpan EffectiveClientTimeoutBuffer => ClientTimeoutBuffer ?? TimeSpan.FromSeconds(30);
+
+        // A lease must be expired by at least this margin before another worker reclaims it, to
+        // tolerate clock skew and a single missed dispatch cycle. Defense-in-depth for orphan recovery.
+        public TimeSpan EffectiveOrphanReclaimGrace => OrphanReclaimGrace ?? TimeSpan.FromSeconds(30);
 
         public TimeSpan EffectiveLeaseDuration(JobDefinition job)
         {
@@ -43,6 +53,21 @@ namespace KoLite.Local.Core.Orchestration
                 ? TimeSpan.MaxValue
                 : job.QueryTimeout + QueryTimeoutLeaseBuffer;
             return bufferedQueryTimeout > EffectiveVisibilityTimeout ? bufferedQueryTimeout : EffectiveVisibilityTimeout;
+        }
+
+        // Client-side wall-clock deadline for a single execution attempt. A hung or excessively slow
+        // Kusto call becomes a cancellation the worker can release and retry, instead of holding the
+        // lease until it expires. Always kept strictly below the lease duration so a healthy attempt
+        // can record its terminal state before the lease becomes reclaimable by another worker.
+        public TimeSpan EffectiveExecutionTimeout(JobDefinition job)
+        {
+            ArgumentNullException.ThrowIfNull(job);
+            var lease = EffectiveLeaseDuration(job);
+            var buffer = EffectiveClientTimeoutBuffer;
+            var candidate = job.QueryTimeout > TimeSpan.MaxValue - buffer
+                ? TimeSpan.MaxValue
+                : job.QueryTimeout + buffer;
+            return candidate < lease ? candidate : lease;
         }
     }
 

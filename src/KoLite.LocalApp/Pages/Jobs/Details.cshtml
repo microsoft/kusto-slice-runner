@@ -76,7 +76,7 @@ else
                 <div class="card-header">
                     <div>
                         <h2>Slice history</h2>
-                        <p class="muted">Each cell is one scheduled slice. Colors distinguish completed, completed after retry, queued, running, waiting, failed, and missing work.</p>
+                        <p class="muted">Each cell is one scheduled slice. Colors distinguish completed, completed after retry, queued, running, stalled (orphaned lease), waiting, failed, and missing work.</p>
                     </div>
                     <a class="btn small" href="/jobs/@Uri.EscapeDataString(data.Job.JobId)/history">Open full history</a>
                 </div>

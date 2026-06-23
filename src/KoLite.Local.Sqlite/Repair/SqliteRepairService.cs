@@ -99,6 +99,66 @@ namespace KoLite.Local.Sqlite.Repair
             return new RepairPlanResult(batchId, queued, blocked, skipped);
         }
 
+        // Operator-driven single-slice recovery for an orphaned lease: a slice left Running/Leased after
+        // its lease expired (the prior worker faulted or was killed without recording a terminal result).
+        // Only enabled jobs are recoverable; paused/soft-deleted jobs must be resumed first so this never
+        // behaves like a retry that pause is meant to suppress. Returns false when nothing was orphaned.
+        // The re-run is idempotent (ingest-by), so it never duplicates output already in Kusto.
+        public bool RecoverOrphanedSlice(string jobId, DateTimeOffset sliceStartUtc, DateTimeOffset sliceEndUtc, string requestedBy, string reason)
+        {
+            if (string.IsNullOrWhiteSpace(reason))
+            {
+                throw new InvalidOperationException("Recovering an orphaned slice requires an auditable reason.");
+            }
+
+            var job = catalog.Get(jobId) ?? throw new InvalidOperationException($"Job '{jobId}' does not exist.");
+            if (!job.IsEnabled)
+            {
+                throw new InvalidOperationException("Cannot recover an orphaned slice while the job is paused or deleted. Resume the job first; it will then recover automatically.");
+            }
+
+            var now = clock.UtcNow;
+            var slice = new SliceRange(jobId, sliceStartUtc, sliceEndUtc);
+            var current = state.Get(jobId, sliceStartUtc, sliceEndUtc);
+
+            var requeued = queue.RequeueExpiredLease(jobId, sliceStartUtc, sliceEndUtc, now, now);
+            var stateIsOrphaned = current.Status == DurableSliceStatus.Running
+                && (current.LeaseExpiresAtUtc is null || current.LeaseExpiresAtUtc <= now.ToUniversalTime());
+
+            if (!requeued && !stateIsOrphaned)
+            {
+                return false;
+            }
+
+            if (current.Status == DurableSliceStatus.Running)
+            {
+                state.Append(
+                    $"recover-orphan|{Guid.NewGuid():N}",
+                    jobId,
+                    sliceStartUtc,
+                    sliceEndUtc,
+                    DurableSliceStatus.Queued,
+                    current.Version,
+                    reason,
+                    requestedBy,
+                    payloadJson: JsonSerializer.Serialize(new { workKind = "RecoverOrphan", recoveredBy = requestedBy, reason }));
+            }
+
+            if (!requeued)
+            {
+                queue.Enqueue(
+                    jobId,
+                    sliceStartUtc,
+                    sliceEndUtc,
+                    $"recover|{Guid.NewGuid():N}|{slice.ToKey().Value}",
+                    now,
+                    priority: 100,
+                    payloadJson: JsonSerializer.Serialize(new { workKind = "RecoverOrphan", recoveredBy = requestedBy, sliceKey = slice.ToKey().Value }));
+            }
+
+            return true;
+        }
+
         public IReadOnlyList<RepairSlice> GetRepairSlices(string repairBatchId)
         {
             using var c = connectionFactory.OpenConnection();

@@ -631,6 +631,10 @@ h3 { font-size: 16px; margin-bottom: 10px; }
   background-color: var(--slice-stat-waiting);
   background-image: repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.45) 0, rgba(255, 255, 255, 0.45) 2px, transparent 2px, transparent 5px);
 }
+.stalled {
+  background-color: var(--slice-stat-yellow);
+  background-image: repeating-linear-gradient(45deg, rgba(207, 34, 46, 0.6) 0, rgba(207, 34, 46, 0.6) 2px, transparent 2px, transparent 6px);
+}
 .missing { background-color: #fff; }
 .AllRunsSucceeded-SomeRetries, .SomeSucceededWithRetries-SomeSucceeded {
   background: linear-gradient(135deg, var(--slice-stat-yellow) 0%, var(--slice-stat-yellow) 48%, var(--slice-stat-border) 50%, var(--slice-stat-green) 52%, var(--slice-stat-green) 100%);

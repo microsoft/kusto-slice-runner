@@ -177,6 +177,38 @@ Rerun is blocked while any affected slice is queued, leased, or running.
 
 Back up the SQLite database before service upgrades, hard deletes, repair experiments, or large reruns.
 
+## Orphaned leases and recovery
+
+A slice is **leased** while a worker holds it. If that worker faults or its process is killed after
+taking the lease, the row can stay `Leased`/`Running` with an already-expired lock — an **orphaned
+lease**. The output may already be in Kusto (the `.set-or-append` ran) even though the slice never
+recorded a terminal result.
+
+How KO Lite handles this:
+
+- **Bounded execution.** Each attempt has a client-side execution deadline (`queryTimeout` plus a
+  small buffer), kept below the lease duration. A hung Kusto call is cancelled, released, and retried
+  instead of holding the lease open indefinitely.
+- **Prompt release on fault.** An attempt that throws (or times out) immediately abandons/retries the
+  queue item rather than waiting for the lease to expire. Re-runs are idempotent (`ingest-by`), so
+  recovery never duplicates output.
+- **Automatic recovery.** Workers reclaim an expired lease on the next dispatch cycle once it has been
+  expired by a short grace margin — recovery no longer waits for the worker pool to be fully idle.
+- **Paused/soft-deleted jobs are not auto-recovered.** Consistent with pause semantics ("in-flight
+  finishes, failures are not retried"), an orphaned lease on a disabled job stays put and is shown as
+  **Stalled (orphaned lease)** in the window history. Resume the job to let it recover.
+- **Manual recovery.** On the slice detail page, an orphaned slice on an **enabled** job offers
+  **Recover (re-queue) this slice**, which resets the slice to `Queued` for an idempotent re-run.
+
+Find orphaned (expired-lease) queue rows with:
+
+```sql
+SELECT job_id, slice_start_utc, slice_end_utc, locked_by, locked_until_utc, attempts, max_attempts
+FROM work_queue
+WHERE state = 'Leased' AND locked_until_utc <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+ORDER BY slice_start_utc;
+```
+
 ## GUID identity upgrade (schema v6)
 
 Schema v6 is a one-time, in-place re-key that makes each job's permanent identity an opaque GUID
@@ -212,4 +244,4 @@ For such slices use `CleanSliceOutputThenExecute` or the rerun cleanup flow inst
 - **Locked publish output:** stop the published app before republishing.
 - **SQLite inspection:** use the database path shown by `/status/health`; runtime sidecar files such as `*.db-wal` and `*.db-shm` are local artifacts.
 - **Local API unreachable:** the `/api/*` routes only exist while the app is running and only accept loopback callers; confirm the app is up via `/status/health` and use the loopback base URL.
-- **Crash recovery:** long `queryTimeout` values also lengthen queue lease windows, so recovery after a hard crash can take longer for long-running jobs.
+- **Crash recovery:** long `queryTimeout` values also lengthen queue lease windows, so recovery after a hard crash can take longer for long-running jobs. A slice stuck as **Stalled (orphaned lease)** is recovered automatically on the next dispatch once its lease expires (for enabled jobs); resume a paused job, or use **Recover (re-queue) this slice** on the slice detail page, to recover it sooner. See [Orphaned leases and recovery](#orphaned-leases-and-recovery).

@@ -12,6 +12,7 @@ using KoLite.Local.Sqlite.Migrations;
 using KoLite.Local.Sqlite.Observability;
 using KoLite.Local.Sqlite.Orchestration;
 using KoLite.Local.Sqlite.Queue;
+using KoLite.Local.Sqlite.Repair;
 using KoLite.Local.Sqlite.Rerun;
 using KoLite.Local.Sqlite.State;
 using KoLite.LocalApp.Api;
@@ -38,6 +39,7 @@ namespace KoLite.LocalApp
             builder.Services.AddScoped<SqliteSliceStateRepository>();
             builder.Services.AddScoped<SqliteJobLifecycleService>();
             builder.Services.AddScoped<SqliteRerunService>();
+            builder.Services.AddScoped<SqliteRepairService>();
             builder.Services.AddScoped<DashboardPageQuery>();
             builder.Services.AddScoped<JobDetailsPageQuery>();
             builder.Services.AddScoped<JobChartQuery>();
@@ -151,7 +153,7 @@ namespace KoLite.LocalApp
                 command.ExecuteScalar();
                 var nowUtc = clock.UtcNow;
                 var queueStatus = observability.GetQueueStatus(localWorkerOptions.QueueName, nowUtc);
-                var claimableBacklog = queue.CountClaimable(localWorkerOptions.QueueName, nowUtc, localWorkerOptions.EnforceJobParallelism);
+                var claimableBacklog = queue.CountClaimable(localWorkerOptions.QueueName, nowUtc, localWorkerOptions.EnforceJobParallelism, localWorkerOptions.EffectiveOrphanReclaimGrace);
                 var updateSnapshot = updateCheckState.GetSnapshot();
                 return Results.Json(new
                 {
@@ -787,7 +789,14 @@ namespace KoLite.LocalApp
 
                     var availableSlots = Math.Max(0, options.MaxConcurrency - inFlightWorkers.Count);
                     var started = 0;
-                    var includeExpiredLeases = inFlightWorkers.Count == 0;
+                    // Always include expired (orphaned) leases when claiming and counting, not only when
+                    // the pool is fully idle. Workstream A guarantees a healthy attempt finishes (or its
+                    // bounded execution times out and is released) before its lease can expire beyond the
+                    // reclaim grace, so an expired lease reliably means a crashed/abandoned owner. This
+                    // lets orphans recover on the next dispatch cycle instead of waiting for a fully-idle
+                    // pool, while the grace margin and the single-row claim guard prevent stealing a
+                    // healthy, still-held lease.
+                    const bool includeExpiredLeases = true;
                     var queueSnapshot = ReadQueueSnapshot(includeExpiredLeases);
                     if (availableSlots > 0 && queueSnapshot.ClaimableBacklog > 0)
                     {
@@ -846,7 +855,7 @@ namespace KoLite.LocalApp
             var scopedClock = scope.ServiceProvider.GetRequiredService<IClock>();
             var nowUtc = scopedClock.UtcNow;
             var claimable = includeExpiredLeases
-                ? queue.CountClaimable(localWorkerOptions.QueueName, nowUtc, localWorkerOptions.EnforceJobParallelism)
+                ? queue.CountClaimable(localWorkerOptions.QueueName, nowUtc, localWorkerOptions.EnforceJobParallelism, localWorkerOptions.EffectiveOrphanReclaimGrace)
                 : queue.CountQueuedClaimable(localWorkerOptions.QueueName, nowUtc, localWorkerOptions.EnforceJobParallelism);
             var queueStatus = observability.GetQueueStatus(localWorkerOptions.QueueName, nowUtc);
             return new WorkerQueueSnapshot(

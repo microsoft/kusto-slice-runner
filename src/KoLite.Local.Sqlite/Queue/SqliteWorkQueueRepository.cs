@@ -17,21 +17,22 @@ namespace KoLite.Local.Sqlite.Queue
             var id = Guid.NewGuid().ToString("N"); using var cmd = SqliteStorage.Command(c, tx, "INSERT INTO work_queue (queue_item_id,job_id,slice_start_utc,slice_end_utc,queue_name,priority,state,available_at_utc,attempts,max_attempts,idempotency_key,payload_json,created_at_utc,updated_at_utc) VALUES ($id,$j,$s,$e,$q,$p,'Queued',$a,0,$m,$k,$payload,$n,$n);");
             cmd.Add("$id", id); cmd.Add("$j", jobId); cmd.Add("$s", SqliteStorage.Utc(sliceStartUtc)); cmd.Add("$e", SqliteStorage.Utc(sliceEndUtc)); cmd.Add("$q", queueName); cmd.Add("$p", priority); cmd.Add("$a", SqliteStorage.Utc(availableAtUtc)); cmd.Add("$m", maxAttempts); cmd.Add("$k", idempotencyKey); cmd.Add("$payload", payloadJson); cmd.Add("$n", SqliteStorage.Utc(DateTimeOffset.UtcNow)); cmd.ExecuteNonQuery(); tx.Commit(); return Get(id)!;
         }
-        public DurableWorkItem? Claim(string queueName, string workerId, TimeSpan visibilityTimeout, DateTimeOffset nowUtc, bool enforceJobParallelism = false)
+        public DurableWorkItem? Claim(string queueName, string workerId, TimeSpan visibilityTimeout, DateTimeOffset nowUtc, bool enforceJobParallelism = false, TimeSpan expiredLeaseGrace = default)
         {
-            return ClaimCore(queueName, workerId, visibilityTimeout, nowUtc, includeExpiredLeases: true, enforceJobParallelism);
+            return ClaimCore(queueName, workerId, visibilityTimeout, nowUtc, includeExpiredLeases: true, enforceJobParallelism, expiredLeaseGrace);
         }
         public DurableWorkItem? ClaimQueued(string queueName, string workerId, TimeSpan visibilityTimeout, DateTimeOffset nowUtc, bool enforceJobParallelism = false)
         {
-            return ClaimCore(queueName, workerId, visibilityTimeout, nowUtc, includeExpiredLeases: false, enforceJobParallelism);
+            return ClaimCore(queueName, workerId, visibilityTimeout, nowUtc, includeExpiredLeases: false, enforceJobParallelism, TimeSpan.Zero);
         }
         // When enforceJobParallelism is set, a claim is only granted while the job has fewer non-expired
         // leases than its MaxParallelism (read from the schedule JSON). This makes MaxParallelism a hard
         // per-job execution bound for every enqueue source (scheduler and repair/rerun) so the worker pool
         // can run with unbounded global concurrency. The guard is evaluated inside the claim's serializable
         // transaction, and the existing single-item UPDATE guard keeps two claims from taking the same row.
-        private DurableWorkItem? ClaimCore(string queueName, string workerId, TimeSpan visibilityTimeout, DateTimeOffset nowUtc, bool includeExpiredLeases, bool enforceJobParallelism)
+        private DurableWorkItem? ClaimCore(string queueName, string workerId, TimeSpan visibilityTimeout, DateTimeOffset nowUtc, bool includeExpiredLeases, bool enforceJobParallelism, TimeSpan expiredLeaseGrace)
         {
+            var expiredLeaseCutoff = ExpiredLeaseCutoff(nowUtc, expiredLeaseGrace);
             using var c = connectionFactory.OpenConnection(); using var tx = c.BeginTransaction(System.Data.IsolationLevel.Serializable); using var select = SqliteStorage.Command(c, tx, """
                 SELECT w.*
                 FROM work_queue w
@@ -39,7 +40,7 @@ namespace KoLite.Local.Sqlite.Queue
                 WHERE w.queue_name=$q
                   AND (
                       (w.state='Queued')
-                      OR ($includeExpiredLeases=1 AND w.state='Leased' AND w.locked_until_utc <= $n)
+                      OR ($includeExpiredLeases=1 AND w.state='Leased' AND w.locked_until_utc <= $gc)
                   )
                   AND w.available_at_utc <= $n
                   AND (
@@ -54,14 +55,14 @@ namespace KoLite.Local.Sqlite.Queue
                 ORDER BY w.available_at_utc ASC, w.priority DESC, w.created_at_utc ASC
                 LIMIT 1;
                 """);
-            select.Add("$q", queueName); select.Add("$includeExpiredLeases", includeExpiredLeases ? 1 : 0); select.Add("$enforceParallelism", enforceJobParallelism ? 1 : 0); select.Add("$n", SqliteStorage.Utc(nowUtc)); DurableWorkItem? item; using (var r = select.ExecuteReader()) item = r.Read() ? Read(r) : null; if (item is null) { tx.Commit(); return null; }
+            select.Add("$q", queueName); select.Add("$includeExpiredLeases", includeExpiredLeases ? 1 : 0); select.Add("$enforceParallelism", enforceJobParallelism ? 1 : 0); select.Add("$n", SqliteStorage.Utc(nowUtc)); select.Add("$gc", SqliteStorage.Utc(expiredLeaseCutoff)); DurableWorkItem? item; using (var r = select.ExecuteReader()) item = r.Read() ? Read(r) : null; if (item is null) { tx.Commit(); return null; }
             using var update = SqliteStorage.Command(c, tx, """
                 UPDATE work_queue
                 SET state='Leased', locked_by=$w, locked_until_utc=$u, attempts=attempts+1, updated_at_utc=$n
                 WHERE queue_item_id=$id
                   AND (
                       (state='Queued')
-                      OR ($includeExpiredLeases=1 AND state='Leased' AND locked_until_utc <= $n)
+                      OR ($includeExpiredLeases=1 AND state='Leased' AND locked_until_utc <= $gc)
                   )
                   AND EXISTS (
                       SELECT 1
@@ -70,7 +71,7 @@ namespace KoLite.Local.Sqlite.Queue
                         AND jd.is_enabled = 1
                   );
                 """);
-            update.Add("$w", workerId); update.Add("$includeExpiredLeases", includeExpiredLeases ? 1 : 0); update.Add("$u", SqliteStorage.Utc(nowUtc + visibilityTimeout)); update.Add("$n", SqliteStorage.Utc(nowUtc)); update.Add("$id", item.QueueItemId); if (update.ExecuteNonQuery() != 1) { tx.Commit(); return null; }
+            update.Add("$w", workerId); update.Add("$includeExpiredLeases", includeExpiredLeases ? 1 : 0); update.Add("$u", SqliteStorage.Utc(nowUtc + visibilityTimeout)); update.Add("$n", SqliteStorage.Utc(nowUtc)); update.Add("$gc", SqliteStorage.Utc(expiredLeaseCutoff)); update.Add("$id", item.QueueItemId); if (update.ExecuteNonQuery() != 1) { tx.Commit(); return null; }
             tx.Commit(); return Get(item.QueueItemId);
         }
         public bool Complete(string queueItemId, string workerId) => Terminal(queueItemId, workerId, DurableWorkQueueState.Completed);
@@ -80,15 +81,15 @@ namespace KoLite.Local.Sqlite.Queue
             using var c = connectionFactory.OpenConnection(); using var cmd = SqliteStorage.Command(c, null, "SELECT COUNT(*) FROM work_queue WHERE job_id=$j AND queue_name=$q AND state IN ('Queued','Leased');");
             cmd.Add("$j", jobId); cmd.Add("$q", queueName); return Convert.ToInt32(cmd.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture);
         }
-        public int CountClaimable(string queueName, DateTimeOffset nowUtc, bool enforceJobParallelism = false)
+        public int CountClaimable(string queueName, DateTimeOffset nowUtc, bool enforceJobParallelism = false, TimeSpan expiredLeaseGrace = default)
         {
-            return CountClaimableCore(queueName, nowUtc, includeExpiredLeases: true, enforceJobParallelism);
+            return CountClaimableCore(queueName, nowUtc, includeExpiredLeases: true, enforceJobParallelism, expiredLeaseGrace);
         }
         public int CountQueuedClaimable(string queueName, DateTimeOffset nowUtc, bool enforceJobParallelism = false)
         {
-            return CountClaimableCore(queueName, nowUtc, includeExpiredLeases: false, enforceJobParallelism);
+            return CountClaimableCore(queueName, nowUtc, includeExpiredLeases: false, enforceJobParallelism, TimeSpan.Zero);
         }
-        private int CountClaimableCore(string queueName, DateTimeOffset nowUtc, bool includeExpiredLeases, bool enforceJobParallelism)
+        private int CountClaimableCore(string queueName, DateTimeOffset nowUtc, bool includeExpiredLeases, bool enforceJobParallelism, TimeSpan expiredLeaseGrace)
         {
             // When enforcing parallelism, the backlog is the number of items a worker could actually claim
             // right now: per job, min(claimable items, remaining MaxParallelism capacity). This keeps the
@@ -107,7 +108,7 @@ namespace KoLite.Local.Sqlite.Queue
                         WHERE w.queue_name=$q
                           AND (
                               (w.state='Queued')
-                              OR ($includeExpiredLeases=1 AND w.state='Leased' AND w.locked_until_utc <= $n)
+                              OR ($includeExpiredLeases=1 AND w.state='Leased' AND w.locked_until_utc <= $gc)
                           )
                           AND w.available_at_utc <= $n
                         GROUP BY w.job_id
@@ -120,12 +121,12 @@ namespace KoLite.Local.Sqlite.Queue
                     WHERE w.queue_name=$q
                       AND (
                           (w.state='Queued')
-                          OR ($includeExpiredLeases=1 AND w.state='Leased' AND w.locked_until_utc <= $n)
+                          OR ($includeExpiredLeases=1 AND w.state='Leased' AND w.locked_until_utc <= $gc)
                       )
                       AND w.available_at_utc <= $n
                     """;
             using var c = connectionFactory.OpenConnection(); using var cmd = SqliteStorage.Command(c, null, sql);
-            cmd.Add("$q", queueName); cmd.Add("$includeExpiredLeases", includeExpiredLeases ? 1 : 0); cmd.Add("$n", SqliteStorage.Utc(nowUtc)); return Convert.ToInt32(cmd.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture);
+            cmd.Add("$q", queueName); cmd.Add("$includeExpiredLeases", includeExpiredLeases ? 1 : 0); cmd.Add("$n", SqliteStorage.Utc(nowUtc)); cmd.Add("$gc", SqliteStorage.Utc(ExpiredLeaseCutoff(nowUtc, expiredLeaseGrace))); return Convert.ToInt32(cmd.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture);
         }
         public IReadOnlyList<DurableWorkItem> List(string? jobId = null, string? queueName = null)
         {
@@ -147,7 +148,23 @@ namespace KoLite.Local.Sqlite.Queue
             using var c = connectionFactory.OpenConnection(); using var cmd = SqliteStorage.Command(c, null, "UPDATE work_queue SET state='Queued', locked_by=NULL, locked_until_utc=NULL, available_at_utc=$a, attempts=CASE WHEN attempts > 0 THEN attempts - 1 ELSE 0 END, updated_at_utc=$u WHERE queue_item_id=$id AND state='Leased' AND locked_by=$w;");
             cmd.Add("$a", SqliteStorage.Utc(availableAtUtc)); cmd.Add("$u", SqliteStorage.Utc(DateTimeOffset.UtcNow)); cmd.Add("$id", queueItemId); cmd.Add("$w", workerId); return cmd.ExecuteNonQuery() == 1;
         }
+        // Operator-driven recovery: flips an expired-lease (orphaned) queue row for a specific slice back
+        // to Queued so a worker re-claims and re-runs it idempotently. Guarded by locked_until_utc <= now
+        // so it can never steal a healthy, still-held lease. Returns true when a row was reset.
+        public bool RequeueExpiredLease(string jobId, DateTimeOffset sliceStartUtc, DateTimeOffset sliceEndUtc, DateTimeOffset availableAtUtc, DateTimeOffset nowUtc)
+        {
+            using var c = connectionFactory.OpenConnection(); using var cmd = SqliteStorage.Command(c, null, "UPDATE work_queue SET state='Queued', locked_by=NULL, locked_until_utc=NULL, available_at_utc=$a, updated_at_utc=$u WHERE job_id=$j AND slice_start_utc=$s AND slice_end_utc=$e AND state='Leased' AND locked_until_utc <= $n;");
+            cmd.Add("$a", SqliteStorage.Utc(availableAtUtc)); cmd.Add("$u", SqliteStorage.Utc(DateTimeOffset.UtcNow)); cmd.Add("$j", jobId); cmd.Add("$s", SqliteStorage.Utc(sliceStartUtc)); cmd.Add("$e", SqliteStorage.Utc(sliceEndUtc)); cmd.Add("$n", SqliteStorage.Utc(nowUtc)); return cmd.ExecuteNonQuery() >= 1;
+        }
         public DurableWorkItem? Get(string queueItemId) { using var c = connectionFactory.OpenConnection(); using var cmd = SqliteStorage.Command(c, null, "SELECT * FROM work_queue WHERE queue_item_id=$id;"); cmd.Add("$id", queueItemId); using var r = cmd.ExecuteReader(); return r.Read() ? Read(r) : null; }
+        // A lease is only reclaimable once it has been expired by at least the grace margin, tolerating
+        // clock skew and a single missed dispatch cycle. A zero/negative grace falls back to "now".
+        private static DateTimeOffset ExpiredLeaseCutoff(DateTimeOffset nowUtc, TimeSpan grace)
+        {
+            if (grace <= TimeSpan.Zero) return nowUtc;
+            var utc = nowUtc.ToUniversalTime();
+            return utc - DateTimeOffset.MinValue < grace ? DateTimeOffset.MinValue : utc - grace;
+        }
         private bool Terminal(string id, string worker, DurableWorkQueueState state) { using var c = connectionFactory.OpenConnection(); using var cmd = SqliteStorage.Command(c, null, "UPDATE work_queue SET state=$s, locked_by=NULL, locked_until_utc=NULL, updated_at_utc=$u WHERE queue_item_id=$id AND state='Leased' AND locked_by=$w;"); cmd.Add("$s", state.ToString()); cmd.Add("$u", SqliteStorage.Utc(DateTimeOffset.UtcNow)); cmd.Add("$id", id); cmd.Add("$w", worker); return cmd.ExecuteNonQuery() == 1; }
         private static DurableWorkItem? ByKey(SqliteConnection c, SqliteTransaction tx, string key) { using var cmd = SqliteStorage.Command(c, tx, "SELECT * FROM work_queue WHERE idempotency_key=$k;"); cmd.Add("$k", key); using var r = cmd.ExecuteReader(); return r.Read() ? Read(r) : null; }
         private static DurableWorkItem Read(SqliteDataReader r) => new(r.GetString(r.GetOrdinal("queue_item_id")), r.GetString(r.GetOrdinal("job_id")), SqliteStorage.ReadUtc(r, "slice_start_utc"), SqliteStorage.ReadUtc(r, "slice_end_utc"), r.GetString(r.GetOrdinal("queue_name")), r.GetInt32(r.GetOrdinal("priority")), Enum.Parse<DurableWorkQueueState>(r.GetString(r.GetOrdinal("state"))), SqliteStorage.ReadUtc(r, "available_at_utc"), r.IsDBNull(r.GetOrdinal("locked_by")) ? null : r.GetString(r.GetOrdinal("locked_by")), SqliteStorage.ReadNullableUtc(r, "locked_until_utc"), r.GetInt32(r.GetOrdinal("attempts")), r.GetInt32(r.GetOrdinal("max_attempts")), r.GetString(r.GetOrdinal("idempotency_key")), r.GetString(r.GetOrdinal("payload_json")), SqliteStorage.ReadUtc(r, "created_at_utc"), SqliteStorage.ReadUtc(r, "updated_at_utc"));
