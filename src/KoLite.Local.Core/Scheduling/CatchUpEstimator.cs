@@ -2,8 +2,8 @@ using KoLite.Local.Core.Schedules;
 
 namespace KoLite.Local.Core.Scheduling
 {
-    // Classification of a job's catch-up situation. Only CatchingUp and NotKeepingUp are
-    // worth surfacing in the UI; the other states intentionally render nothing.
+    // Classification of a job's catch-up situation. CatchingUp, NotKeepingUp, and InsufficientData
+    // are surfaced in the UI (see ShouldDisplay); the other states intentionally render nothing.
     public enum CatchUpStatus
     {
         // Paused, disabled, or no eligible window yet: catch-up is not a meaningful concept.
@@ -13,10 +13,6 @@ namespace KoLite.Local.Core.Scheduling
         // slice just became eligible). Nothing useful to show.
         CaughtUp,
 
-        // A real backlog exists and the rate keeps up, but the projected catch-up time is below
-        // the "worth showing" floor.
-        Negligible,
-
         // A real backlog exists but there is not enough recent throughput to estimate a rate.
         InsufficientData,
 
@@ -24,8 +20,8 @@ namespace KoLite.Local.Core.Scheduling
         // current rate the job will never catch up.
         NotKeepingUp,
 
-        // A real backlog exists, the rate outpaces real time, and the projected catch-up time is
-        // worth showing.
+        // A real backlog exists and the rate outpaces real time, so the job is projected to catch
+        // up. Shown continuously while a real, actionable backlog remains.
         CatchingUp
     }
 
@@ -35,9 +31,6 @@ namespace KoLite.Local.Core.Scheduling
         // A backlog must exceed this many eligible-but-incomplete slices before anything is shown.
         // This excludes a job that just became eligible for its next slice or two.
         public int MinBacklogSlices { get; init; } = 2;
-
-        // The projected catch-up time must be at least this long to be worth showing.
-        public TimeSpan MinProjected { get; init; } = TimeSpan.FromMinutes(30);
 
         // Minimum number of recent successful completions required to estimate a rate.
         public int MinThroughputSamples { get; init; } = 3;
@@ -65,9 +58,15 @@ namespace KoLite.Local.Core.Scheduling
     {
         public required CatchUpStatus Status { get; init; }
 
-        // Eligible-but-incomplete slices and the equivalent data-time backlog.
+        // Eligible-but-incomplete slices and the equivalent data-time backlog. Slices currently
+        // blocked on an upstream dependency are excluded from these (the job cannot work them off
+        // on its own) and reported separately in BacklogBlockedSlices.
         public int BacklogSlices { get; init; }
         public TimeSpan BacklogDataTime { get; init; }
+
+        // Eligible-but-incomplete slices currently blocked on an upstream dependency, excluded from
+        // the backlog above. Surfaced so the UI can explain why blocked work is not counted.
+        public int BacklogBlockedSlices { get; init; }
 
         // The completed data-time frontier (latest completed slice end), and the eligibility target
         // the job is working toward (now - delay, clamped to endOn). The job converges to the
@@ -127,6 +126,7 @@ namespace KoLite.Local.Core.Scheduling
             DateTimeOffset? completedFrontierUtc,
             int completedSliceCount,
             CatchUpThroughputSample throughput,
+            int dependencyBlockedSliceCount = 0,
             DateTimeOffset? lastDefinitionChangeUtc = null,
             CatchUpOptions? options = null)
         {
@@ -171,8 +171,13 @@ namespace KoLite.Local.Core.Scheduling
                 return notApplicable;
             }
 
+            // Backlog is eligible work this job can actually do now: total eligible slices minus
+            // those already completed and minus those blocked on an upstream dependency. Excluding
+            // dependency-blocked slices keeps a job that is merely waiting on upstream (for its most
+            // recent slices) from being reported as "catching up".
+            var blockedSlices = Math.Max(0, dependencyBlockedSliceCount);
             var eligibleTotal = (eligibleEndUtc - startFromUtc).Ticks / queryWindow.Ticks;
-            var backlogSlices = (int)Math.Max(0, Math.Min(int.MaxValue, eligibleTotal - completedSliceCount));
+            var backlogSlices = (int)Math.Max(0, Math.Min(int.MaxValue, eligibleTotal - completedSliceCount - blockedSlices));
             var backlogDataTime = TimeSpan.FromTicks(queryWindow.Ticks * backlogSlices);
 
             var baseProjection = new CatchUpProjection
@@ -180,6 +185,7 @@ namespace KoLite.Local.Core.Scheduling
                 Status = CatchUpStatus.CaughtUp,
                 BacklogSlices = backlogSlices,
                 BacklogDataTime = backlogDataTime,
+                BacklogBlockedSlices = blockedSlices,
                 CompletedFrontierUtc = completedFrontierUtc,
                 TargetFrontierUtc = targetFrontierUtc,
                 ThroughputWindowStartUtc = windowStartUtc,
@@ -224,11 +230,6 @@ namespace KoLite.Local.Core.Scheduling
 
             var projectedHours = backlogDataTime.TotalHours / (realTimeMultiple - 1.0);
             var projected = TimeSpan.FromHours(projectedHours);
-
-            if (projected < opts.MinProjected)
-            {
-                return withRate with { Status = CatchUpStatus.Negligible };
-            }
 
             return withRate with
             {

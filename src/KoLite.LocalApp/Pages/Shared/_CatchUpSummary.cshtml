@@ -28,16 +28,24 @@
         headline = $"{(Model.ProjectedCatchUp is { } projected ? AppFormatting.ApproxDuration(projected) : "")} to catch up";
     }
 
-    var backlogText = $"{AppFormatting.ApproxDuration(Model.BacklogDataTime)} of data ({Model.BacklogSlices.ToString("N0", ci)} slices)";
+    var slicesBehindText = Model.BacklogSlices.ToString("N0", ci);
+    var dataBehindText = AppFormatting.ApproxDuration(Model.BacklogDataTime);
     string? rateText = Model.SlicesPerHour is { } perHour && Model.RealTimeMultiple is { } multiple
         ? $"~{perHour.ToString("0.#", ci)} slices/h ({multiple.ToString("0.#", ci)}\u00d7 real time)"
         : null;
+    string? remainingText = Model.ProjectedCatchUp is { } remaining ? AppFormatting.ApproxDuration(remaining) : null;
     var targetText = AppFormatting.Iso(Model.TargetFrontierUtc);
 
     // Concrete gating, surfaced so the operator knows exactly what the card is waiting for.
     var requiredSamples = Model.RequiredThroughputSamples.ToString("N0", ci);
     var requiredSpanText = AppFormatting.ApproxDuration(Model.RequiredThroughputSpan);
     var collectedText = $"{Model.ObservedThroughputSamples.ToString("N0", ci)} of {requiredSamples} completions";
+
+    // When recent slices are parked on an upstream dependency they are excluded from the backlog;
+    // call that out so the reported "slices behind" is not mistaken for the full real-time gap.
+    string? blockedNote = Model.BacklogBlockedSlices > 0
+        ? $" {Model.BacklogBlockedSlices.ToString("N0", ci)} more recent slice(s) are waiting on upstream dependencies and are not counted as backlog."
+        : null;
 
     string note;
     if (notKeepingUp)
@@ -55,6 +63,8 @@
     {
         note = $"Projected to reach its normal delay-bounded frontier ({targetText}). It never reaches the literal current time because of the configured delay.";
     }
+
+    note += blockedNote;
 }
 <section class="@cardClass" aria-label="Catch-up estimate">
     <div class="catch-up-header">
@@ -63,9 +73,20 @@
     </div>
     <dl class="catch-up-detail">
         <div class="catch-up-metric">
-            <dt>Behind by</dt>
-            <dd>@backlogText</dd>
+            <dt>Slices behind</dt>
+            <dd>@slicesBehindText</dd>
         </div>
+        <div class="catch-up-metric">
+            <dt>Data behind</dt>
+            <dd>@dataBehindText</dd>
+        </div>
+        @if (rateText is not null)
+        {
+            <div class="catch-up-metric">
+                <dt>Processing rate</dt>
+                <dd>@rateText</dd>
+            </div>
+        }
         @if (collectingData)
         {
             <div class="catch-up-metric">
@@ -73,14 +94,14 @@
                 <dd>@collectedText</dd>
             </div>
         }
-        @if (rateText is not null)
+        @if (remainingText is not null)
         {
             <div class="catch-up-metric">
-                <dt>Recent rate</dt>
-                <dd>@rateText</dd>
+                <dt>Estimated time remaining</dt>
+                <dd>@remainingText</dd>
             </div>
         }
-        @if (!notKeepingUp && !collectingData && Model.EtaUtc is { } eta)
+        @if (Model.EtaUtc is { } eta)
         {
             <div class="catch-up-metric">
                 <dt>Estimated caught up</dt>
