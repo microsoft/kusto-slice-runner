@@ -1865,6 +1865,53 @@ namespace KoLite.LocalApp.Tests
             Assert.Contains("Catching up", html);
         }
 
+        [Fact]
+        public async Task Job_details_page_renders_collecting_data_card_after_definition_change()
+        {
+            var catalog = new SqliteJobCatalogRepository(sqlite);
+            var state = new SqliteSliceStateRepository(sqlite);
+            var readModels = new SqliteOperationalReadModelRepository(sqlite);
+            catalog.Create(Schedule("job.catchup.collecting", "CatchUpFunction", isPaused: false, queryWindowSize: "01:00:00"));
+            // Definition changed 1h before "now" (20h): the throughput window starts at the change,
+            // so only completions since then are sampled.
+            BackdateDefinitionEvents(JobId("job.catchup.collecting"), At(19 * 60));
+
+            // 4 slices completed => backlog 16 of 20 eligible. Only two succeeded attempts fall after
+            // the definition change (below the 3 required), so a rate cannot be projected yet.
+            for (var i = 0; i < 4; i++)
+            {
+                state.Append($"collecting-complete-{i}", JobId("job.catchup.collecting"), At(i * 60), At((i + 1) * 60), DurableSliceStatus.Completed, expectedVersion: 0);
+            }
+            var completions = new[] { At((19 * 60) + 10), At((19 * 60) + 40) };
+            for (var i = 0; i < completions.Length; i++)
+            {
+                readModels.RecordAttempt($"collecting-attempt-{i}", JobId("job.catchup.collecting"), At(i * 60), At((i + 1) * 60), 1, "Succeeded", "worker", completions[i].AddMinutes(-5), completions[i]);
+            }
+
+            var query = new JobDetailsPageQuery(catalog, readModels, new SqliteWorkQueueRepository(sqlite), new LifecycleReadModel(sqlite), new OperationalDetailsReadModel(sqlite), new ManualClock(At(20 * 60)));
+            var data = query.Get(JobId("job.catchup.collecting"));
+
+            Assert.NotNull(data);
+            Assert.Equal(CatchUpStatus.InsufficientData, data!.CatchUp.Status);
+            Assert.True(data.CatchUp.ShouldDisplay);
+            Assert.True(data.CatchUp.ThroughputWindowBoundedByDefinitionChange);
+            Assert.Equal(2, data.CatchUp.ObservedThroughputSamples);
+            Assert.Null(data.CatchUp.EtaUtc);
+
+            using var runFactory = CreateFactory(enableScheduler: false, configureServices: services => services.AddSingleton<IClock>(new ManualClock(At(20 * 60))));
+            using var client = runFactory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+
+            var html = await client.GetStringAsync($"/jobs/{JobId("job.catchup.collecting")}");
+
+            Assert.Contains("catch-up-card", html);
+            Assert.Contains("Catching up", html);
+            Assert.Contains("Collecting data to estimate catch-up time", html);
+            Assert.Contains("definition changed recently", html);
+            Assert.Contains("at least 3 slices complete successfully over at least", html);
+            Assert.Contains("Data collected", html);
+            Assert.DoesNotContain("Estimated caught up", html);
+        }
+
         private void BackdateDefinitionEvents(string jobId, DateTimeOffset recordedAtUtc)
         {
             using var connection = sqlite.OpenConnection();

@@ -86,7 +86,18 @@ namespace KoLite.Local.Core.Scheduling
         public TimeSpan? ProjectedCatchUp { get; init; }
         public DateTimeOffset? EtaUtc { get; init; }
 
-        public bool ShouldDisplay => Status is CatchUpStatus.CatchingUp or CatchUpStatus.NotKeepingUp;
+        // Throughput-sampling provenance, populated for every estimate. These let the UI explain an
+        // InsufficientData state: when sampling started, how many recent successful completions have
+        // been collected so far, how many (over what minimum span) are required before a rate can be
+        // projected, and whether the sample window was shortened by a recent definition change (the
+        // common reason the data is briefly insufficient right after an edit).
+        public DateTimeOffset? ThroughputWindowStartUtc { get; init; }
+        public bool ThroughputWindowBoundedByDefinitionChange { get; init; }
+        public int ObservedThroughputSamples { get; init; }
+        public int RequiredThroughputSamples { get; init; }
+        public TimeSpan RequiredThroughputSpan { get; init; }
+
+        public bool ShouldDisplay => Status is CatchUpStatus.CatchingUp or CatchUpStatus.NotKeepingUp or CatchUpStatus.InsufficientData;
     }
 
     public static class CatchUpEstimator
@@ -116,6 +127,7 @@ namespace KoLite.Local.Core.Scheduling
             DateTimeOffset? completedFrontierUtc,
             int completedSliceCount,
             CatchUpThroughputSample throughput,
+            DateTimeOffset? lastDefinitionChangeUtc = null,
             CatchUpOptions? options = null)
         {
             var opts = options ?? CatchUpOptions.Default;
@@ -123,6 +135,13 @@ namespace KoLite.Local.Core.Scheduling
             var queryWindow = definition.QueryWindowSize;
             var startFromUtc = definition.StartFrom.ToUniversalTime();
             var targetFrontierUtc = nowUtc - definition.DelayFromUtcNow;
+
+            // Provenance of the throughput sample, surfaced on every projection so the UI can explain
+            // an InsufficientData state (how much data is collected vs required, and whether a recent
+            // definition change shortened the sample window).
+            var windowStartUtc = ResolveThroughputWindowStart(nowUtc, lastDefinitionChangeUtc, opts.MaxThroughputLookback);
+            var boundedByChange = lastDefinitionChangeUtc is { } changeUtc
+                && changeUtc.ToUniversalTime() > nowUtc - opts.MaxThroughputLookback;
 
             // The job can never process past its end-on boundary (when set).
             var eligibleEndUtc = targetFrontierUtc;
@@ -139,7 +158,12 @@ namespace KoLite.Local.Core.Scheduling
             {
                 Status = CatchUpStatus.NotApplicable,
                 CompletedFrontierUtc = completedFrontierUtc,
-                TargetFrontierUtc = targetFrontierUtc
+                TargetFrontierUtc = targetFrontierUtc,
+                ThroughputWindowStartUtc = windowStartUtc,
+                ThroughputWindowBoundedByDefinitionChange = boundedByChange,
+                ObservedThroughputSamples = throughput.SucceededCount,
+                RequiredThroughputSamples = opts.MinThroughputSamples,
+                RequiredThroughputSpan = opts.MinThroughputSpan
             };
 
             if (!isEnabled || definition.IsPaused || queryWindow <= TimeSpan.Zero || eligibleEndUtc <= startFromUtc)
@@ -157,7 +181,12 @@ namespace KoLite.Local.Core.Scheduling
                 BacklogSlices = backlogSlices,
                 BacklogDataTime = backlogDataTime,
                 CompletedFrontierUtc = completedFrontierUtc,
-                TargetFrontierUtc = targetFrontierUtc
+                TargetFrontierUtc = targetFrontierUtc,
+                ThroughputWindowStartUtc = windowStartUtc,
+                ThroughputWindowBoundedByDefinitionChange = boundedByChange,
+                ObservedThroughputSamples = throughput.SucceededCount,
+                RequiredThroughputSamples = opts.MinThroughputSamples,
+                RequiredThroughputSpan = opts.MinThroughputSpan
             };
 
             if (backlogSlices <= opts.MinBacklogSlices)
