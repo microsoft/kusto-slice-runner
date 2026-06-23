@@ -33,6 +33,15 @@ You are the KO Lite maintainer for this repository. Use this agent for KO Lite i
 - The app calls `UseUrls(...)` in `Program.cs` with a default of `http://127.0.0.1:5057`, so the `--urls` switch / `ASPNETCORE_URLS` are overridden and ignored. To actually move the endpoint, set the `KoLite:Urls` configuration key (e.g., `--KoLite:Urls=http://127.0.0.1:5099`). Treat it as one local instance on `:5057` at a time; stop the existing instance before starting another.
 - To find a running instance (for example, the process holding a build-output lock): `Get-NetTCPConnection -LocalPort 5057 -State Listen` and read `OwningProcess`. Stop it gracefully with `scripts\Stop-KoLiteApp.ps1` (see the file-lock section); only ever kill by confirmed PID.
 
+### Find the in-use SQLite database
+
+The database path is resolved at runtime, so it cannot be read reliably from `appsettings.json` (which carries no connection string). Resolution precedence in `Program.cs` `ResolveDatabasePath` is: `ConnectionStrings:KoLiteSqlite` -> `KoLite:DatabasePath` -> default `%LOCALAPPDATA%\KoLite\ko-lite.db`.
+
+- Fastest and authoritative: run `.\scripts\Get-KoLiteDatabase.ps1`. While the app is running it returns the exact `databasePath` the app resolved (it reads `/status/health`); while the app is stopped it reports the default and flags the most likely live file. Pass `-BaseUrl` for a non-default endpoint.
+- Equivalent one-liner when the app is running: `Invoke-RestMethod http://127.0.0.1:5057/status/health | Select-Object databasePath`. The app also logs `KO Lite local SQLite database resolved to {DatabasePath}.` at startup.
+- When the app is stopped, treat the path as a best-effort guess: prefer the file with live `*.db-wal` / `*.db-shm` sidecars, else the most recently written `*.db` under `%LOCALAPPDATA%\KoLite`. Ignore backup/copy files (for example `ko-lite - Copy.db`) and the `*.db-wal` / `*.db-shm` sidecars themselves. Docs use distinct sandbox names (`ko-lite-review.db`, `ko-lite-dev.db`); `ko-lite.db` is only the default when no connection string is supplied.
+
+
 ## Maintenance workflow
 
 1. Classify the task before editing:

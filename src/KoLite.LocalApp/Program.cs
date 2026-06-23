@@ -82,6 +82,10 @@ namespace KoLite.LocalApp
 
             app.Services.GetRequiredService<KoLiteSqliteMigrator>().Migrate();
 
+            app.Logger.LogInformation(
+                "KO Lite local SQLite database resolved to {DatabasePath}.",
+                app.Services.GetRequiredService<KoLiteSqliteConnectionOptions>().DatabasePath);
+
             app.Use(async (context, next) =>
             {
                 try
