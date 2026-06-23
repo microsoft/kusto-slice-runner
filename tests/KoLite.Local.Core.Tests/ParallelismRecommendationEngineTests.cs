@@ -116,6 +116,7 @@ namespace KoLite.Local.Core.Tests
                 ActivityId: activityId,
                 ClusterUri: "https://sample-data.centralus.kusto.windows.net",
                 CurrentMaxParallelism: (int)current,
+                CatalogVersion: 1,
                 QueryWindowSize: TimeSpan.FromMinutes(window),
                 InFlightCount: 1,
                 ObservedSliceDuration: duration is { } d ? TimeSpan.FromMinutes(d) : null,

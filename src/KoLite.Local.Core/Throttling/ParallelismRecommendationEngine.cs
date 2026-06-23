@@ -20,6 +20,7 @@ namespace KoLite.Local.Core.Throttling
         string ActivityId,
         string ClusterUri,
         int CurrentMaxParallelism,
+        long CatalogVersion,
         TimeSpan QueryWindowSize,
         int InFlightCount,
         TimeSpan? ObservedSliceDuration,
@@ -44,6 +45,10 @@ namespace KoLite.Local.Core.Throttling
         public required string ClusterUri { get; init; }
         public required ParallelismRecommendationStatus Status { get; init; }
         public required int CurrentMaxParallelism { get; init; }
+
+        // Catalog version captured when the snapshot was taken, used as the optimistic-concurrency
+        // expectedVersion when the operator applies the recommendation.
+        public long CatalogVersion { get; init; }
 
         // Minimum parallelism that still keeps up with real time, or null when it cannot be estimated.
         public int? KeepUpFloor { get; init; }
@@ -114,6 +119,7 @@ namespace KoLite.Local.Core.Throttling
                 ClusterUri = snapshot.ClusterUri,
                 Status = ParallelismRecommendationStatus.InsufficientData,
                 CurrentMaxParallelism = snapshot.CurrentMaxParallelism,
+                CatalogVersion = snapshot.CatalogVersion,
                 SlicesPerDay = slicesPerDay,
                 ObservedSliceDuration = snapshot.ObservedSliceDuration,
                 DurationSampleCount = snapshot.DurationSampleCount,

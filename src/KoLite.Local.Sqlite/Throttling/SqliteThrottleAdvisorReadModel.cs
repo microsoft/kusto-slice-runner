@@ -84,6 +84,35 @@ namespace KoLite.Local.Sqlite.Throttling
             return advisories;
         }
 
+        // Cheap sustained-throttle check for the dashboard banner: the cluster URIs currently over the
+        // sustained threshold, without the per-job/duration work BuildAdvisories does.
+        public IReadOnlyList<string> ListSustainedClusterUris()
+        {
+            if (!options.Enabled)
+            {
+                return Array.Empty<string>();
+            }
+
+            return throttleStore.SummarizeWindow(clock.UtcNow - options.Window)
+                .Where(summary => summary.ThrottledSliceCount >= options.MinThrottledSlices)
+                .Select(summary => summary.ClusterUri)
+                .ToList();
+        }
+
+        // The keep-up floor for a single job, used as the server-side guardrail when applying a
+        // recommendation. Null when the job is unknown or has too few clean duration samples.
+        public int? EstimateKeepUpFloor(string jobId)
+        {
+            var record = catalog.Get(jobId);
+            if (record is null)
+            {
+                return null;
+            }
+
+            var (duration, _) = EstimateSliceDuration(jobId, clock.UtcNow - options.DurationLookback);
+            return ParallelismRecommendationEngine.ComputeKeepUpFloor(record.Definition.QueryWindowSize, duration, options.KeepUpSafetyFactor);
+        }
+
         private JobThrottleSnapshot ToSnapshot(JobCatalogRecord job, string clusterUri, int inFlightCount, DateTimeOffset durationSinceUtc)
         {
             var definition = job.Definition;
@@ -93,6 +122,7 @@ namespace KoLite.Local.Sqlite.Throttling
                 job.ActivityId,
                 clusterUri,
                 definition.MaxParallelism,
+                job.CatalogVersion,
                 definition.QueryWindowSize,
                 inFlightCount,
                 duration,
