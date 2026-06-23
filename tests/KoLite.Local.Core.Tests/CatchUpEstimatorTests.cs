@@ -82,9 +82,10 @@ namespace KoLite.Local.Core.Tests
         }
 
         [Fact]
-        public void Backlog_that_clears_quickly_is_negligible()
+        public void Backlog_that_clears_quickly_still_displays_until_worked_off()
         {
-            // 12 eligible 5m slices, 6 complete => 30m backlog. R = 10 => ~3.3m to clear.
+            // 12 eligible 5m slices, 6 complete => 30m backlog. R = 10 => ~3.3m to clear. Previously
+            // suppressed as "negligible"; now it stays visible until the backlog is actually gone.
             var projection = CatchUpEstimator.Estimate(
                 Utc("2026-01-01T01:00:00Z"),
                 Job(window: TimeSpan.FromMinutes(5), delay: TimeSpan.Zero),
@@ -93,8 +94,56 @@ namespace KoLite.Local.Core.Tests
                 completedSliceCount: 6,
                 Sample(count: 61, first: "2026-01-01T00:30:00Z", last: "2026-01-01T01:00:00Z"));
 
-            Assert.Equal(CatchUpStatus.Negligible, projection.Status);
+            Assert.Equal(CatchUpStatus.CatchingUp, projection.Status);
+            Assert.True(projection.ShouldDisplay);
+            Assert.Equal(6, projection.BacklogSlices);
+            Assert.NotNull(projection.ProjectedCatchUp);
+            Assert.Equal(3.3, projection.ProjectedCatchUp!.Value.TotalMinutes, 1);
+            Assert.NotNull(projection.EtaUtc);
+        }
+
+        [Fact]
+        public void Dependency_blocked_slices_are_excluded_from_backlog()
+        {
+            // 5 eligible 1h slices, 2 complete => raw backlog 3 (> floor). But 2 of the remaining are
+            // blocked on an upstream dependency, leaving an actionable backlog of 1 (<= floor), so the
+            // job is treated as caught up and nothing is shown.
+            var projection = CatchUpEstimator.Estimate(
+                Utc("2026-01-01T05:00:00Z"),
+                Job(window: TimeSpan.FromHours(1), delay: TimeSpan.Zero),
+                isEnabled: true,
+                completedFrontierUtc: Utc("2026-01-01T02:00:00Z"),
+                completedSliceCount: 2,
+                Sample(count: 11, first: "2026-01-01T04:00:00Z", last: "2026-01-01T04:40:00Z"),
+                dependencyBlockedSliceCount: 2);
+
+            Assert.Equal(CatchUpStatus.CaughtUp, projection.Status);
             Assert.False(projection.ShouldDisplay);
+            Assert.Equal(1, projection.BacklogSlices);
+            Assert.Equal(2, projection.BacklogBlockedSlices);
+        }
+
+        [Fact]
+        public void Large_backlog_still_displays_after_excluding_a_few_blocked_slices()
+        {
+            // 240 eligible 1h slices, 200 complete => raw backlog 40; 5 are blocked on upstream, so the
+            // actionable backlog is 35h. R = 5 => 35 / (5 - 1) = 8.75h to catch up.
+            var projection = CatchUpEstimator.Estimate(
+                Utc("2026-01-11T00:00:00Z"),
+                Job(window: TimeSpan.FromHours(1), delay: TimeSpan.Zero),
+                isEnabled: true,
+                completedFrontierUtc: Utc("2026-01-09T08:00:00Z"),
+                completedSliceCount: 200,
+                Sample(count: 11, first: "2026-01-10T20:00:00Z", last: "2026-01-10T22:00:00Z"),
+                dependencyBlockedSliceCount: 5);
+
+            Assert.Equal(CatchUpStatus.CatchingUp, projection.Status);
+            Assert.True(projection.ShouldDisplay);
+            Assert.Equal(35, projection.BacklogSlices);
+            Assert.Equal(5, projection.BacklogBlockedSlices);
+            Assert.Equal(TimeSpan.FromHours(35), projection.BacklogDataTime);
+            Assert.Equal(TimeSpan.FromHours(8.75), projection.ProjectedCatchUp);
+            Assert.Equal(Utc("2026-01-11T08:45:00Z"), projection.EtaUtc);
         }
 
         [Fact]

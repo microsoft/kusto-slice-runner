@@ -1940,6 +1940,41 @@ namespace KoLite.LocalApp.Tests
 
             Assert.Contains("catch-up-card", html);
             Assert.Contains("Catching up", html);
+            Assert.Contains("Slices behind", html);
+            Assert.Contains("Data behind", html);
+            Assert.Contains("Processing rate", html);
+            Assert.Contains("Estimated time remaining", html);
+        }
+
+        [Fact]
+        public async Task Job_details_page_hides_catch_up_card_when_backlog_is_upstream_blocked()
+        {
+            var catalog = new SqliteJobCatalogRepository(sqlite);
+            var state = new SqliteSliceStateRepository(sqlite);
+            var readModels = new SqliteOperationalReadModelRepository(sqlite);
+            catalog.Create(Schedule("job.catchup.blocked", "CatchUpFunction", isPaused: false, queryWindowSize: "01:00:00"));
+            BackdateDefinitionEvents(JobId("job.catchup.blocked"), At(0));
+
+            // 4 completed slices with recent successes: without blocking this is a 16-slice backlog
+            // projecting "Catching up". The remaining eligible slices are blocked on an upstream
+            // dependency, so the actionable backlog drops below the floor and no card is shown.
+            var completions = new[] { At(17 * 60), At((17 * 60) + 20), At((17 * 60) + 40), At(18 * 60) };
+            for (var i = 0; i < 4; i++)
+            {
+                state.Append($"blocked-complete-{i}", JobId("job.catchup.blocked"), At(i * 60), At((i + 1) * 60), DurableSliceStatus.Completed, expectedVersion: 0);
+                readModels.RecordAttempt($"blocked-attempt-{i}", JobId("job.catchup.blocked"), At(i * 60), At((i + 1) * 60), 1, "Succeeded", "worker", completions[i].AddMinutes(-5), completions[i]);
+            }
+            for (var i = 4; i < 20; i++)
+            {
+                state.Append($"blocked-dep-{i}", JobId("job.catchup.blocked"), At(i * 60), At((i + 1) * 60), DurableSliceStatus.DependencyBlocked, expectedVersion: 0, reason: "upstream");
+            }
+
+            using var runFactory = CreateFactory(enableScheduler: false, configureServices: services => services.AddSingleton<IClock>(new ManualClock(At(20 * 60))));
+            using var client = runFactory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+
+            var html = await client.GetStringAsync($"/jobs/{JobId("job.catchup.blocked")}");
+
+            Assert.DoesNotContain("catch-up-card", html);
         }
 
         [Fact]

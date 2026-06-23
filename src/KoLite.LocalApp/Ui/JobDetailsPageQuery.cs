@@ -137,6 +137,11 @@ namespace KoLite.LocalApp.Ui
             var completed = statuses.Where(s => string.Equals(s.Status, "Completed", StringComparison.Ordinal)).ToList();
             DateTimeOffset? completedFrontier = completed.Count == 0 ? null : completed.Max(s => s.SliceEndUtc);
 
+            // Slices that are eligible by time but parked waiting on an upstream dependency. They are
+            // excluded from the backlog so a job that is only waiting on upstream (for its most recent
+            // slices) is not reported as catching up.
+            var dependencyBlocked = statuses.Count(s => string.Equals(s.Status, "DependencyBlocked", StringComparison.Ordinal));
+
             var lastDefinitionChange = catalogHistory
                 .Where(h => h.IsInitialDefinition || h.HasScheduleChanges)
                 .Select(h => (DateTimeOffset?)h.RecordedAtUtc)
@@ -147,7 +152,7 @@ namespace KoLite.LocalApp.Ui
             var throughput = readModels.GetRecentSucceededThroughput(job.JobId, sinceUtc);
             var sample = new CatchUpThroughputSample(throughput.SucceededCount, throughput.FirstCompletedUtc, throughput.LastCompletedUtc);
 
-            return CatchUpEstimator.Estimate(now, definition, job.IsEnabled, completedFrontier, completed.Count, sample, lastDefinitionChange, options);
+            return CatchUpEstimator.Estimate(now, definition, job.IsEnabled, completedFrontier, completed.Count, sample, dependencyBlocked, lastDefinitionChange, options);
         }
 
         public SliceDetailsPageData? GetSlice(string jobId, DateTimeOffset sliceStartUtc, DateTimeOffset sliceEndUtc)
