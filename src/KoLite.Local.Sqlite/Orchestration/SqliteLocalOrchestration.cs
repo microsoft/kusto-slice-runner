@@ -160,7 +160,7 @@ namespace KoLite.Local.Sqlite.Orchestration
             }
 
             var startedAtUtc = clock.UtcNow;
-            var progress = new LocalWorkerProgressEvent(item.JobId, item.QueueItemId, item.SliceStartUtc, item.SliceEndUtc, item.Attempts, options.WorkerId, LocalWorkerProgressStatus.Started, startedAtUtc);
+            var progress = new LocalWorkerProgressEvent(item.JobId, item.QueueItemId, item.SliceStartUtc, item.SliceEndUtc, item.Attempts, options.WorkerId, LocalWorkerProgressStatus.Started, startedAtUtc, ClusterUri: jobRecord.Definition.Target.ClusterUri);
             observability.RecordAttempt(AttemptId(item), item.JobId, item.SliceStartUtc, item.SliceEndUtc, item.Attempts, "Started", options.WorkerId, startedAtUtc, null);
             observability.RecordLog("Information", "Slice dispatched.", "worker", item.JobId, item.SliceStartUtc, item.SliceEndUtc);
             progressSink.RecordStarted(progress);

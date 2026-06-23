@@ -13,9 +13,12 @@ namespace KoLite.Local.Sqlite.Migrations
         // The schema is a single, idempotent baseline: a fresh database gets the full GUID-identity
         // schema directly (no historical migration chain to replay). A legacy pre-consolidation
         // ledger (the old 1..6 chain) is collapsed to this baseline once, in place, on first run.
+        // Additive post-baseline migrations (version >= 2) are appended here and replay normally on
+        // databases already provisioned at the baseline.
         private static readonly SqliteMigration[] Migrations =
         [
             new(BaselineVersion, BaselineName, BaselineSchemaSql),
+            new(2, "ingestion-throttle-observations", IngestionThrottleObservationsSql),
         ];
 
         private readonly IKoLiteSqliteConnectionFactory connectionFactory;
@@ -427,6 +430,27 @@ namespace KoLite.Local.Sqlite.Migrations
             CREATE INDEX IF NOT EXISTS ix_rerun_batches_root_requested ON rerun_batches(root_job_id, requested_at_utc);
             CREATE INDEX IF NOT EXISTS ix_rerun_slices_batch_status ON rerun_slices(rerun_batch_id, status);
             CREATE INDEX IF NOT EXISTS ix_rerun_slices_job_slice ON rerun_slices(job_id, slice_start_utc, slice_end_utc);
+            """;
+
+        // Version 2 (additive): records every Kusto ingestion-capacity throttle (429,
+        // CapacityPolicy/Ingestion) a slice attempt hit. Drives the sustained-throttle detector and
+        // the advisory maxParallelism recommendations. Append-only, time-pruned, and purged with the
+        // owning job; no foreign key (matches the slice_attempts / current_slice_state pattern, with
+        // explicit cleanup on hard-delete).
+        private const string IngestionThrottleObservationsSql = """
+            CREATE TABLE IF NOT EXISTS ingestion_throttle_observations (
+                observation_id TEXT NOT NULL PRIMARY KEY,
+                job_id TEXT NOT NULL,
+                cluster_uri TEXT NOT NULL,
+                slice_start_utc TEXT NOT NULL,
+                slice_end_utc TEXT NOT NULL,
+                attempt INTEGER NOT NULL DEFAULT 0,
+                reported_capacity INTEGER NULL,
+                observed_at_utc TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+            );
+
+            CREATE INDEX IF NOT EXISTS ix_ingestion_throttle_cluster_observed ON ingestion_throttle_observations(cluster_uri, observed_at_utc);
+            CREATE INDEX IF NOT EXISTS ix_ingestion_throttle_job ON ingestion_throttle_observations(job_id);
             """;
     }
 }

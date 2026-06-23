@@ -15,6 +15,7 @@ using KoLite.Local.Sqlite.Queue;
 using KoLite.Local.Sqlite.Repair;
 using KoLite.Local.Sqlite.Rerun;
 using KoLite.Local.Sqlite.State;
+using KoLite.Local.Sqlite.Throttling;
 using KoLite.LocalApp.Api;
 using KoLite.LocalApp.Ui;
 using KoLite.LocalApp.Updates;
@@ -39,6 +40,8 @@ namespace KoLite.LocalApp
             builder.Services.AddScoped<SqliteWorkQueueRepository>();
             builder.Services.AddScoped<SqliteSliceStateRepository>();
             builder.Services.AddScoped<SqliteJobLifecycleService>();
+            builder.Services.AddSingleton<SqliteIngestionThrottleRepository>();
+            builder.Services.AddSingleton<IngestionThrottleObserver>();
             builder.Services.AddScoped<SqliteRerunService>();
             builder.Services.AddScoped<SqliteRepairService>();
             builder.Services.AddScoped<DashboardPageQuery>();
@@ -581,10 +584,14 @@ namespace KoLite.LocalApp
     internal sealed class LoggingLocalWorkerProgressSink : ILocalWorkerProgressSink
     {
         private readonly ILogger<LoggingLocalWorkerProgressSink> logger;
+        private readonly IngestionThrottleObserver throttleObserver;
 
-        public LoggingLocalWorkerProgressSink(ILogger<LoggingLocalWorkerProgressSink> logger)
+        public LoggingLocalWorkerProgressSink(
+            ILogger<LoggingLocalWorkerProgressSink> logger,
+            IngestionThrottleObserver throttleObserver)
         {
             this.logger = logger;
+            this.throttleObserver = throttleObserver;
         }
 
         public void RecordStarted(LocalWorkerProgressEvent progress)
@@ -599,6 +606,8 @@ namespace KoLite.LocalApp
 
         public void RecordFinished(LocalWorkerProgressEvent progress)
         {
+            TryRecordIngestionThrottle(progress);
+
             if (progress.Status == LocalWorkerProgressStatus.Succeeded)
             {
                 logger.LogInformation(
@@ -634,6 +643,22 @@ namespace KoLite.LocalApp
                 progress.Status,
                 progress.ErrorCode,
                 progress.ErrorMessage);
+        }
+
+        // Records an observation when a slice attempt failed specifically because of Kusto
+        // ingestion-capacity throttling (429, CapacityPolicy/Ingestion). Best-effort and isolated:
+        // a recording failure is logged but never propagated, so detection cannot destabilize the
+        // worker. The observer ignores non-throttle outcomes and events without a resolved cluster.
+        private void TryRecordIngestionThrottle(LocalWorkerProgressEvent progress)
+        {
+            try
+            {
+                throttleObserver.Observe(progress);
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Failed to record ingestion throttle observation for job {JobId}.", progress.JobId);
+            }
         }
     }
 

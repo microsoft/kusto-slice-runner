@@ -52,6 +52,7 @@ namespace KoLite.Local.Sqlite.Lifecycle
             var logRows = Delete(c, tx, "operational_logs", "job_id=$job", jobId);
             var stateEventRows = Delete(c, tx, "slice_state_events", "job_id=$job", jobId);
             var stateRows = Delete(c, tx, "current_slice_state", "job_id=$job", jobId);
+            var throttleObservationRows = Delete(c, tx, "ingestion_throttle_observations", "job_id=$job", jobId);
             var repairSliceRows = Delete(c, tx, "repair_slices", "job_id=$job", jobId);
             var repairBatchRows = DeleteRepairBatches(c, tx, repairBatchIds);
             var summaryRows = Delete(c, tx, "failure_summary_runs", "job_id=$job", jobId);
@@ -69,6 +70,7 @@ namespace KoLite.Local.Sqlite.Lifecycle
                 logRows,
                 stateRows,
                 stateEventRows,
+                throttleObservationRows,
                 repairSliceRows,
                 repairBatchRows,
                 summaryRows,
