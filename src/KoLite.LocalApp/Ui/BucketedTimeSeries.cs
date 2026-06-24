@@ -1,4 +1,5 @@
 using KoLite.Local.Sqlite.Connections;
+using KoLite.Local.Sqlite.Infrastructure;
 using Microsoft.Data.Sqlite;
 
 namespace KoLite.LocalApp.Ui
@@ -60,8 +61,8 @@ namespace KoLite.LocalApp.Ui
             using var connection = connectionFactory.OpenConnection();
             using var command = connection.CreateCommand();
             command.CommandText = commandText;
-            command.Add("$since", SqliteUi.FormatUtc(window.Since));
-            command.Add("$until", SqliteUi.FormatUtc(window.Until));
+            command.Add("$since", SqliteStorage.Utc(window.Since));
+            command.Add("$until", SqliteStorage.Utc(window.Until));
             bindParameters?.Invoke(command);
             using var reader = command.ExecuteReader();
             var results = new List<T>();

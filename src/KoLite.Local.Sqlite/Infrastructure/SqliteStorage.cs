@@ -13,12 +13,14 @@ namespace KoLite.Local.Sqlite.Infrastructure
 
         internal static string Utc(DateTimeOffset value) => value.ToUniversalTime().UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ", CultureInfo.InvariantCulture);
 
-        internal static DateTimeOffset ReadUtc(SqliteDataReader reader, string name) => DateTimeOffset.Parse(reader.GetString(reader.GetOrdinal(name)), CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal);
+        internal static DateTimeOffset ParseUtc(string value) => DateTimeOffset.Parse(value, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal);
+
+        internal static DateTimeOffset ReadUtc(SqliteDataReader reader, string name) => ParseUtc(reader.GetString(reader.GetOrdinal(name)));
 
         internal static DateTimeOffset? ReadNullableUtc(SqliteDataReader reader, string name)
         {
             var ordinal = reader.GetOrdinal(name);
-            return reader.IsDBNull(ordinal) ? null : DateTimeOffset.Parse(reader.GetString(ordinal), CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal);
+            return reader.IsDBNull(ordinal) ? null : ParseUtc(reader.GetString(ordinal));
         }
 
         internal static string CanonicalJson(string json)

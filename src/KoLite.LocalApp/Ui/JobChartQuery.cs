@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.Json;
 using KoLite.Local.Core.Time;
 using KoLite.Local.Sqlite.Connections;
+using KoLite.Local.Sqlite.Infrastructure;
 
 namespace KoLite.LocalApp.Ui
 {
@@ -374,15 +375,15 @@ namespace KoLite.LocalApp.Ui
                     DateTimeOffset? startedAtUtc = null;
                     if (!reader.IsDBNull(1))
                     {
-                        startedAtUtc = SqliteUi.ParseUtc(reader.GetString(1));
+                        startedAtUtc = SqliteStorage.ParseUtc(reader.GetString(1));
                     }
                     else if (!reader.IsDBNull(2))
                     {
-                        startedAtUtc = SqliteUi.ParseUtc(reader.GetString(2));
+                        startedAtUtc = SqliteStorage.ParseUtc(reader.GetString(2));
                     }
 
                     return new SuccessfulDurationSample(
-                        SqliteUi.ParseUtc(reader.GetString(0)),
+                        SqliteStorage.ParseUtc(reader.GetString(0)),
                         startedAtUtc,
                         reader.IsDBNull(1) && !reader.IsDBNull(2),
                         reader.GetString(3));
@@ -410,7 +411,7 @@ namespace KoLite.LocalApp.Ui
                     var status = reader.GetString(2);
                     return new AttemptOutcome(
                         reader.GetString(0),
-                        SqliteUi.ParseUtc(reader.GetString(1)),
+                        SqliteStorage.ParseUtc(reader.GetString(1)),
                         StringComparer.Ordinal.Equals(status, "Succeeded"));
                 });
         }
@@ -443,7 +444,7 @@ namespace KoLite.LocalApp.Ui
                     var status = reader.GetString(2);
                     return new AttemptOutcome(
                         reader.GetString(0),
-                        SqliteUi.ParseUtc(reader.GetString(1)),
+                        SqliteStorage.ParseUtc(reader.GetString(1)),
                         StringComparer.Ordinal.Equals(status, "Completed"));
                 });
         }
