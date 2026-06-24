@@ -148,7 +148,7 @@ namespace KoLite.LocalApp.Api
                 var record = catalog.Get(jobId);
                 return record is null
                     ? Results.NotFound()
-                    : Results.Content(record.ScheduleJson, "application/json");
+                    : Results.Content(AppFormatting.PrettyJson(record.ScheduleJson), "application/json");
             });
 
             app.MapGet("/catalog/export", (

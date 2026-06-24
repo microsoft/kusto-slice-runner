@@ -281,10 +281,15 @@ namespace KoLite.Local.Sqlite.Catalog
         private string SerializeAsImportArray(IEnumerable<JobCatalogRecord> records)
         {
             var labels = ActivityLabels();
-            return "[" + string.Join(",", records
+            var array = new JsonArray();
+            foreach (var record in records
                 .OrderBy(record => record.ActivityId, StringComparer.Ordinal)
-                .ThenBy(record => record.JobId, StringComparer.Ordinal)
-                .Select(record => CatalogScheduleJson.WriteExportJson(record.ScheduleJson, labels))) + "]";
+                .ThenBy(record => record.JobId, StringComparer.Ordinal))
+            {
+                array.Add(CatalogScheduleJson.BuildExportNode(record.ScheduleJson, labels));
+            }
+
+            return array.ToJsonString(SqliteStorage.IndentedJsonOptions);
         }
 
         private IReadOnlyDictionary<string, string> ActivityLabels() =>

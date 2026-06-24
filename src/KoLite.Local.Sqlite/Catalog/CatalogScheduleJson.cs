@@ -39,7 +39,15 @@ namespace KoLite.Local.Sqlite.Catalog
 
         // Produces an export-friendly JSON: keeps the id-based edges authoritative but adds the
         // upstream job's current activityId label next to each edge for human readability.
-        public static string WriteExportJson(string storedJson, IReadOnlyDictionary<string, string> idToActivityId)
+        // Exports are pretty-printed (indented) for readable diffs; see BuildExportNode for the
+        // composable node used by multi-job array exports.
+        public static string WriteExportJson(string storedJson, IReadOnlyDictionary<string, string> idToActivityId) =>
+            BuildExportNode(storedJson, idToActivityId).ToJsonString(SqliteStorage.IndentedJsonOptions);
+
+        // Builds the export-friendly node (id-based dependsOn edges annotated with the upstream
+        // job's current activityId). Returned unserialized so multi-job exports can compose a
+        // single JsonArray and indent the whole document once.
+        public static JsonObject BuildExportNode(string storedJson, IReadOnlyDictionary<string, string> idToActivityId)
         {
             var root = JsonNode.Parse(storedJson)?.AsObject()
                 ?? throw new InvalidOperationException("Schedule JSON root must be a JSON object.");
@@ -76,7 +84,7 @@ namespace KoLite.Local.Sqlite.Catalog
                 root["dependsOn"] = rebuilt;
             }
 
-            return root.ToJsonString(SqliteStorage.JsonOptions);
+            return root;
         }
     }
 }

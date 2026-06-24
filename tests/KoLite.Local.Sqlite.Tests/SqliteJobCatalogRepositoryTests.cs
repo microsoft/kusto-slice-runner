@@ -58,7 +58,8 @@ namespace KoLite.Local.Sqlite.Tests
             Assert.Equal(3, updated.Definition.MaxParallelism);
             Assert.Empty(repository.List(enabledOnly: true));
             Assert.Equal(updated.ScheduleJson, repository.Get(created.JobId)!.ScheduleJson);
-            Assert.Equal(updated.ScheduleJson, repository.Export(created.JobId));
+            Assert.Equal(updated.ScheduleJson, Compact(repository.Export(created.JobId)));
+            Assert.Contains("\n", repository.Export(created.JobId), StringComparison.Ordinal);
             Assert.Equal(["Created", "Disabled", "Updated"], repository.History(created.JobId).Select(e => e.EventType).ToArray());
             Assert.Throws<InvalidOperationException>(() => repository.SetEnabled(created.JobId, enabled: true, expectedVersion: created.CatalogVersion));
         }
@@ -110,6 +111,31 @@ namespace KoLite.Local.Sqlite.Tests
 
             var selectedJson = repository.ExportSelected([JobId("job.b"), JobId("job.a"), JobId("job.1")]);
             Assert.Equal(["job.1", "job.a", "job.b"], ActivityIds(selectedJson));
+        }
+
+        [Fact]
+        public void Exports_are_pretty_printed_and_remain_import_compatible()
+        {
+            var created = repository.Create(Schedule("job.pretty", paused: false));
+
+            var single = repository.Export(created.JobId);
+            var all = repository.ExportAll();
+            var selected = repository.ExportSelected([created.JobId]);
+
+            // Compact JSON from these serializers never contains a newline, so a newline proves the
+            // export is indented (pretty-printed).
+            Assert.Contains("\n", single, StringComparison.Ordinal);
+            Assert.Contains("\n", all, StringComparison.Ordinal);
+            Assert.Contains("\n", selected, StringComparison.Ordinal);
+
+            // Pretty-printing must not break import round-tripping.
+            var parsedSingle = ScheduleImportParser.Parse(single);
+            var parsedAll = ScheduleImportParser.Parse(all);
+            Assert.True(parsedSingle.IsValid, string.Join("; ", parsedSingle.Errors.Select(e => $"{e.Field}: {e.Message}")));
+            Assert.True(parsedAll.IsValid, string.Join("; ", parsedAll.Errors.Select(e => $"{e.Field}: {e.Message}")));
+
+            // An empty selection still produces a compact empty array.
+            Assert.Equal("[]", repository.ExportSelected([]));
         }
 
         [Fact]
@@ -214,7 +240,7 @@ namespace KoLite.Local.Sqlite.Tests
             Assert.Equal(1, result.Updated);
             Assert.Equal(["security", "prod"], updated.Definition.Tags);
             Assert.Equal(["daily"], imported.Definition.Tags);
-            Assert.Contains("\"tags\":[\"security\",\"prod\"]", repository.Export(JobId("job.tags")), StringComparison.Ordinal);
+            Assert.Contains("\"tags\":[\"security\",\"prod\"]", Compact(repository.Export(JobId("job.tags"))), StringComparison.Ordinal);
             Assert.True(exportAll.IsValid, string.Join(Environment.NewLine, exportAll.Errors.Select(e => $"{e.Field}: {e.Message}")));
             Assert.Equal(["security", "prod"], exportAll.Items.Single(item => item.Definition.ActivityId == "job.tags").Definition.Tags);
             Assert.Equal(["daily"], exportAll.Items.Single(item => item.Definition.ActivityId == "job.tags.new").Definition.Tags);
@@ -308,6 +334,12 @@ namespace KoLite.Local.Sqlite.Tests
             return document.RootElement.EnumerateArray()
                 .Select(item => item.GetProperty("activityId").GetString() ?? string.Empty)
                 .ToArray();
+        }
+
+        private static string Compact(string json)
+        {
+            using var document = JsonDocument.Parse(json);
+            return JsonSerializer.Serialize(document.RootElement);
         }
 
         private static string JobId(string activityId)

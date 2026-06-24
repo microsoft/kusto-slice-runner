@@ -89,4 +89,5 @@ untouched. `activityId` uniqueness is enforced across the catalog.
 Exports are import-compatible and always include `id`. Export all emits every non-soft-deleted
 job; row/detail export emits one job. Multi-job exports are emitted as a JSON array sorted in
 ascending `activityId` (then `id`) order, so the output is deterministic and produces stable
-diffs regardless of insertion order.
+diffs regardless of insertion order. Export output is pretty-printed (indented) JSON for
+readability; the compact JSON kept in local storage is unaffected.

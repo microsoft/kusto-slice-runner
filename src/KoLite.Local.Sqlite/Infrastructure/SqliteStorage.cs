@@ -11,6 +11,13 @@ namespace KoLite.Local.Sqlite.Infrastructure
             WriteIndented = false,
         };
 
+        // Same serializer behavior as JsonOptions but indented. Used only for human-facing
+        // export output; storage and canonicalization stay on the compact JsonOptions.
+        internal static readonly JsonSerializerOptions IndentedJsonOptions = new(JsonSerializerDefaults.Web)
+        {
+            WriteIndented = true,
+        };
+
         internal static string Utc(DateTimeOffset value) => value.ToUniversalTime().UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ", CultureInfo.InvariantCulture);
 
         internal static DateTimeOffset ParseUtc(string value) => DateTimeOffset.Parse(value, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal);
