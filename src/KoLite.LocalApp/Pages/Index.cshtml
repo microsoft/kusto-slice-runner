@@ -12,7 +12,6 @@
     <div class="button-row">
         <a class="btn primary" href="/catalog/new">@UiIcons.IconText("plus", "New job")</a>
         <a class="btn" href="/catalog/import">@UiIcons.IconText("upload", "Import")</a>
-        <a class="btn" href="/catalog/export">@UiIcons.IconText("download", "Export all")</a>
         <form method="post" action="/catalog/pause-all" class="inline-form">
             @Html.AntiForgeryToken()
             <button class="btn" type="submit">@UiIcons.IconText("pause", "Pause all")</button>

@@ -933,7 +933,7 @@ namespace KoLite.LocalApp.Tests
         }
 
         [Fact]
-        public async Task Dashboard_links_export_all_and_route_exports_non_soft_deleted_jobs()
+        public async Task Dashboard_omits_export_all_button_and_route_exports_non_soft_deleted_jobs()
         {
             var catalog = new SqliteJobCatalogRepository(sqlite);
             catalog.Create(Schedule("job.active", "ActiveFunction", isPaused: false));
@@ -950,8 +950,8 @@ namespace KoLite.LocalApp.Tests
                 .Select(item => item.GetProperty("activityId").GetString() ?? string.Empty)
                 .ToArray();
 
-            Assert.Contains("href=\"/catalog/export\"", dashboard);
-            Assert.Contains(">Export all</span>", dashboard);
+            Assert.DoesNotContain("href=\"/catalog/export\"", dashboard);
+            Assert.DoesNotContain(">Export all</span>", dashboard);
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             Assert.Equal("application/json", response.Content.Headers.ContentType?.MediaType);
             Assert.Equal(["job.active", "job.disabled"], ids);
