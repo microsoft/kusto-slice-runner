@@ -4,7 +4,7 @@ using KoLite.LocalApp.Ui;
 
 namespace KoLite.LocalApp.Pages.Catalog
 {
-    internal sealed record BulkOperationResult(int Changed, int Skipped, int Conflicted)
+    internal sealed record BulkOperationResult(int Changed, int Skipped, int Conflicted, IReadOnlyList<string>? BlockedByDependents = null)
     {
         public string ToMessage(string verb)
         {
@@ -17,6 +17,11 @@ namespace KoLite.LocalApp.Pages.Catalog
             if (Conflicted > 0)
             {
                 message += $" {Conflicted} skipped because they changed since the page loaded.";
+            }
+
+            if (BlockedByDependents is { Count: > 0 } blocked)
+            {
+                message += $" {blocked.Count} skipped because other active jobs depend on them: {string.Join("; ", blocked)}.";
             }
 
             return message;
@@ -97,12 +102,22 @@ namespace KoLite.LocalApp.Pages.Catalog
             var changed = 0;
             var skipped = 0;
             var conflicted = 0;
+            var blocked = new List<string>();
             foreach (var (jobId, expectedVersion) in Pair(jobIds, expectedVersions))
             {
                 var current = catalog.Get(jobId);
                 if (current is null || softDeleted.Contains(jobId))
                 {
                     skipped++;
+                    continue;
+                }
+
+                // Bulk does not auto-force: a job with active downstream dependents is skipped and named
+                // (with its dependents) in the summary so the operator knows why it was left behind.
+                var dependents = lifecycle.GetActiveDependents(jobId);
+                if (dependents.Count > 0)
+                {
+                    blocked.Add($"{current.ActivityId} (needed by {string.Join(", ", dependents.Select(dependent => dependent.ActivityId))})");
                     continue;
                 }
 
@@ -117,7 +132,7 @@ namespace KoLite.LocalApp.Pages.Catalog
                 }
             }
 
-            return new BulkOperationResult(changed, skipped, conflicted);
+            return new BulkOperationResult(changed, skipped, conflicted, blocked);
         }
 
         private static HashSet<string> SoftDeletedJobIds(LifecycleReadModel lifecycle) =>

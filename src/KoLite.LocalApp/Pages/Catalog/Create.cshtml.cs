@@ -18,7 +18,7 @@ namespace KoLite.LocalApp.Pages.Catalog
         [BindProperty(Name = "scheduleJson")] public string ScheduleJson { get; set; } = SampleScheduleFactory.CreateJson();
         [BindProperty] public string FormMode { get; set; } = "fields";
         public string? ErrorMessage { get; private set; }
-        public ScheduleEditorViewModel Editor => new("/catalog/create", Input, ScheduleJson, null, false, "Create job");
+        public ScheduleEditorViewModel Editor => new("/catalog/create", Input, ScheduleJson, null, false, "Create job", false, ScheduleEditorViewModel.BuildOptions(catalog, null));
 
         public IActionResult OnGet()
         {

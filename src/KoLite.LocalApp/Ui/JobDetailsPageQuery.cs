@@ -5,6 +5,7 @@ using KoLite.Local.Core.Time;
 using KoLite.Local.Sqlite.Catalog;
 using KoLite.Local.Sqlite.Observability;
 using KoLite.Local.Sqlite.Queue;
+using KoLite.Local.Sqlite.State;
 
 namespace KoLite.LocalApp.Ui
 {
@@ -64,21 +65,27 @@ namespace KoLite.LocalApp.Ui
         private readonly SqliteJobCatalogRepository catalog;
         private readonly SqliteOperationalReadModelRepository readModels;
         private readonly SqliteWorkQueueRepository queue;
+        private readonly SqliteSliceStateRepository? sliceState;
         private readonly LifecycleReadModel lifecycle;
         private readonly OperationalDetailsReadModel operationalDetails;
         private readonly IClock clock;
 
+        // sliceState is an optional trailing dependency so the existing positional test callers that
+        // construct this query with six arguments keep compiling. The DI container always supplies the
+        // registered SqliteSliceStateRepository; when it is null the "waiting on" tooltip lines are skipped.
         public JobDetailsPageQuery(
             SqliteJobCatalogRepository catalog,
             SqliteOperationalReadModelRepository readModels,
             SqliteWorkQueueRepository queue,
             LifecycleReadModel lifecycle,
             OperationalDetailsReadModel operationalDetails,
-            IClock clock)
+            IClock clock,
+            SqliteSliceStateRepository? sliceState = null)
         {
             this.catalog = catalog;
             this.readModels = readModels;
             this.queue = queue;
+            this.sliceState = sliceState;
             this.lifecycle = lifecycle;
             this.operationalDetails = operationalDetails;
             this.clock = clock;
@@ -103,7 +110,8 @@ namespace KoLite.LocalApp.Ui
             lifecycleStates.TryGetValue(jobId, out var lifecycleState);
             var statuses = readModels.GetSliceStatus(jobId);
             var queueItems = queue.List(jobId);
-            var sliceHistory = BuildSliceHistory(job.Definition, statuses, queueItems, fromUtc, toUtc, sliceHistoryCellLimit);
+            var waitingLinesByStart = BuildWaitingOnTooltipLines(job.Definition, statuses);
+            var sliceHistory = BuildSliceHistory(job.Definition, statuses, queueItems, fromUtc, toUtc, sliceHistoryCellLimit, waitingLinesByStart);
             var catalogHistory = CatalogHistoryDiffBuilder.Build(catalog.History(jobId));
             var catchUp = BuildCatchUp(job, job.Definition, statuses, catalogHistory);
             return new JobDetailsPageData(
@@ -182,7 +190,7 @@ namespace KoLite.LocalApp.Ui
                 isOrphaned);
         }
 
-        private static SliceHistoryBuildResult BuildSliceHistory(JobDefinition definition, IReadOnlyList<SliceStatusReadout> statuses, IReadOnlyList<DurableWorkItem> queueItems, DateTimeOffset? fromUtc, DateTimeOffset? toUtc, int cellLimit)
+        private static SliceHistoryBuildResult BuildSliceHistory(JobDefinition definition, IReadOnlyList<SliceStatusReadout> statuses, IReadOnlyList<DurableWorkItem> queueItems, DateTimeOffset? fromUtc, DateTimeOffset? toUtc, int cellLimit, IReadOnlyDictionary<DateTimeOffset, IReadOnlyList<SliceHistoryTooltipLine>> waitingLinesByStart)
         {
             var now = DateTimeOffset.UtcNow;
             var queryWindow = definition.QueryWindowSize;
@@ -214,10 +222,10 @@ namespace KoLite.LocalApp.Ui
             var fixedRowSpan = FixedRowSpanFor(queryWindow);
             if (fixedRowSpan is { } rowSpan && rowSpan.Ticks % queryWindow.Ticks == 0)
             {
-                return BuildFixedSpanSliceHistory(definition, statusByStart, activeQueueByStart, start, end, now, cellLimit, rowSpan);
+                return BuildFixedSpanSliceHistory(definition, statusByStart, activeQueueByStart, start, end, now, cellLimit, rowSpan, waitingLinesByStart);
             }
 
-            return BuildSequentialSliceHistory(definition, statusByStart, activeQueueByStart, start, end, now, cellLimit);
+            return BuildSequentialSliceHistory(definition, statusByStart, activeQueueByStart, start, end, now, cellLimit, waitingLinesByStart);
         }
 
         private static SliceHistoryBuildResult BuildFixedSpanSliceHistory(
@@ -228,7 +236,8 @@ namespace KoLite.LocalApp.Ui
             DateTimeOffset end,
             DateTimeOffset now,
             int cellLimit,
-            TimeSpan rowSpan)
+            TimeSpan rowSpan,
+            IReadOnlyDictionary<DateTimeOffset, IReadOnlyList<SliceHistoryTooltipLine>> waitingLinesByStart)
         {
             var cellsPerRow = (int)(rowSpan.Ticks / definition.QueryWindowSize.Ticks);
             var rowStart = FloorToRowSpan(start, rowSpan);
@@ -249,7 +258,7 @@ namespace KoLite.LocalApp.Ui
                 var firstSliceStart = FirstSliceStartAtOrAfter(row, definition.StartFrom, definition.QueryWindowSize);
                 for (var i = 0; i < cellsPerRow; i++)
                 {
-                    cells.Add(BuildSliceHistoryCell(definition, statusByStart, activeQueueByStart, firstSliceStart.AddTicks(definition.QueryWindowSize.Ticks * i), now));
+                    cells.Add(BuildSliceHistoryCell(definition, statusByStart, activeQueueByStart, firstSliceStart.AddTicks(definition.QueryWindowSize.Ticks * i), now, waitingLinesByStart));
                 }
 
                 rows.Add(new SliceHistoryRow(RowLabel(row, rowSpan), cells));
@@ -265,7 +274,8 @@ namespace KoLite.LocalApp.Ui
             DateTimeOffset start,
             DateTimeOffset end,
             DateTimeOffset now,
-            int cellLimit)
+            int cellLimit,
+            IReadOnlyDictionary<DateTimeOffset, IReadOnlyList<SliceHistoryTooltipLine>> waitingLinesByStart)
         {
             var queryWindow = definition.QueryWindowSize;
             var requestedStart = start;
@@ -281,7 +291,7 @@ namespace KoLite.LocalApp.Ui
             var cells = new List<SliceHistoryCell>();
             for (var cursor = start; cursor < end && cells.Count < cellLimit; cursor = cursor.Add(queryWindow))
             {
-                cells.Add(BuildSliceHistoryCell(definition, statusByStart, activeQueueByStart, cursor, now));
+                cells.Add(BuildSliceHistoryCell(definition, statusByStart, activeQueueByStart, cursor, now, waitingLinesByStart));
             }
 
             var rows = cells
@@ -300,7 +310,8 @@ namespace KoLite.LocalApp.Ui
             IReadOnlyDictionary<DateTimeOffset, SliceStatusReadout> statusByStart,
             IReadOnlyDictionary<DateTimeOffset, DurableWorkItem> activeQueueByStart,
             DateTimeOffset sliceStart,
-            DateTimeOffset now)
+            DateTimeOffset now,
+            IReadOnlyDictionary<DateTimeOffset, IReadOnlyList<SliceHistoryTooltipLine>> waitingLinesByStart)
         {
             sliceStart = sliceStart.ToUniversalTime();
             var sliceEnd = sliceStart.Add(definition.QueryWindowSize);
@@ -311,11 +322,11 @@ namespace KoLite.LocalApp.Ui
             var css = AppFormatting.StateCss(state);
             var statusLabel = AppFormatting.StatusLabel(state);
             var url = $"/jobs/{Uri.EscapeDataString(definition.Id!)}/slices?start={Uri.EscapeDataString(AppFormatting.Iso(sliceStart))}&end={Uri.EscapeDataString(AppFormatting.Iso(sliceEnd))}";
-            var tooltipLines = BuildTooltipLines(sliceStart, sliceEnd, statusLabel, attempt, activeQueueItem);
+            var tooltipLines = BuildTooltipLines(sliceStart, sliceEnd, statusLabel, attempt, activeQueueItem, state, waitingLinesByStart);
             return new SliceHistoryCell(sliceStart, sliceEnd, state, attempt, css, statusLabel, url, tooltipLines);
         }
 
-        private static IReadOnlyList<SliceHistoryTooltipLine> BuildTooltipLines(DateTimeOffset sliceStart, DateTimeOffset sliceEnd, string statusLabel, int attempt, DurableWorkItem? activeQueueItem)
+        private static IReadOnlyList<SliceHistoryTooltipLine> BuildTooltipLines(DateTimeOffset sliceStart, DateTimeOffset sliceEnd, string statusLabel, int attempt, DurableWorkItem? activeQueueItem, string state, IReadOnlyDictionary<DateTimeOffset, IReadOnlyList<SliceHistoryTooltipLine>> waitingLinesByStart)
         {
             var lines = new List<SliceHistoryTooltipLine>
             {
@@ -338,7 +349,203 @@ namespace KoLite.LocalApp.Ui
                     $"{activeQueueItem.Attempts.ToString(CultureInfo.InvariantCulture)}/{activeQueueItem.MaxAttempts.ToString(CultureInfo.InvariantCulture)}"));
             }
 
+            // Dependency-blocked slices carry one or more "Waiting on <upstream> [range]" lines naming the
+            // specific upstream job(s) and the unmet slice window(s) they are parked on.
+            if (string.Equals(state, "DependencyBlocked", StringComparison.Ordinal)
+                && waitingLinesByStart.TryGetValue(sliceStart, out var waitingLines))
+            {
+                lines.AddRange(waitingLines);
+            }
+
             return lines;
+        }
+
+        private const int MaxWaitingOnTooltipLines = 3;
+
+        private static readonly IReadOnlyDictionary<DateTimeOffset, IReadOnlyList<SliceHistoryTooltipLine>> NoWaitingTooltipLines =
+            new Dictionary<DateTimeOffset, IReadOnlyList<SliceHistoryTooltipLine>>(0);
+
+        // Builds the "Waiting on <upstream> [range]" tooltip lines for dependency-blocked slices, keyed by
+        // UTC slice start. For each blocked slice it recomputes the unmet upstream slices with the same
+        // evaluator the scheduler uses, names the upstream job by its activityId, and collapses contiguous
+        // missing windows. It only runs when at least one slice is blocked, so the recompute cost is bounded;
+        // the catalog list and completed-slice set are each fetched once.
+        private IReadOnlyDictionary<DateTimeOffset, IReadOnlyList<SliceHistoryTooltipLine>> BuildWaitingOnTooltipLines(
+            JobDefinition definition,
+            IReadOnlyList<SliceStatusReadout> statuses)
+        {
+            if (sliceState is null)
+            {
+                return NoWaitingTooltipLines;
+            }
+
+            var blocked = statuses
+                .Where(s => string.Equals(s.Status, "DependencyBlocked", StringComparison.Ordinal))
+                .ToList();
+            if (blocked.Count == 0)
+            {
+                return NoWaitingTooltipLines;
+            }
+
+            // Resolve sibling jobs once: GUID -> definition (for the required-slice math) and GUID ->
+            // activityId (for the display name). A sibling whose stored schedule fails to parse still
+            // contributes its display name and never breaks this page.
+            var jobsById = new Dictionary<string, JobDefinition>(StringComparer.Ordinal);
+            var activityIdById = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var record in catalog.List())
+            {
+                activityIdById[record.JobId] = record.ActivityId;
+                try
+                {
+                    jobsById[record.JobId] = record.Definition;
+                }
+                catch (InvalidOperationException)
+                {
+                    // Unparseable sibling schedule: the display name remains available via activityIdById.
+                }
+            }
+
+            var completedSlices = sliceState.ListCompletedSliceKeys();
+            var map = new Dictionary<DateTimeOffset, IReadOnlyList<SliceHistoryTooltipLine>>();
+            foreach (var status in blocked)
+            {
+                var downstreamSlice = new SliceRange(definition.Id ?? string.Empty, status.SliceStartUtc, status.SliceEndUtc);
+                var readiness = DependencyReadinessEvaluator.Evaluate(definition, downstreamSlice, jobsById, completedSlices);
+                var lines = BuildWaitingLinesForSlice(definition, readiness, jobsById, activityIdById);
+                if (lines.Count > 0)
+                {
+                    map[status.SliceStartUtc.ToUniversalTime()] = lines;
+                }
+            }
+
+            return map;
+        }
+
+        private static IReadOnlyList<SliceHistoryTooltipLine> BuildWaitingLinesForSlice(
+            JobDefinition definition,
+            DependencyReadiness readiness,
+            IReadOnlyDictionary<string, JobDefinition> jobsById,
+            IReadOnlyDictionary<string, string> activityIdById)
+        {
+            // Group the unmet upstream slices by upstream job, preserving first-seen order. Each stored slice
+            // key parses to range.JobId (the upstream GUID, or the raw reference for an unresolved upstream).
+            var rangesByUpstream = new Dictionary<string, List<SliceRange>>(StringComparer.Ordinal);
+            var upstreamOrder = new List<string>();
+            foreach (var missing in readiness.MissingSlices)
+            {
+                if (!SliceKey.TryParse(missing.Value, out _, out var range))
+                {
+                    continue;
+                }
+
+                if (!rangesByUpstream.TryGetValue(range.JobId, out var ranges))
+                {
+                    ranges = new List<SliceRange>();
+                    rangesByUpstream.Add(range.JobId, ranges);
+                    upstreamOrder.Add(range.JobId);
+                }
+
+                ranges.Add(range);
+            }
+
+            if (upstreamOrder.Count == 0)
+            {
+                return BuildFallbackWaitingLines(definition, jobsById, activityIdById);
+            }
+
+            var lines = new List<SliceHistoryTooltipLine>();
+            foreach (var upstreamId in upstreamOrder)
+            {
+                var name = ResolveJobName(upstreamId, jobsById, activityIdById);
+                foreach (var window in MergeContiguousRanges(rangesByUpstream[upstreamId]))
+                {
+                    lines.Add(new SliceHistoryTooltipLine(
+                        "Waiting on",
+                        $"{name} [{AppFormatting.Iso(window.StartUtc)} - {AppFormatting.Iso(window.EndUtc)}]"));
+                }
+            }
+
+            return CapWaitingLines(lines);
+        }
+
+        // Merges adjacent or overlapping [start, end) windows of one upstream into the fewest ranges.
+        private static IReadOnlyList<SliceRange> MergeContiguousRanges(List<SliceRange> ranges)
+        {
+            var merged = new List<SliceRange>();
+            foreach (var range in ranges.OrderBy(r => r.StartUtc))
+            {
+                if (merged.Count > 0 && range.StartUtc <= merged[^1].EndUtc)
+                {
+                    if (range.EndUtc > merged[^1].EndUtc)
+                    {
+                        merged[^1] = merged[^1] with { EndUtc = range.EndUtc };
+                    }
+                }
+                else
+                {
+                    merged.Add(range);
+                }
+            }
+
+            return merged;
+        }
+
+        private static IReadOnlyList<SliceHistoryTooltipLine> CapWaitingLines(List<SliceHistoryTooltipLine> lines)
+        {
+            if (lines.Count <= MaxWaitingOnTooltipLines)
+            {
+                return lines;
+            }
+
+            var capped = lines.Take(MaxWaitingOnTooltipLines).ToList();
+            var remaining = lines.Count - MaxWaitingOnTooltipLines;
+            capped.Add(new SliceHistoryTooltipLine("Waiting on", $"+{remaining.ToString(CultureInfo.InvariantCulture)} more upstream slices"));
+            return capped;
+        }
+
+        // Last-resort line when the evaluator reports no concrete missing slices (e.g. an upstream id that no
+        // longer resolves): name the declared upstream dependencies, else a generic placeholder.
+        private static IReadOnlyList<SliceHistoryTooltipLine> BuildFallbackWaitingLines(
+            JobDefinition definition,
+            IReadOnlyDictionary<string, JobDefinition> jobsById,
+            IReadOnlyDictionary<string, string> activityIdById)
+        {
+            var names = definition.DependsOn
+                .Select(dependency => ResolveDependencyName(dependency, jobsById, activityIdById))
+                .Where(name => !string.IsNullOrWhiteSpace(name))
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+
+            var value = names.Count > 0 ? string.Join(", ", names) : "upstream dependency";
+            return new List<SliceHistoryTooltipLine> { new("Waiting on", value) };
+        }
+
+        private static string ResolveJobName(string jobId, IReadOnlyDictionary<string, JobDefinition> jobsById, IReadOnlyDictionary<string, string> activityIdById)
+        {
+            if (jobsById.TryGetValue(jobId, out var definition))
+            {
+                return definition.ActivityId;
+            }
+
+            return activityIdById.TryGetValue(jobId, out var activityId) ? activityId : jobId;
+        }
+
+        private static string ResolveDependencyName(DependentJob dependency, IReadOnlyDictionary<string, JobDefinition> jobsById, IReadOnlyDictionary<string, string> activityIdById)
+        {
+            if (!string.IsNullOrWhiteSpace(dependency.Id))
+            {
+                if (jobsById.TryGetValue(dependency.Id, out var definition))
+                {
+                    return definition.ActivityId;
+                }
+
+                if (activityIdById.TryGetValue(dependency.Id, out var activityId))
+                {
+                    return activityId;
+                }
+            }
+
+            return dependency.ActivityId ?? dependency.Id ?? "upstream dependency";
         }
 
         private static IReadOnlyDictionary<DateTimeOffset, DurableWorkItem> ActiveQueueByStart(IEnumerable<DurableWorkItem> queueItems) =>

@@ -35,7 +35,37 @@
         </div>
         <label class="checkbox-row"><input name="Input.IsPaused" type="checkbox" value="true" @(Model.Input.IsPaused ? "checked" : null) /> Start paused</label>
         <input type="hidden" name="Input.IsPaused" value="false" />
-        <label>Dependencies<textarea name="Input.DependsOn" rows="3" placeholder="One activity id per line">@Model.Input.DependsOn</textarea></label>
+        <div class="form-field dependency-picker" data-dependency-picker>
+            <span class="dependency-picker-label">Dependencies</span>
+            @if (Model.DependencyOptions.Count == 0)
+            {
+                <p class="muted dependency-picker-empty">No other jobs are available to depend on yet.</p>
+            }
+            else
+            {
+                <div class="dependency-picker-controls">
+                    <select class="dependency-picker-select" data-dependency-select aria-label="Add a dependency">
+                        <option value="">Select a job…</option>
+                        @foreach (var option in Model.DependencyOptions)
+                        {
+                            <option value="@option.Id">@option.ActivityId</option>
+                        }
+                    </select>
+                    <button type="button" class="btn small" data-dependency-add>Add dependency</button>
+                </div>
+            }
+            <div class="dependency-chips" data-dependency-chips>
+                @foreach (var chip in Model.CurrentDependencies)
+                {
+                    <span class="dep-chip@(chip.Resolved ? null : " unresolved")" data-dependency-chip data-dep-value="@chip.Value">
+                        <span class="dep-chip-label" title="@chip.Value">@chip.Label</span>
+                        <button type="button" class="dep-chip-remove" data-dependency-remove aria-label="Remove dependency @chip.Label">&times;</button>
+                    </span>
+                }
+            </div>
+            <input type="hidden" name="Input.DependsOn" data-dependency-value value="@string.Join("\n", Model.CurrentDependencies.Select(c => c.Value))" />
+            <p class="muted dependency-picker-help">Each dependency is stored by job id; the raw JSON editor shows the underlying ids.</p>
+        </div>
         <label>Job settings JSON<textarea name="Input.JobSettingsJson" rows="8">@Model.Input.JobSettingsJson</textarea></label>
         <button class="btn primary" type="submit">@Model.SubmitLabel</button>
     </form>

@@ -1014,6 +1014,85 @@
     });
   }
 
+  function dependencyChipValues(chips) {
+    return Array.prototype.map.call(chips.querySelectorAll("[data-dependency-chip]"), function (chip) {
+      return chip.getAttribute("data-dep-value");
+    });
+  }
+
+  function makeDependencyChip(value, label) {
+    var chip = document.createElement("span");
+    chip.className = "dep-chip";
+    chip.setAttribute("data-dependency-chip", "");
+    chip.setAttribute("data-dep-value", value);
+
+    var labelNode = document.createElement("span");
+    labelNode.className = "dep-chip-label";
+    labelNode.title = value;
+    labelNode.textContent = label;
+    chip.appendChild(labelNode);
+
+    var remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "dep-chip-remove";
+    remove.setAttribute("data-dependency-remove", "");
+    remove.setAttribute("aria-label", "Remove dependency " + label);
+    remove.innerHTML = "&times;";
+    chip.appendChild(remove);
+
+    return chip;
+  }
+
+  function syncDependencyHidden(picker) {
+    var chips = picker.querySelector("[data-dependency-chips]");
+    var hidden = picker.querySelector("[data-dependency-value]");
+    if (!chips || !hidden) return;
+    hidden.value = dependencyChipValues(chips).join("\n");
+  }
+
+  function initDependencyPickers() {
+    document.querySelectorAll("[data-dependency-picker]").forEach(function (picker) {
+      var select = picker.querySelector("[data-dependency-select]");
+      var addButton = picker.querySelector("[data-dependency-add]");
+      var chips = picker.querySelector("[data-dependency-chips]");
+      var hidden = picker.querySelector("[data-dependency-value]");
+      if (!chips || !hidden) return;
+
+      // Reconcile the hidden field with the server-rendered chips on load.
+      syncDependencyHidden(picker);
+
+      if (select && addButton) {
+        addButton.addEventListener("click", function () {
+          var value = select.value;
+          if (!value) return;
+          if (dependencyChipValues(chips).indexOf(value) !== -1) {
+            select.value = "";
+            return;
+          }
+
+          var option = select.options[select.selectedIndex];
+          var label = option ? option.textContent : value;
+          chips.appendChild(makeDependencyChip(value, label));
+          syncDependencyHidden(picker);
+          select.value = "";
+        });
+      }
+
+      chips.addEventListener("click", function (event) {
+        var target = event.target;
+        if (!(target instanceof HTMLElement)) return;
+        var remove = target.closest("[data-dependency-remove]");
+        if (!remove) return;
+        var chip = remove.closest("[data-dependency-chip]");
+        if (chip && chip.parentNode) {
+          chip.parentNode.removeChild(chip);
+          syncDependencyHidden(picker);
+        }
+      });
+    });
+  }
+
+  window.initDependencyPickers = initDependencyPickers;
   window.initBulkSelect = initBulkSelect;
   initSuccessRateCharts();
   initJobDetailCharts();
@@ -1023,4 +1102,5 @@
   initDashboardJobToggle();
   initBulkSelect();
   initUpdateBadge();
+  initDependencyPickers();
 })();

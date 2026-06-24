@@ -46,7 +46,8 @@ namespace KoLite.LocalApp.Pages.Catalog
                 record.CatalogVersion,
                 true,
                 "Save job",
-                catalog.HasStarted(record.JobId));
+                catalog.HasStarted(record.JobId),
+                ScheduleEditorViewModel.BuildOptions(catalog, record.JobId));
             return Page();
         }
 
@@ -79,7 +80,7 @@ namespace KoLite.LocalApp.Pages.Catalog
                     Input = ScheduleFormInput.FromJson(scheduleJson);
                 }
 
-                Editor = new ScheduleEditorViewModel($"/catalog/{Uri.EscapeDataString(JobId)}/update", Input, ScheduleJson, ExpectedVersion, true, "Save job", catalog.HasStarted(JobId));
+                Editor = new ScheduleEditorViewModel($"/catalog/{Uri.EscapeDataString(JobId)}/update", Input, ScheduleJson, ExpectedVersion, true, "Save job", catalog.HasStarted(JobId), ScheduleEditorViewModel.BuildOptions(catalog, JobId));
                 return Page();
             }
         }

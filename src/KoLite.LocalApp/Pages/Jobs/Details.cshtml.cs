@@ -1,3 +1,4 @@
+using KoLite.Local.Sqlite.Catalog;
 using KoLite.LocalApp.Ui;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
@@ -8,11 +9,13 @@ namespace KoLite.LocalApp.Pages.Jobs
     {
         private readonly JobDetailsPageQuery query;
         private readonly JobChartQuery chartQuery;
+        private readonly SqliteJobCatalogRepository catalog;
 
-        public DetailsModel(JobDetailsPageQuery query, JobChartQuery chartQuery)
+        public DetailsModel(JobDetailsPageQuery query, JobChartQuery chartQuery, SqliteJobCatalogRepository catalog)
         {
             this.query = query;
             this.chartQuery = chartQuery;
+            this.catalog = catalog;
         }
 
         public JobDetailsPageData? Data { get; private set; }
@@ -39,7 +42,8 @@ namespace KoLite.LocalApp.Pages.Jobs
                 Data.Job.CatalogVersion,
                 true,
                 "Save job",
-                Data.HasStarted);
+                Data.HasStarted,
+                ScheduleEditorViewModel.BuildOptions(catalog, Data.Job.JobId));
             return Page();
         }
     }

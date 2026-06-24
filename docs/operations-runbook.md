@@ -115,6 +115,15 @@ The home dashboard supports multi-select bulk actions on the **Active jobs** and
 
 Bulk Pause/Resume/Soft delete apply with no extra confirmation (soft delete is reversible from the Soft-deleted section via **Restore**). They honor the same optimistic-concurrency model as the single-row actions: each selected row carries the catalog version shown on the page, and any job that changed since the page loaded — or is already in the requested state, soft-deleted, or missing — is **skipped** rather than forced. After the action, a summary banner reports how many jobs changed and how many were skipped. Bulk **Export** downloads an import-compatible JSON array (`ko-lite-jobs.json`) containing only the selected jobs, sorted in ascending `activityId` (job id) order.
 
+## Soft-delete and downstream dependencies
+
+Soft-deleting a job that other **active** (non-soft-deleted) jobs depend on would silently strand those downstream slices in a `DependencyBlocked` state, so soft delete now warns first:
+
+- **Single soft delete** (dashboard row or job details). If the job has active downstream dependents, the Soft delete action redirects to a confirmation page (`/catalog/{jobId}/soft-delete-confirm`) that lists each dependent job (linked to its details page). From there you can **Soft delete anyway** (an explicit force) or **Cancel**. With no dependents the job is soft-deleted immediately, exactly as before.
+- **Bulk soft delete.** Any selected job with active downstream dependents is **skipped** (never force-deleted) and named in the summary banner alongside the dependents that need it. Force a specific blocked job from its own confirmation page if that is really what you want.
+
+Dependents are matched by the upstream job's durable `id`; a dependent that is itself soft-deleted does not block, because it is not scheduling. Add or remove these edges with the dependency picker in the job editor (the **Job definition** tab on the details page, or the create/copy editors).
+
 ## Published output
 
 Running `dotnet run` from the repository locks the build output, so `dotnet build` and `dotnet test` fail while the app is running. To keep the repository free for build/test, publish to an isolated folder and run from there.

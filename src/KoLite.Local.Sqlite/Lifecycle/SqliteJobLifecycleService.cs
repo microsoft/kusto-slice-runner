@@ -2,24 +2,79 @@ using System.Text.Json;
 using KoLite.Local.Sqlite.Catalog;
 using KoLite.Local.Sqlite.Connections;
 using KoLite.Local.Sqlite.Infrastructure;
+using KoLite.Local.Sqlite.Observability;
 
 namespace KoLite.Local.Sqlite.Lifecycle
 {
     public sealed record HardDeleteResult(string PurgeRunId, int DeletedJobs, int DeletedQueueRows, int DeletedStateRows, int DeletedRepairBatches);
 
+    // Thrown by SoftDelete when a job still has active downstream dependents and force was not
+    // requested. Carries the blocking dependents so callers (the web confirm page, the bulk summary)
+    // can name them. Derives from InvalidOperationException so existing catch sites keep behaving
+    // sensibly, while new call sites can catch this specific type to branch into the confirm flow.
+    public sealed class DownstreamDependentsException : InvalidOperationException
+    {
+        public DownstreamDependentsException(string jobId, IReadOnlyList<(string JobId, string ActivityId)> dependents)
+            : base($"Job '{jobId}' cannot be soft-deleted because {dependents.Count} active job(s) depend on it: {string.Join(", ", dependents.Select(dependent => dependent.ActivityId))}.")
+        {
+            JobId = jobId;
+            Dependents = dependents;
+        }
+
+        public string JobId { get; }
+
+        public IReadOnlyList<(string JobId, string ActivityId)> Dependents { get; }
+    }
+
     public sealed class SqliteJobLifecycleService
     {
         private readonly IKoLiteSqliteConnectionFactory connectionFactory;
         private readonly SqliteJobCatalogRepository catalog;
+        private readonly SqliteLifecycleReadModelRepository lifecycleReadModel;
 
+        // The two-argument constructor is preserved for direct (non-DI) callers; it builds its own
+        // read-model repository from the same connection factory. DI selects the greediest resolvable
+        // constructor, so the container injects the registered SqliteLifecycleReadModelRepository.
         public SqliteJobLifecycleService(IKoLiteSqliteConnectionFactory connectionFactory, SqliteJobCatalogRepository catalog)
+            : this(connectionFactory, catalog, new SqliteLifecycleReadModelRepository(connectionFactory))
+        {
+        }
+
+        public SqliteJobLifecycleService(IKoLiteSqliteConnectionFactory connectionFactory, SqliteJobCatalogRepository catalog, SqliteLifecycleReadModelRepository lifecycleReadModel)
         {
             this.connectionFactory = connectionFactory;
             this.catalog = catalog;
+            this.lifecycleReadModel = lifecycleReadModel;
         }
 
-        public JobCatalogRecord SoftDelete(string jobId, long expectedVersion, string actor, string reason)
+        // Active (non-soft-deleted) jobs that list jobId as an upstream dependency. A dependent that is
+        // itself soft-deleted is excluded because it is already hidden from the active catalog and
+        // cannot break.
+        public IReadOnlyList<(string JobId, string ActivityId)> GetActiveDependents(string jobId)
         {
+            var dependents = catalog.FindDependents(jobId);
+            if (dependents.Count == 0)
+            {
+                return dependents;
+            }
+
+            var softDeleted = SoftDeletedJobIds();
+            return dependents.Where(dependent => !softDeleted.Contains(dependent.JobId)).ToList();
+        }
+
+        public JobCatalogRecord SoftDelete(string jobId, long expectedVersion, string actor, string reason, bool force = false)
+        {
+            // Block by default when active downstream dependents would silently break; an explicit
+            // force override (the confirm page's "Soft delete anyway") proceeds past the check.
+            if (!force)
+            {
+                var dependents = GetActiveDependents(jobId);
+                if (dependents.Count > 0)
+                {
+                    throw new DownstreamDependentsException(jobId, dependents);
+                }
+            }
+
             var updated = catalog.SetEnabled(jobId, enabled: false, expectedVersion, actor, eventId: Guid.NewGuid().ToString("N"));
             RecordLifecycle(jobId, "SoftDeleted", actor, reason, new { expectedVersion });
             return updated;
@@ -135,6 +190,29 @@ namespace KoLite.Local.Sqlite.Lifecycle
 
             InsertAudit(c, tx, actor, eventType, "Job", jobId, new { reason });
             tx.Commit();
+        }
+
+        // Latest lifecycle event per job, where a job counts as soft-deleted when its newest event is
+        // "SoftDeleted". Mirrors the LocalApp LifecycleReadModel projection without referencing the app
+        // layer: GetLatestStateRows() is ordered newest-first per job, so the first row wins.
+        private HashSet<string> SoftDeletedJobIds()
+        {
+            var softDeleted = new HashSet<string>(StringComparer.Ordinal);
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var row in lifecycleReadModel.GetLatestStateRows())
+            {
+                if (!seen.Add(row.JobId))
+                {
+                    continue;
+                }
+
+                if (StringComparer.Ordinal.Equals(row.EventType, "SoftDeleted"))
+                {
+                    softDeleted.Add(row.JobId);
+                }
+            }
+
+            return softDeleted;
         }
 
         private static IReadOnlyList<string> ReadRepairBatchIds(Microsoft.Data.Sqlite.SqliteConnection c, Microsoft.Data.Sqlite.SqliteTransaction tx, string jobId)

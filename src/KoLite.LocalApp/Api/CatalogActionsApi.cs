@@ -47,8 +47,17 @@ namespace KoLite.LocalApp.Api
                 string jobId,
                 SqliteJobLifecycleService lifecycle) =>
             {
-                lifecycle.SoftDelete(jobId, ReadVersion(http), actor: Actor, reason: ReadReason(http, "Soft deleted from web UI"));
-                return Results.Redirect("/");
+                try
+                {
+                    lifecycle.SoftDelete(jobId, ReadVersion(http), actor: Actor, reason: ReadReason(http, "Soft deleted from web UI"), force: ReadForce(http));
+                    return Results.Redirect("/");
+                }
+                catch (DownstreamDependentsException)
+                {
+                    // Blocked by active downstream dependents: PRG to the confirm page, which lists the
+                    // dependents and offers an explicit force ("Soft delete anyway") override.
+                    return Results.Redirect($"/catalog/{Uri.EscapeDataString(jobId)}/soft-delete-confirm");
+                }
             });
 
             actions.MapPost("/{jobId}/restore", (
@@ -153,6 +162,9 @@ namespace KoLite.LocalApp.Api
 
         private static string ReadReason(HttpContext http, string fallback) =>
             http.Request.Form.TryGetValue("reason", out var reason) ? reason.ToString() : fallback;
+
+        private static bool ReadForce(HttpContext http) =>
+            http.Request.Form.TryGetValue("force", out var force) && bool.TryParse(force.ToString(), out var parsed) && parsed;
 
         private static string[] ReadStrings(HttpContext http, string key) =>
             http.Request.Form[key].Select(value => value ?? string.Empty).ToArray();

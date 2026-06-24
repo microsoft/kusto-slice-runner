@@ -198,6 +198,39 @@ namespace KoLite.Local.Sqlite.Catalog
             return records;
         }
 
+        // Every OTHER job whose stored definition lists jobId as an upstream dependency. Dependency
+        // edges are stored canonically as upstream GUID ids, so the match is by DependentJob.Id.
+        // Records whose stored schedule JSON cannot be parsed are skipped defensively rather than
+        // failing the whole scan.
+        public IReadOnlyList<(string JobId, string ActivityId)> FindDependents(string jobId)
+        {
+            var dependents = new List<(string JobId, string ActivityId)>();
+            foreach (var record in List())
+            {
+                if (StringComparer.Ordinal.Equals(record.JobId, jobId))
+                {
+                    continue;
+                }
+
+                JobDefinition definition;
+                try
+                {
+                    definition = record.Definition;
+                }
+                catch (InvalidOperationException)
+                {
+                    continue;
+                }
+
+                if (definition.DependsOn.Any(dependency => StringComparer.Ordinal.Equals(dependency.Id, jobId)))
+                {
+                    dependents.Add((record.JobId, record.ActivityId));
+                }
+            }
+
+            return dependents;
+        }
+
         public IReadOnlyList<JobDefinitionEventRecord> History(string jobId)
         {
             using var connection = connectionFactory.OpenConnection();
