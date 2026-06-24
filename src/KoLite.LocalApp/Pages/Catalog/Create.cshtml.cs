@@ -34,6 +34,11 @@ namespace KoLite.LocalApp.Pages.Catalog
 
         public IActionResult OnPost()
         {
+            if (IsNewEntry())
+            {
+                return StatusCode(StatusCodes.Status405MethodNotAllowed);
+            }
+
             var useRawJson = string.Equals(FormMode, "json", StringComparison.OrdinalIgnoreCase)
                 || (Request.Form.ContainsKey("scheduleJson") && !Request.Form.ContainsKey("Input.ActivityId"));
             var scheduleJson = useRawJson

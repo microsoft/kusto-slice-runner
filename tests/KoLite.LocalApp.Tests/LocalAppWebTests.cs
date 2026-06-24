@@ -1614,6 +1614,31 @@ namespace KoLite.LocalApp.Tests
             Assert.True(new SqliteJobCatalogRepository(sqlite).Get(JobId("job.safe"))?.IsEnabled);
         }
 
+        [Fact]
+        public async Task Catalog_get_entry_aliases_reject_mutating_posts()
+        {
+            var catalog = new SqliteJobCatalogRepository(sqlite);
+            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+
+            var createToken = await ReadFormToken(client, "/catalog/new");
+            var create = await PostForm(client, "/catalog/new", createToken, new Dictionary<string, string>
+            {
+                ["scheduleJson"] = Schedule("job.alias.create", "AliasCreateFunction", isPaused: false)
+            });
+            Assert.Equal(HttpStatusCode.MethodNotAllowed, create.StatusCode);
+            Assert.Null(catalog.Get(JobId("job.alias.create")));
+
+            catalog.Create(Schedule("job.alias.update", "AliasUpdateFunction", isPaused: false));
+            var editToken = await ReadFormToken(client, $"/catalog/{JobId("job.alias.update")}/edit");
+            var update = await PostForm(client, $"/catalog/{JobId("job.alias.update")}/edit", editToken, new Dictionary<string, string>
+            {
+                ["expectedVersion"] = "1",
+                ["scheduleJson"] = Schedule("job.alias.update", "AliasUpdateFunctionV2", isPaused: false)
+            });
+            Assert.Equal(HttpStatusCode.MethodNotAllowed, update.StatusCode);
+            Assert.Equal("AliasUpdateFunction", catalog.Get(JobId("job.alias.update"))?.QueryRef);
+        }
+
         public void Dispose()
         {
             factory.Dispose();

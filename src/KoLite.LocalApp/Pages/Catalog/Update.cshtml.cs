@@ -52,6 +52,11 @@ namespace KoLite.LocalApp.Pages.Catalog
 
         public IActionResult OnPost(string jobId)
         {
+            if (IsEditRoute())
+            {
+                return StatusCode(StatusCodes.Status405MethodNotAllowed);
+            }
+
             JobId = jobId;
             var useRawJson = string.Equals(FormMode, "json", StringComparison.OrdinalIgnoreCase)
                 || (Request.Form.ContainsKey("scheduleJson") && !Request.Form.ContainsKey("Input.ActivityId"));
