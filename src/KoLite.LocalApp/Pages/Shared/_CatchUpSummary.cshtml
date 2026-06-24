@@ -36,10 +36,18 @@
     string? remainingText = Model.ProjectedCatchUp is { } remaining ? AppFormatting.ApproxDuration(remaining) : null;
     var targetText = AppFormatting.Iso(Model.TargetFrontierUtc);
 
-    // Concrete gating, surfaced so the operator knows exactly what the card is waiting for.
+    // Concrete gating for the collecting-data checklist, surfaced so the operator knows exactly what
+    // the card is still waiting for. Each requirement clears independently; once both are met the
+    // status is no longer InsufficientData and this whole section is replaced by the estimate.
     var requiredSamples = Model.RequiredThroughputSamples.ToString("N0", ci);
+    var observedSamples = Model.ObservedThroughputSamples.ToString("N0", ci);
     var requiredSpanText = AppFormatting.ApproxDuration(Model.RequiredThroughputSpan);
-    var collectedText = $"{Model.ObservedThroughputSamples.ToString("N0", ci)} of {requiredSamples} completions";
+    var samplesSatisfied = Model.ThroughputSamplesSatisfied;
+    var spanSatisfied = Model.ThroughputSpanSatisfied;
+    var samplesDetail = $"{observedSamples} of {requiredSamples} completions";
+    var spanDetail = spanSatisfied
+        ? $"{requiredSpanText} collected"
+        : $"{AppFormatting.ApproxDuration(Model.ObservedThroughputSpan)} of {requiredSpanText} ({AppFormatting.ApproxDuration(Model.ThroughputSpanRemaining)} to go)";
 
     // When recent slices are parked on an upstream dependency they are excluded from the backlog;
     // call that out so the reported "slices behind" is not mistaken for the full real-time gap.
@@ -57,7 +65,7 @@
         var reason = Model.ThroughputWindowBoundedByDefinitionChange
             ? "This job's definition changed recently, so KO Lite is collecting fresh execution data under the new definition"
             : "KO Lite is collecting recent execution data";
-        note = $"{reason} before it can project a catch-up time. The estimate appears once at least {requiredSamples} slices complete successfully over at least {requiredSpanText}.";
+        note = $"{reason} before it can project a catch-up time.";
     }
     else
     {
@@ -87,13 +95,6 @@
                 <dd>@rateText</dd>
             </div>
         }
-        @if (collectingData)
-        {
-            <div class="catch-up-metric">
-                <dt>Data collected</dt>
-                <dd>@collectedText</dd>
-            </div>
-        }
         @if (remainingText is not null)
         {
             <div class="catch-up-metric">
@@ -117,4 +118,19 @@
         }
     </dl>
     <p class="muted catch-up-note">@note</p>
+    @if (collectingData)
+    {
+        <ul class="catch-up-checklist" aria-label="Requirements before a catch-up estimate can be shown">
+            <li class="catch-up-check-item @(samplesSatisfied ? "met" : "pending")">
+                <span class="catch-up-check-icon" role="img" aria-label="@(samplesSatisfied ? "Met" : "Pending")">@(samplesSatisfied ? "\u2713" : "\u25cb")</span>
+                <span class="catch-up-check-label">Successful completions</span>
+                <span class="catch-up-check-detail">@samplesDetail</span>
+            </li>
+            <li class="catch-up-check-item @(spanSatisfied ? "met" : "pending")">
+                <span class="catch-up-check-icon" role="img" aria-label="@(spanSatisfied ? "Met" : "Pending")">@(spanSatisfied ? "\u2713" : "\u25cb")</span>
+                <span class="catch-up-check-label">Time collected</span>
+                <span class="catch-up-check-detail">@spanDetail</span>
+            </li>
+        </ul>
+    }
 </section>

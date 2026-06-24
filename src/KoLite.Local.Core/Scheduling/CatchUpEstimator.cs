@@ -96,6 +96,27 @@ namespace KoLite.Local.Core.Scheduling
         public int RequiredThroughputSamples { get; init; }
         public TimeSpan RequiredThroughputSpan { get; init; }
 
+        // Wall-clock span between the first and last sampled completion (TimeSpan.Zero when fewer
+        // than two completions exist). The rate estimate is gated on this reaching
+        // RequiredThroughputSpan, so the collecting-data UI surfaces it as its own "time collected"
+        // requirement alongside the completion-count requirement.
+        public TimeSpan ObservedThroughputSpan { get; init; }
+
+        // Per-requirement gating state for the collecting-data checklist: whether each gate is met,
+        // and how much more completion-span is still required before an estimate can be projected.
+        public bool ThroughputSamplesSatisfied => ObservedThroughputSamples >= RequiredThroughputSamples;
+
+        public bool ThroughputSpanSatisfied => ObservedThroughputSpan >= RequiredThroughputSpan;
+
+        public TimeSpan ThroughputSpanRemaining
+        {
+            get
+            {
+                var remaining = RequiredThroughputSpan - ObservedThroughputSpan;
+                return remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero;
+            }
+        }
+
         public bool ShouldDisplay => Status is CatchUpStatus.CatchingUp or CatchUpStatus.NotKeepingUp or CatchUpStatus.InsufficientData;
     }
 
@@ -143,6 +164,15 @@ namespace KoLite.Local.Core.Scheduling
             var boundedByChange = lastDefinitionChangeUtc is { } changeUtc
                 && changeUtc.ToUniversalTime() > nowUtc - opts.MaxThroughputLookback;
 
+            // Span between the first and last sampled completion. The rate estimate is gated on this
+            // reaching opts.MinThroughputSpan; surfaced on every projection so the collecting-data UI
+            // can show the "time collected" requirement and how much longer until it clears.
+            var observedSpan = throughput.FirstCompletedUtc is { } firstSeenUtc
+                && throughput.LastCompletedUtc is { } lastSeenUtc
+                && lastSeenUtc.ToUniversalTime() > firstSeenUtc.ToUniversalTime()
+                    ? lastSeenUtc.ToUniversalTime() - firstSeenUtc.ToUniversalTime()
+                    : TimeSpan.Zero;
+
             // The job can never process past its end-on boundary (when set).
             var eligibleEndUtc = targetFrontierUtc;
             if (definition.EndOn is { } endOn)
@@ -163,7 +193,8 @@ namespace KoLite.Local.Core.Scheduling
                 ThroughputWindowBoundedByDefinitionChange = boundedByChange,
                 ObservedThroughputSamples = throughput.SucceededCount,
                 RequiredThroughputSamples = opts.MinThroughputSamples,
-                RequiredThroughputSpan = opts.MinThroughputSpan
+                RequiredThroughputSpan = opts.MinThroughputSpan,
+                ObservedThroughputSpan = observedSpan
             };
 
             if (!isEnabled || definition.IsPaused || queryWindow <= TimeSpan.Zero || eligibleEndUtc <= startFromUtc)
@@ -192,7 +223,8 @@ namespace KoLite.Local.Core.Scheduling
                 ThroughputWindowBoundedByDefinitionChange = boundedByChange,
                 ObservedThroughputSamples = throughput.SucceededCount,
                 RequiredThroughputSamples = opts.MinThroughputSamples,
-                RequiredThroughputSpan = opts.MinThroughputSpan
+                RequiredThroughputSpan = opts.MinThroughputSpan,
+                ObservedThroughputSpan = observedSpan
             };
 
             if (backlogSlices <= opts.MinBacklogSlices)
@@ -201,20 +233,19 @@ namespace KoLite.Local.Core.Scheduling
             }
 
             if (throughput.SucceededCount < opts.MinThroughputSamples
-                || throughput.FirstCompletedUtc is not { } firstCompleted
-                || throughput.LastCompletedUtc is not { } lastCompleted)
+                || throughput.FirstCompletedUtc is null
+                || throughput.LastCompletedUtc is null)
             {
                 return baseProjection with { Status = CatchUpStatus.InsufficientData };
             }
 
-            var span = lastCompleted.ToUniversalTime() - firstCompleted.ToUniversalTime();
-            if (span < opts.MinThroughputSpan)
+            if (observedSpan < opts.MinThroughputSpan)
             {
                 return baseProjection with { Status = CatchUpStatus.InsufficientData };
             }
 
             // N timestamps span (N-1) intervals; this is the average completion rate over the sample.
-            var completionsPerHour = (throughput.SucceededCount - 1) / span.TotalHours;
+            var completionsPerHour = (throughput.SucceededCount - 1) / observedSpan.TotalHours;
             var realTimeMultiple = completionsPerHour * queryWindow.TotalHours;
 
             var withRate = baseProjection with

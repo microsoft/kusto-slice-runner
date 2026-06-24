@@ -2145,8 +2145,16 @@ namespace KoLite.LocalApp.Tests
             Assert.Contains("Catching up", html);
             Assert.Contains("Collecting data to estimate catch-up time", html);
             Assert.Contains("definition changed recently", html);
-            Assert.Contains("at least 3 slices complete successfully over at least", html);
-            Assert.Contains("Data collected", html);
+            // The two requirements are now a checklist under the message. This sample has 2 of 3
+            // completions (count gate pending) spanning 30 min (>= the 10-minute span gate, met), so
+            // one item renders met and the other pending. "Data collected" no longer sits in the top row.
+            Assert.Contains("catch-up-checklist", html);
+            Assert.Contains("Successful completions", html);
+            Assert.Contains("2 of 3 completions", html);
+            Assert.Contains("Time collected", html);
+            Assert.Contains("catch-up-check-item met", html);
+            Assert.Contains("catch-up-check-item pending", html);
+            Assert.DoesNotContain("Data collected", html);
             Assert.DoesNotContain("Estimated caught up", html);
         }
 

@@ -167,6 +167,12 @@ namespace KoLite.Local.Core.Tests
             Assert.Equal(2, projection.ObservedThroughputSamples);
             Assert.Equal(3, projection.RequiredThroughputSamples);
             Assert.Equal(TimeSpan.FromMinutes(10), projection.RequiredThroughputSpan);
+            // The two completions span 2h (>= the 10-minute minimum), so the span gate is already
+            // satisfied; the blocker here is the completion count, and no span time remains.
+            Assert.False(projection.ThroughputSamplesSatisfied);
+            Assert.True(projection.ThroughputSpanSatisfied);
+            Assert.Equal(TimeSpan.FromHours(2), projection.ObservedThroughputSpan);
+            Assert.Equal(TimeSpan.Zero, projection.ThroughputSpanRemaining);
         }
 
         [Fact]
@@ -183,6 +189,12 @@ namespace KoLite.Local.Core.Tests
             Assert.Equal(CatchUpStatus.InsufficientData, projection.Status);
             Assert.True(projection.ShouldDisplay);
             Assert.Equal(5, projection.ObservedThroughputSamples);
+            // Enough completions, but they are bunched into a 5-minute span (< the 10-minute minimum),
+            // so the span gate is the blocker and the UI must show ~5 minutes still to go.
+            Assert.True(projection.ThroughputSamplesSatisfied);
+            Assert.False(projection.ThroughputSpanSatisfied);
+            Assert.Equal(TimeSpan.FromMinutes(5), projection.ObservedThroughputSpan);
+            Assert.Equal(TimeSpan.FromMinutes(5), projection.ThroughputSpanRemaining);
         }
 
         [Fact]
