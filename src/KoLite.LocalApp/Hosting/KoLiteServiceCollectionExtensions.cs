@@ -40,6 +40,7 @@ namespace KoLite.LocalApp
             services.AddSingleton<KoLiteSqliteMigrator>();
             services.AddScoped<SqliteJobCatalogRepository>();
             services.AddScoped<SqliteOperationalReadModelRepository>();
+            services.AddScoped<SqliteLifecycleReadModelRepository>();
             services.AddScoped<SqliteDiagnosticsReadModelRepository>();
             services.AddScoped<SqliteWorkQueueRepository>();
             services.AddScoped<SqliteSliceStateRepository>();

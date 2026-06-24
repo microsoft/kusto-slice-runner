@@ -1,7 +1,6 @@
 using KoLite.Local.Core.Schedules;
 using KoLite.Local.Sqlite.Catalog;
 using KoLite.Local.Core.Time;
-using KoLite.Local.Sqlite.Connections;
 using KoLite.Local.Sqlite.Observability;
 
 namespace KoLite.LocalApp.Ui
@@ -84,14 +83,28 @@ namespace KoLite.LocalApp.Ui
 
     public sealed record NextSliceTiming(DateTimeOffset? EligibleAtUtc, string Text, string? Detail);
 
-    public sealed class DashboardPageQuery(
-        SqliteJobCatalogRepository catalog,
-        SqliteOperationalReadModelRepository readModels,
-        LifecycleReadModel lifecycleReadModel,
-        JobChartQuery chartQuery,
-        IKoLiteSqliteConnectionFactory connectionFactory,
-        IClock clock)
+    public sealed class DashboardPageQuery
     {
+        private readonly SqliteJobCatalogRepository catalog;
+        private readonly SqliteOperationalReadModelRepository readModels;
+        private readonly LifecycleReadModel lifecycleReadModel;
+        private readonly JobChartQuery chartQuery;
+        private readonly IClock clock;
+
+        public DashboardPageQuery(
+            SqliteJobCatalogRepository catalog,
+            SqliteOperationalReadModelRepository readModels,
+            LifecycleReadModel lifecycleReadModel,
+            JobChartQuery chartQuery,
+            IClock clock)
+        {
+            this.catalog = catalog;
+            this.readModels = readModels;
+            this.lifecycleReadModel = lifecycleReadModel;
+            this.chartQuery = chartQuery;
+            this.clock = clock;
+        }
+
         public DashboardPageData Get(TimeSpan selectedRange, IEnumerable<string>? selectedTags = null, DashboardSort? sort = null)
         {
             var effectiveSort = sort ?? DashboardSort.Default;
@@ -99,8 +112,8 @@ namespace KoLite.LocalApp.Ui
             var normalizedSelectedTags = ScheduleTags.NormalizeDistinct(selectedTags ?? Array.Empty<string>());
             var lifecycleStates = lifecycleReadModel.GetLatestStates();
             var summaries = readModels.GetJobStatusSummaries().ToDictionary(s => s.JobId, StringComparer.Ordinal);
-            var queuedAvailability = GetQueuedAvailability();
-            var latestSliceEnds = GetLatestSliceEnds();
+            var queuedAvailability = readModels.GetQueuedAvailabilityByJob();
+            var latestSliceEnds = readModels.GetLatestSliceEndsByJob();
             var jobs = catalog.List()
                 .Select(record => BuildJobListItem(record, lifecycleStates, summaries, queuedAvailability, latestSliceEnds, now))
                 .ToList();
@@ -158,8 +171,8 @@ namespace KoLite.LocalApp.Ui
             var now = clock.UtcNow;
             var lifecycleStates = lifecycleReadModel.GetLatestStates();
             var summaries = readModels.GetJobStatusSummaries().ToDictionary(s => s.JobId, StringComparer.Ordinal);
-            var queuedAvailability = GetQueuedAvailability();
-            var latestSliceEnds = GetLatestSliceEnds();
+            var queuedAvailability = readModels.GetQueuedAvailabilityByJob();
+            var latestSliceEnds = readModels.GetLatestSliceEndsByJob();
             return BuildJobListItem(record, lifecycleStates, summaries, queuedAvailability, latestSliceEnds, now);
         }
 
@@ -261,45 +274,6 @@ namespace KoLite.LocalApp.Ui
             }
 
             return (endOnUtc - startFromUtc).Ticks / definition.QueryWindowSize.Ticks;
-        }
-
-        private IReadOnlyDictionary<string, DateTimeOffset> GetQueuedAvailability()
-        {
-            using var connection = connectionFactory.OpenConnection();
-            using var command = connection.CreateCommand();
-            command.CommandText = """
-                SELECT job_id, MIN(available_at_utc)
-                FROM work_queue
-                WHERE state = 'Queued'
-                GROUP BY job_id;
-                """;
-            using var reader = command.ExecuteReader();
-            var results = new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal);
-            while (reader.Read())
-            {
-                results[reader.GetString(0)] = SqliteUi.ParseUtc(reader.GetString(1));
-            }
-
-            return results;
-        }
-
-        private IReadOnlyDictionary<string, DateTimeOffset> GetLatestSliceEnds()
-        {
-            using var connection = connectionFactory.OpenConnection();
-            using var command = connection.CreateCommand();
-            command.CommandText = """
-                SELECT job_id, MAX(slice_end_utc)
-                FROM current_slice_state
-                GROUP BY job_id;
-                """;
-            using var reader = command.ExecuteReader();
-            var results = new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal);
-            while (reader.Read())
-            {
-                results[reader.GetString(0)] = SqliteUi.ParseUtc(reader.GetString(1));
-            }
-
-            return results;
         }
 
         private static NextSliceTiming GetNextSliceTiming(
