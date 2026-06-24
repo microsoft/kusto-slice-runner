@@ -28,18 +28,12 @@ namespace KoLite.LocalApp.Api
     {
         private const string Actor = "local-api";
 
-        public static void Map(WebApplication app)
+        public static void Map(IEndpointRouteBuilder api)
         {
-            app.MapGet("/api/jobs", (
-                HttpContext http,
+            api.MapGet("/jobs", (
                 SqliteJobCatalogRepository catalog,
                 LifecycleReadModel lifecycle) =>
             {
-                if (!LocalApiGuard.IsLoopback(http.Connection.RemoteIpAddress))
-                {
-                    return Results.StatusCode(StatusCodes.Status403Forbidden);
-                }
-
                 var softDeleted = SoftDeletedJobIds(lifecycle);
                 var jobs = catalog.List()
                     .Select(record => BuildSummary(record, catalog.HasStarted(record.JobId), softDeleted.Contains(record.JobId)))
@@ -47,17 +41,11 @@ namespace KoLite.LocalApp.Api
                 return Results.Json(new { jobs });
             });
 
-            app.MapGet("/api/jobs/{jobId}", (
+            api.MapGet("/jobs/{jobId}", (
                 string jobId,
-                HttpContext http,
                 SqliteJobCatalogRepository catalog,
                 LifecycleReadModel lifecycle) =>
             {
-                if (!LocalApiGuard.IsLoopback(http.Connection.RemoteIpAddress))
-                {
-                    return Results.StatusCode(StatusCodes.Status403Forbidden);
-                }
-
                 var record = catalog.Get(jobId);
                 if (record is null)
                 {
@@ -69,29 +57,18 @@ namespace KoLite.LocalApp.Api
                 return Results.Json(new { job = summary, schedule = JsonNode.Parse(record.ScheduleJson) });
             });
 
-            app.MapGet("/api/jobs/export", (
-                HttpContext http,
+            api.MapGet("/jobs/export", (
                 SqliteJobCatalogRepository catalog,
                 LifecycleReadModel lifecycle) =>
             {
-                if (!LocalApiGuard.IsLoopback(http.Connection.RemoteIpAddress))
-                {
-                    return Results.StatusCode(StatusCodes.Status403Forbidden);
-                }
-
                 // Import-compatible array of every non-soft-deleted job (mirrors the dashboard Export-all page).
                 return Results.Text(catalog.ExportAll(SoftDeletedJobIds(lifecycle)), "application/json");
             });
 
-            app.MapPost("/api/jobs/import", async (
+            api.MapPost("/jobs/import", async (
                 HttpContext http,
                 SqliteJobCatalogRepository catalog) =>
             {
-                if (!LocalApiGuard.IsLoopback(http.Connection.RemoteIpAddress))
-                {
-                    return Results.StatusCode(StatusCodes.Status403Forbidden);
-                }
-
                 string body;
                 using (var reader = new StreamReader(http.Request.Body))
                 {

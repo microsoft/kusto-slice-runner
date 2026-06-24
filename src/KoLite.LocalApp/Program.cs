@@ -75,9 +75,13 @@ namespace KoLite.LocalApp
 
             StatusEndpoints.Map(app);
 
-            LocalCatalogApi.Map(app);
+            // One loopback guard for every /api endpoint (current and future) via a single group filter,
+            // instead of repeating the check in each handler. Endpoints register relative to "/api".
+            var api = app.MapGroup("/api").AddEndpointFilter<LoopbackEndpointFilter>();
 
-            LocalDiagnosticsApi.Map(app);
+            LocalCatalogApi.Map(api);
+
+            LocalDiagnosticsApi.Map(api);
 
             app.MapRazorPages();
 

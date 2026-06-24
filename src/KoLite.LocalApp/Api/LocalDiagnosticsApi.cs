@@ -23,22 +23,16 @@ namespace KoLite.LocalApp.Api
         private const int DefaultThroughputBucketSeconds = 1800;
         private const int DependencySampleSize = 20;
 
-        public static void Map(WebApplication app)
+        public static void Map(IEndpointRouteBuilder api)
         {
             // ---- Per-job diagnostics: /api/jobs/{jobId}/... ----
 
-            app.MapGet("/api/jobs/{jobId}/status", (
+            api.MapGet("/jobs/{jobId}/status", (
                 string jobId,
-                HttpContext http,
                 SqliteJobCatalogRepository catalog,
                 SqliteOperationalReadModelRepository readModels,
                 SqliteWorkQueueRepository queue) =>
             {
-                if (Guard(http) is { } denied)
-                {
-                    return denied;
-                }
-
                 var record = ResolveJob(catalog, jobId);
                 if (record is null)
                 {
@@ -70,18 +64,13 @@ namespace KoLite.LocalApp.Api
                     new JobQueueCountsDto(queued, leased, queued + leased)));
             });
 
-            app.MapGet("/api/jobs/{jobId}/slices", (
+            api.MapGet("/jobs/{jobId}/slices", (
                 string jobId,
                 HttpContext http,
                 SqliteJobCatalogRepository catalog,
                 SqliteDiagnosticsReadModelRepository diagnostics,
                 IClock clock) =>
             {
-                if (Guard(http) is { } denied)
-                {
-                    return denied;
-                }
-
                 var record = ResolveJob(catalog, jobId);
                 if (record is null)
                 {
@@ -98,17 +87,12 @@ namespace KoLite.LocalApp.Api
                 return Results.Json(new { jobId = record.JobId, slices });
             });
 
-            app.MapGet("/api/jobs/{jobId}/attempts", (
+            api.MapGet("/jobs/{jobId}/attempts", (
                 string jobId,
                 HttpContext http,
                 SqliteJobCatalogRepository catalog,
                 OperationalDetailsReadModel operationalDetails) =>
             {
-                if (Guard(http) is { } denied)
-                {
-                    return denied;
-                }
-
                 var record = ResolveJob(catalog, jobId);
                 if (record is null)
                 {
@@ -123,17 +107,12 @@ namespace KoLite.LocalApp.Api
                 return Results.Json(new { jobId = record.JobId, attempts });
             });
 
-            app.MapGet("/api/jobs/{jobId}/events", (
+            api.MapGet("/jobs/{jobId}/events", (
                 string jobId,
                 HttpContext http,
                 SqliteJobCatalogRepository catalog,
                 OperationalDetailsReadModel operationalDetails) =>
             {
-                if (Guard(http) is { } denied)
-                {
-                    return denied;
-                }
-
                 var record = ResolveJob(catalog, jobId);
                 if (record is null)
                 {
@@ -148,17 +127,12 @@ namespace KoLite.LocalApp.Api
                 return Results.Json(new { jobId = record.JobId, events });
             });
 
-            app.MapGet("/api/jobs/{jobId}/logs", (
+            api.MapGet("/jobs/{jobId}/logs", (
                 string jobId,
                 HttpContext http,
                 SqliteJobCatalogRepository catalog,
                 SqliteDiagnosticsReadModelRepository diagnostics) =>
             {
-                if (Guard(http) is { } denied)
-                {
-                    return denied;
-                }
-
                 var record = ResolveJob(catalog, jobId);
                 if (record is null)
                 {
@@ -175,17 +149,11 @@ namespace KoLite.LocalApp.Api
                 return Results.Json(new { jobId = record.JobId, logs });
             });
 
-            app.MapGet("/api/jobs/{jobId}/queue", (
+            api.MapGet("/jobs/{jobId}/queue", (
                 string jobId,
-                HttpContext http,
                 SqliteJobCatalogRepository catalog,
                 SqliteWorkQueueRepository queue) =>
             {
-                if (Guard(http) is { } denied)
-                {
-                    return denied;
-                }
-
                 var record = ResolveJob(catalog, jobId);
                 if (record is null)
                 {
@@ -195,16 +163,10 @@ namespace KoLite.LocalApp.Api
                 return Results.Json(new { jobId = record.JobId, queue = queue.List(record.JobId) });
             });
 
-            app.MapGet("/api/jobs/{jobId}/history", (
+            api.MapGet("/jobs/{jobId}/history", (
                 string jobId,
-                HttpContext http,
                 SqliteJobCatalogRepository catalog) =>
             {
-                if (Guard(http) is { } denied)
-                {
-                    return denied;
-                }
-
                 var record = ResolveJob(catalog, jobId);
                 if (record is null)
                 {
@@ -215,7 +177,7 @@ namespace KoLite.LocalApp.Api
                 return Results.Json(new { jobId = record.JobId, history });
             });
 
-            app.MapGet("/api/jobs/{jobId}/throughput", (
+            api.MapGet("/jobs/{jobId}/throughput", (
                 string jobId,
                 HttpContext http,
                 SqliteJobCatalogRepository catalog,
@@ -223,11 +185,6 @@ namespace KoLite.LocalApp.Api
                 SqliteOperationalReadModelRepository readModels,
                 IClock clock) =>
             {
-                if (Guard(http) is { } denied)
-                {
-                    return denied;
-                }
-
                 var record = ResolveJob(catalog, jobId);
                 if (record is null)
                 {
@@ -249,20 +206,14 @@ namespace KoLite.LocalApp.Api
                 });
             });
 
-            app.MapGet("/api/jobs/{jobId}/dependencies", (
+            api.MapGet("/jobs/{jobId}/dependencies", (
                 string jobId,
-                HttpContext http,
                 SqliteJobCatalogRepository catalog,
                 SqliteDiagnosticsReadModelRepository diagnostics,
                 SqliteOperationalReadModelRepository readModels,
                 SqliteSliceStateRepository state,
                 IClock clock) =>
             {
-                if (Guard(http) is { } denied)
-                {
-                    return denied;
-                }
-
                 var record = ResolveJob(catalog, jobId);
                 if (record is null)
                 {
@@ -274,8 +225,7 @@ namespace KoLite.LocalApp.Api
 
             // ---- Cross-job / global diagnostics: /api/diagnostics/... ----
 
-            app.MapGet("/api/diagnostics/worker-pool", (
-                HttpContext http,
+            api.MapGet("/diagnostics/worker-pool", (
                 SqliteOperationalReadModelRepository readModels,
                 SqliteWorkQueueRepository queue,
                 LocalWorkerPoolRuntimeState workerPoolState,
@@ -283,27 +233,17 @@ namespace KoLite.LocalApp.Api
                 LocalWorkerOptions localWorkerOptions,
                 IClock clock) =>
             {
-                if (Guard(http) is { } denied)
-                {
-                    return denied;
-                }
-
                 var nowUtc = clock.UtcNow;
                 var queueStatus = readModels.GetQueueStatus(localWorkerOptions.QueueName, nowUtc);
                 var claimableBacklog = queue.CountClaimable(localWorkerOptions.QueueName, nowUtc, localWorkerOptions.EnforceJobParallelism, localWorkerOptions.EffectiveOrphanReclaimGrace);
                 return Results.Json(workerPoolState.GetSnapshot(workerPoolOptions, queueStatus, claimableBacklog));
             });
 
-            app.MapGet("/api/diagnostics/running-slices", (
+            api.MapGet("/diagnostics/running-slices", (
                 HttpContext http,
                 SqliteDiagnosticsReadModelRepository diagnostics,
                 IClock clock) =>
             {
-                if (Guard(http) is { } denied)
-                {
-                    return denied;
-                }
-
                 var runningSlices = diagnostics.GetRunningSlices(
                     DiagnosticsQuery.Text(http.Request, "jobId"),
                     clock.UtcNow,
@@ -311,16 +251,11 @@ namespace KoLite.LocalApp.Api
                 return Results.Json(new { runningSlices });
             });
 
-            app.MapGet("/api/diagnostics/throughput", (
+            api.MapGet("/diagnostics/throughput", (
                 HttpContext http,
                 SqliteDiagnosticsReadModelRepository diagnostics,
                 IClock clock) =>
             {
-                if (Guard(http) is { } denied)
-                {
-                    return denied;
-                }
-
                 var (fromUtc, toUtc) = DiagnosticsQuery.Window(http.Request, clock.UtcNow, DefaultThroughputLookback);
                 var bucketSeconds = DiagnosticsQuery.BucketSeconds(http.Request, DefaultThroughputBucketSeconds);
                 var groupByJob = DiagnosticsQuery.GroupByJob(http.Request);
@@ -334,30 +269,19 @@ namespace KoLite.LocalApp.Api
                 return Results.Json(new { fromUtc, toUtc, bucketSeconds, groupByJob, buckets });
             });
 
-            app.MapGet("/api/diagnostics/queue", (
-                HttpContext http,
+            api.MapGet("/diagnostics/queue", (
                 SqliteOperationalReadModelRepository readModels,
                 LocalWorkerOptions localWorkerOptions,
                 IClock clock) =>
             {
-                if (Guard(http) is { } denied)
-                {
-                    return denied;
-                }
-
                 return Results.Json(readModels.GetQueueStatus(localWorkerOptions.QueueName, clock.UtcNow));
             });
 
-            app.MapGet("/api/diagnostics/logs", (
+            api.MapGet("/diagnostics/logs", (
                 HttpContext http,
                 SqliteDiagnosticsReadModelRepository diagnostics,
                 IClock clock) =>
             {
-                if (Guard(http) is { } denied)
-                {
-                    return denied;
-                }
-
                 var (fromUtc, toUtc) = DiagnosticsQuery.Window(http.Request, clock.UtcNow, DefaultLogLookback);
                 var logs = diagnostics.GetLogs(
                     DiagnosticsQuery.Text(http.Request, "jobId"),
@@ -369,16 +293,11 @@ namespace KoLite.LocalApp.Api
                 return Results.Json(new { fromUtc, toUtc, logs });
             });
 
-            app.MapGet("/api/diagnostics/failures", (
+            api.MapGet("/diagnostics/failures", (
                 HttpContext http,
                 SqliteOperationalReadModelRepository readModels,
                 SqliteDiagnosticsReadModelRepository diagnostics) =>
             {
-                if (Guard(http) is { } denied)
-                {
-                    return denied;
-                }
-
                 var take = DiagnosticsQuery.Take(http.Request);
                 var jobId = DiagnosticsQuery.Text(http.Request, "jobId");
                 return Results.Json(new
@@ -388,16 +307,11 @@ namespace KoLite.LocalApp.Api
                 });
             });
 
-            app.MapGet("/api/diagnostics/audit", (
+            api.MapGet("/diagnostics/audit", (
                 HttpContext http,
                 SqliteDiagnosticsReadModelRepository diagnostics,
                 IClock clock) =>
             {
-                if (Guard(http) is { } denied)
-                {
-                    return denied;
-                }
-
                 var (fromUtc, toUtc) = DiagnosticsQuery.Window(http.Request, clock.UtcNow, DefaultLogLookback);
                 var audit = diagnostics.GetAuditEvents(
                     DiagnosticsQuery.Text(http.Request, "subjectType"),
@@ -409,16 +323,11 @@ namespace KoLite.LocalApp.Api
                 return Results.Json(new { fromUtc, toUtc, audit });
             });
 
-            app.MapGet("/api/diagnostics/reruns", (
+            api.MapGet("/diagnostics/reruns", (
                 HttpContext http,
                 SqliteDiagnosticsReadModelRepository diagnostics,
                 SqliteRerunService rerun) =>
             {
-                if (Guard(http) is { } denied)
-                {
-                    return denied;
-                }
-
                 var batchId = DiagnosticsQuery.Text(http.Request, "batchId");
                 if (batchId is not null)
                 {
@@ -432,16 +341,11 @@ namespace KoLite.LocalApp.Api
                 return Results.Json(new { reruns });
             });
 
-            app.MapGet("/api/diagnostics/repairs", (
+            api.MapGet("/diagnostics/repairs", (
                 HttpContext http,
                 SqliteDiagnosticsReadModelRepository diagnostics,
                 SqliteRepairService repair) =>
             {
-                if (Guard(http) is { } denied)
-                {
-                    return denied;
-                }
-
                 var batchId = DiagnosticsQuery.Text(http.Request, "batchId");
                 if (batchId is not null)
                 {
@@ -452,11 +356,6 @@ namespace KoLite.LocalApp.Api
                 return Results.Json(new { repairs });
             });
         }
-
-        private static IResult? Guard(HttpContext http) =>
-            LocalApiGuard.IsLoopback(http.Connection.RemoteIpAddress)
-                ? null
-                : Results.StatusCode(StatusCodes.Status403Forbidden);
 
         private static IResult NotFound(string jobId) =>
             Results.Json(new { error = $"Job '{jobId}' does not exist." }, statusCode: StatusCodes.Status404NotFound);
