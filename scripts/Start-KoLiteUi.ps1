@@ -20,6 +20,9 @@ It always passes three overrides:
    coexist with your live app (usually on http://127.0.0.1:5057). The app reads KoLite:Urls in
    UseUrls(...), so --urls / ASPNETCORE_URLS are ignored; this is the supported way to move it.
 
+Once the app responds, the dashboard URL is opened in your default browser; pass -NoBrowser to skip
+that and open it yourself.
+
 Safety notes when running against the live database (the default):
 
 - Startup runs schema migrations against whatever database it opens. Pure UI / read-model / Razor
@@ -51,6 +54,9 @@ Destination for -UseCopy. Default: '<source-name>-validate.db' next to the sourc
 Extra arguments passed through to the app after the fixed overrides (for example
 '--KoLite:Kusto:AuthMode=AzureCli'). Later values win over the fixed overrides.
 
+.PARAMETER NoBrowser
+Do not open a browser. By default the dashboard URL is opened in your default browser once the app responds.
+
 .PARAMETER DryRun
 Print the resolved database, port, and exact 'dotnet' command without copying anything or starting
 the app.
@@ -71,6 +77,7 @@ param(
     [switch]$UseCopy,
     [string]$CopyPath,
     [string[]]$AppArguments = @(),
+    [switch]$NoBrowser,
     [switch]$DryRun
 )
 
@@ -164,6 +171,11 @@ if ($UseCopy) {
 }
 Write-Host "Url            : $effectiveUrl"
 Write-Host 'Scheduler      : disabled (no slice claims, no Kusto execution)'
+if ($NoBrowser) {
+    Write-Host 'Browser        : not opened (-NoBrowser)'
+} else {
+    Write-Host 'Browser        : default browser (opens when ready)'
+}
 Write-Host "Command        : $commandPreview"
 
 if (-not $UseCopy) {
@@ -178,6 +190,9 @@ if ($DryRun) {
     Write-Host ''
     if ($UseCopy) {
         Write-Host "DryRun: would copy $DatabasePath (and -wal/-shm sidecars) to $effectiveDatabasePath."
+    }
+    if (-not $NoBrowser) {
+        Write-Host "DryRun: would open $effectiveUrl in your default browser once the app responds."
     }
     Write-Host "DryRun: would verify port $Port is free, then start the app. Nothing was copied or started."
     return
@@ -197,7 +212,44 @@ if ($UseCopy) {
     Copy-DatabaseSnapshot -Source $DatabasePath -Destination $effectiveDatabasePath
 }
 
+$browserJob = $null
+if (-not $NoBrowser) {
+    # The foreground 'dotnet run' below blocks until Ctrl+C, so poll for readiness in a background
+    # job and open the default browser once the app answers, then run the app in the foreground.
+    $browserJob = Start-Job -Name 'KoLiteUiBrowser' -ArgumentList $effectiveUrl -ScriptBlock {
+        param([string]$Url)
+        $ProgressPreference = 'SilentlyContinue'
+        $healthUrl = "$Url/status/health"
+        $deadline = (Get-Date).AddSeconds(90)
+        $ready = $false
+        while ((Get-Date) -lt $deadline) {
+            try {
+                Invoke-WebRequest -Uri $healthUrl -TimeoutSec 2 -UseBasicParsing | Out-Null
+                $ready = $true
+                break
+            } catch {
+                # Any HTTP response (even an error status) means the server is up; only a
+                # connection failure (no Response) means keep waiting.
+                if ($null -ne $_.Exception.Response) { $ready = $true; break }
+                Start-Sleep -Milliseconds 500
+            }
+        }
+        if (-not $ready) { return }
+
+        # ShellExecute opens the URL in the machine's default browser.
+        Start-Process -FilePath $Url
+    }
+}
+
 Write-Host ''
 Write-Host "Starting the UI at $effectiveUrl (press Ctrl+C to stop)..."
-& dotnet @dotnetArgs
-exit $LASTEXITCODE
+$exitCode = 0
+try {
+    & dotnet @dotnetArgs
+    $exitCode = $LASTEXITCODE
+} finally {
+    if ($null -ne $browserJob) {
+        Remove-Job -Job $browserJob -Force -ErrorAction SilentlyContinue
+    }
+}
+exit $exitCode
