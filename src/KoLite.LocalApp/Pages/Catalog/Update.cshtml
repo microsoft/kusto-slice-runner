@@ -1,20 +1,36 @@
 @page "/catalog/{jobId}/update"
 @model KoLite.LocalApp.Pages.Catalog.UpdateModel
 @{
-    ViewData["Title"] = "Update job";
+    ViewData["Title"] = string.IsNullOrWhiteSpace(Model.ErrorMessage) ? "Edit job" : "Update job";
 }
 
-<div class="page-heading">
-    <div>
-        <h1>Edit @Model.Input.ActivityId</h1>
-        <p class="muted">Fix validation errors and submit again.</p>
-    </div>
-    <a class="btn" href="/">Back to jobs</a>
-</div>
-
-@if (!string.IsNullOrWhiteSpace(Model.ErrorMessage))
+@if (Model.Editor is null)
 {
-    <div class="alert danger">@Model.ErrorMessage</div>
+    <section class="card"><h1>Job not found</h1></section>
 }
+else
+{
+    @if (string.IsNullOrWhiteSpace(Model.ErrorMessage))
+    {
+        <div class="page-heading">
+            <div>
+                <h1>Edit @Model.Editor.Input.ActivityId</h1>
+                <p class="muted">Catalog version @Model.ExpectedVersion</p>
+            </div>
+            <a class="btn" href="/jobs/@Uri.EscapeDataString(Model.JobId)">Open details</a>
+        </div>
+    }
+    else
+    {
+        <div class="page-heading">
+            <div>
+                <h1>Edit @Model.Input.ActivityId</h1>
+                <p class="muted">Fix validation errors and submit again.</p>
+            </div>
+            <a class="btn" href="/">Back to jobs</a>
+        </div>
+        <div class="alert danger">@Model.ErrorMessage</div>
+    }
 
-<partial name="_ScheduleEditor" model="Model.Editor" />
+    <partial name="_ScheduleEditor" model="Model.Editor" />
+}

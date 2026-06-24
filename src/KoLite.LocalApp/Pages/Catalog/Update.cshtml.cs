@@ -20,9 +20,35 @@ namespace KoLite.LocalApp.Pages.Catalog
         [BindProperty(Name = "expectedVersion")] public long ExpectedVersion { get; set; }
         public string JobId { get; private set; } = string.Empty;
         public string? ErrorMessage { get; private set; }
-        public ScheduleEditorViewModel Editor => new($"/catalog/{Uri.EscapeDataString(JobId)}/update", Input, ScheduleJson, ExpectedVersion, true, "Save job", catalog.HasStarted(JobId));
+        public ScheduleEditorViewModel? Editor { get; private set; }
 
-        public IActionResult OnGet() => StatusCode(StatusCodes.Status405MethodNotAllowed);
+        public IActionResult OnGet(string jobId)
+        {
+            // /catalog/{jobId}/update is POST-only; the GET entry point is the /catalog/{jobId}/edit alias.
+            if (!IsEditRoute())
+            {
+                return StatusCode(StatusCodes.Status405MethodNotAllowed);
+            }
+
+            var record = catalog.Get(jobId);
+            if (record is null)
+            {
+                Response.StatusCode = StatusCodes.Status404NotFound;
+                return Page();
+            }
+
+            JobId = record.JobId;
+            ExpectedVersion = record.CatalogVersion;
+            Editor = new ScheduleEditorViewModel(
+                $"/catalog/{Uri.EscapeDataString(record.JobId)}/update",
+                ScheduleFormInput.FromDefinition(record.Definition),
+                AppFormatting.PrettyJson(record.ScheduleJson),
+                record.CatalogVersion,
+                true,
+                "Save job",
+                catalog.HasStarted(record.JobId));
+            return Page();
+        }
 
         public IActionResult OnPost(string jobId)
         {
@@ -48,8 +74,15 @@ namespace KoLite.LocalApp.Pages.Catalog
                     Input = ScheduleFormInput.FromJson(scheduleJson);
                 }
 
+                Editor = new ScheduleEditorViewModel($"/catalog/{Uri.EscapeDataString(JobId)}/update", Input, ScheduleJson, ExpectedVersion, true, "Save job", catalog.HasStarted(JobId));
                 return Page();
             }
+        }
+
+        private bool IsEditRoute()
+        {
+            var path = Request.Path.Value;
+            return path is not null && path.TrimEnd('/').EndsWith("/edit", StringComparison.OrdinalIgnoreCase);
         }
     }
 }
