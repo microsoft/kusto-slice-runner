@@ -425,9 +425,8 @@ namespace KoLite.LocalApp.Tests
             var query = new DashboardPageQuery(
                 catalog,
                 new SqliteOperationalReadModelRepository(sqlite),
-                new LifecycleReadModel(sqlite),
+                new LifecycleReadModel(new SqliteLifecycleReadModelRepository(sqlite)),
                 new JobChartQuery(sqlite, clock),
-                sqlite,
                 clock);
 
             var data = query.Get(TimeSpan.FromDays(1));
@@ -456,9 +455,8 @@ namespace KoLite.LocalApp.Tests
             var query = new DashboardPageQuery(
                 catalog,
                 readModels,
-                new LifecycleReadModel(sqlite),
+                new LifecycleReadModel(new SqliteLifecycleReadModelRepository(sqlite)),
                 new JobChartQuery(sqlite, clock),
-                sqlite,
                 clock);
 
             var data = query.Get(TimeSpan.FromDays(1));
@@ -487,9 +485,8 @@ namespace KoLite.LocalApp.Tests
             var query = new DashboardPageQuery(
                 catalog,
                 new SqliteOperationalReadModelRepository(sqlite),
-                new LifecycleReadModel(sqlite),
+                new LifecycleReadModel(new SqliteLifecycleReadModelRepository(sqlite)),
                 new JobChartQuery(sqlite, clock),
-                sqlite,
                 clock);
 
             var data = query.Get(TimeSpan.FromDays(1));
@@ -1057,7 +1054,7 @@ namespace KoLite.LocalApp.Tests
             ]);
 
             Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
-            var states = new LifecycleReadModel(sqlite).GetLatestStates();
+            var states = new LifecycleReadModel(new SqliteLifecycleReadModelRepository(sqlite)).GetLatestStates();
             Assert.True(states[JobId("job.one")].IsSoftDeleted);
             Assert.True(states[JobId("job.two")].IsSoftDeleted);
         }
@@ -1728,7 +1725,7 @@ namespace KoLite.LocalApp.Tests
             queue.Enqueue(JobId("job.stalled"), At(0), At(5), "normal|stalled", At(0));
             Assert.NotNull(queue.Claim("default", "stale-worker", TimeSpan.FromMinutes(5), At(10)));
 
-            var query = new JobDetailsPageQuery(catalog, readModels, queue, new LifecycleReadModel(sqlite), new OperationalDetailsReadModel(sqlite), clock);
+            var query = new JobDetailsPageQuery(catalog, readModels, queue, new LifecycleReadModel(new SqliteLifecycleReadModelRepository(sqlite)), new OperationalDetailsReadModel(new SqliteOperationalReadModelRepository(sqlite)), clock);
             var data = query.Get(JobId("job.stalled"));
 
             Assert.NotNull(data);
@@ -1980,7 +1977,7 @@ namespace KoLite.LocalApp.Tests
                 readModels.RecordAttempt($"behind-attempt-{i}", JobId("job.catchup.behind"), At(i * 60), At((i + 1) * 60), 1, "Succeeded", "worker", completions[i].AddMinutes(-5), completions[i]);
             }
 
-            var query = new JobDetailsPageQuery(catalog, readModels, new SqliteWorkQueueRepository(sqlite), new LifecycleReadModel(sqlite), new OperationalDetailsReadModel(sqlite), clock);
+            var query = new JobDetailsPageQuery(catalog, readModels, new SqliteWorkQueueRepository(sqlite), new LifecycleReadModel(new SqliteLifecycleReadModelRepository(sqlite)), new OperationalDetailsReadModel(new SqliteOperationalReadModelRepository(sqlite)), clock);
             var data = query.Get(JobId("job.catchup.behind"));
 
             Assert.NotNull(data);
@@ -2014,7 +2011,7 @@ namespace KoLite.LocalApp.Tests
                 readModels.RecordAttempt($"current-attempt-{i}", JobId("job.catchup.current"), At(i * 60), At((i + 1) * 60), 1, "Succeeded", "worker", completedAt.AddMinutes(-5), completedAt);
             }
 
-            var query = new JobDetailsPageQuery(catalog, readModels, new SqliteWorkQueueRepository(sqlite), new LifecycleReadModel(sqlite), new OperationalDetailsReadModel(sqlite), clock);
+            var query = new JobDetailsPageQuery(catalog, readModels, new SqliteWorkQueueRepository(sqlite), new LifecycleReadModel(new SqliteLifecycleReadModelRepository(sqlite)), new OperationalDetailsReadModel(new SqliteOperationalReadModelRepository(sqlite)), clock);
             var data = query.Get(JobId("job.catchup.current"));
 
             Assert.NotNull(data);
@@ -2104,7 +2101,7 @@ namespace KoLite.LocalApp.Tests
                 readModels.RecordAttempt($"collecting-attempt-{i}", JobId("job.catchup.collecting"), At(i * 60), At((i + 1) * 60), 1, "Succeeded", "worker", completions[i].AddMinutes(-5), completions[i]);
             }
 
-            var query = new JobDetailsPageQuery(catalog, readModels, new SqliteWorkQueueRepository(sqlite), new LifecycleReadModel(sqlite), new OperationalDetailsReadModel(sqlite), new ManualClock(At(20 * 60)));
+            var query = new JobDetailsPageQuery(catalog, readModels, new SqliteWorkQueueRepository(sqlite), new LifecycleReadModel(new SqliteLifecycleReadModelRepository(sqlite)), new OperationalDetailsReadModel(new SqliteOperationalReadModelRepository(sqlite)), new ManualClock(At(20 * 60)));
             var data = query.Get(JobId("job.catchup.collecting"));
 
             Assert.NotNull(data);

@@ -1,4 +1,4 @@
-using KoLite.Local.Sqlite.Connections;
+using KoLite.Local.Sqlite.Observability;
 
 namespace KoLite.LocalApp.Ui
 {
@@ -40,125 +40,56 @@ namespace KoLite.LocalApp.Ui
 
     public sealed class OperationalDetailsReadModel
     {
-        private readonly IKoLiteSqliteConnectionFactory connectionFactory;
+        private readonly SqliteOperationalReadModelRepository repository;
 
-        public OperationalDetailsReadModel(IKoLiteSqliteConnectionFactory connectionFactory)
+        public OperationalDetailsReadModel(SqliteOperationalReadModelRepository repository)
         {
-            this.connectionFactory = connectionFactory;
+            this.repository = repository;
         }
 
-        public IReadOnlyList<SliceAttemptReadout> GetAttempts(string jobId, DateTimeOffset? sliceStartUtc = null, DateTimeOffset? sliceEndUtc = null, int take = 50)
-        {
-            using var connection = connectionFactory.OpenConnection();
-            using var command = connection.CreateCommand();
-            command.CommandText = """
-                SELECT attempt_id, job_id, slice_start_utc, slice_end_utc, attempt, status, worker_id, started_at_utc, completed_at_utc, error_code, error_message
-                FROM slice_attempts
-                WHERE job_id=$jobId
-                  AND ($sliceStart IS NULL OR slice_start_utc=$sliceStart)
-                  AND ($sliceEnd IS NULL OR slice_end_utc=$sliceEnd)
-                ORDER BY COALESCE(completed_at_utc, started_at_utc, slice_start_utc) DESC, attempt DESC
-                LIMIT $take;
-                """;
-            command.Add("$jobId", jobId);
-            command.Add("$sliceStart", sliceStartUtc is null ? null : SqliteUi.FormatUtc(sliceStartUtc.Value));
-            command.Add("$sliceEnd", sliceEndUtc is null ? null : SqliteUi.FormatUtc(sliceEndUtc.Value));
-            command.Add("$take", take);
+        public IReadOnlyList<SliceAttemptReadout> GetAttempts(string jobId, DateTimeOffset? sliceStartUtc = null, DateTimeOffset? sliceEndUtc = null, int take = 50) =>
+            repository.GetSliceAttempts(jobId, sliceStartUtc, sliceEndUtc, take)
+                .Select(row => new SliceAttemptReadout(
+                    row.AttemptId,
+                    row.JobId,
+                    row.SliceStartUtc,
+                    row.SliceEndUtc,
+                    row.Attempt,
+                    row.Status,
+                    row.WorkerId,
+                    row.StartedAtUtc,
+                    row.CompletedAtUtc,
+                    row.ErrorCode,
+                    row.ErrorMessage))
+                .ToList();
 
-            using var reader = command.ExecuteReader();
-            var rows = new List<SliceAttemptReadout>();
-            while (reader.Read())
-            {
-                rows.Add(new SliceAttemptReadout(
-                    reader.GetString(0),
-                    reader.GetString(1),
-                    SqliteUi.ParseUtc(reader.GetString(2)),
-                    SqliteUi.ParseUtc(reader.GetString(3)),
-                    reader.GetInt32(4),
-                    reader.GetString(5),
-                    reader.IsDBNull(6) ? null : reader.GetString(6),
-                    reader.IsDBNull(7) ? null : SqliteUi.ParseUtc(reader.GetString(7)),
-                    reader.IsDBNull(8) ? null : SqliteUi.ParseUtc(reader.GetString(8)),
-                    reader.IsDBNull(9) ? null : reader.GetString(9),
-                    reader.IsDBNull(10) ? null : reader.GetString(10)));
-            }
+        public IReadOnlyList<OperationalLogReadout> GetLogs(string jobId, DateTimeOffset? sliceStartUtc = null, DateTimeOffset? sliceEndUtc = null, int take = 50) =>
+            repository.GetOperationalLogs(jobId, sliceStartUtc, sliceEndUtc, take)
+                .Select(row => new OperationalLogReadout(
+                    row.LogId,
+                    row.JobId,
+                    row.SliceStartUtc,
+                    row.SliceEndUtc,
+                    row.Level,
+                    row.Message,
+                    row.Category,
+                    row.Exception,
+                    row.RecordedAtUtc))
+                .ToList();
 
-            return rows;
-        }
-
-        public IReadOnlyList<OperationalLogReadout> GetLogs(string jobId, DateTimeOffset? sliceStartUtc = null, DateTimeOffset? sliceEndUtc = null, int take = 50)
-        {
-            using var connection = connectionFactory.OpenConnection();
-            using var command = connection.CreateCommand();
-            command.CommandText = """
-                SELECT log_id, job_id, slice_start_utc, slice_end_utc, level, message, category, exception, recorded_at_utc
-                FROM operational_logs
-                WHERE job_id=$jobId
-                  AND ($sliceStart IS NULL OR slice_start_utc=$sliceStart)
-                  AND ($sliceEnd IS NULL OR slice_end_utc=$sliceEnd)
-                ORDER BY recorded_at_utc DESC, log_id DESC
-                LIMIT $take;
-                """;
-            command.Add("$jobId", jobId);
-            command.Add("$sliceStart", sliceStartUtc is null ? null : SqliteUi.FormatUtc(sliceStartUtc.Value));
-            command.Add("$sliceEnd", sliceEndUtc is null ? null : SqliteUi.FormatUtc(sliceEndUtc.Value));
-            command.Add("$take", take);
-
-            using var reader = command.ExecuteReader();
-            var rows = new List<OperationalLogReadout>();
-            while (reader.Read())
-            {
-                rows.Add(new OperationalLogReadout(
-                    reader.GetString(0),
-                    reader.IsDBNull(1) ? null : reader.GetString(1),
-                    reader.IsDBNull(2) ? null : SqliteUi.ParseUtc(reader.GetString(2)),
-                    reader.IsDBNull(3) ? null : SqliteUi.ParseUtc(reader.GetString(3)),
-                    reader.GetString(4),
-                    reader.GetString(5),
-                    reader.IsDBNull(6) ? null : reader.GetString(6),
-                    reader.IsDBNull(7) ? null : reader.GetString(7),
-                    SqliteUi.ParseUtc(reader.GetString(8))));
-            }
-
-            return rows;
-        }
-
-        public IReadOnlyList<SliceEventReadout> GetEvents(string jobId, DateTimeOffset? sliceStartUtc = null, DateTimeOffset? sliceEndUtc = null, int take = 50)
-        {
-            using var connection = connectionFactory.OpenConnection();
-            using var command = connection.CreateCommand();
-            command.CommandText = """
-                SELECT event_id, job_id, slice_start_utc, slice_end_utc, event_type, state, attempt, reason, actor, recorded_at_utc
-                FROM slice_state_events
-                WHERE job_id=$jobId
-                  AND ($sliceStart IS NULL OR slice_start_utc=$sliceStart)
-                  AND ($sliceEnd IS NULL OR slice_end_utc=$sliceEnd)
-                ORDER BY recorded_at_utc DESC, event_id DESC
-                LIMIT $take;
-                """;
-            command.Add("$jobId", jobId);
-            command.Add("$sliceStart", sliceStartUtc is null ? null : SqliteUi.FormatUtc(sliceStartUtc.Value));
-            command.Add("$sliceEnd", sliceEndUtc is null ? null : SqliteUi.FormatUtc(sliceEndUtc.Value));
-            command.Add("$take", take);
-
-            using var reader = command.ExecuteReader();
-            var rows = new List<SliceEventReadout>();
-            while (reader.Read())
-            {
-                rows.Add(new SliceEventReadout(
-                    reader.GetString(0),
-                    reader.GetString(1),
-                    SqliteUi.ParseUtc(reader.GetString(2)),
-                    SqliteUi.ParseUtc(reader.GetString(3)),
-                    reader.GetString(4),
-                    reader.IsDBNull(5) ? null : reader.GetString(5),
-                    reader.IsDBNull(6) ? null : reader.GetInt32(6),
-                    reader.IsDBNull(7) ? null : reader.GetString(7),
-                    reader.IsDBNull(8) ? null : reader.GetString(8),
-                    SqliteUi.ParseUtc(reader.GetString(9))));
-            }
-
-            return rows;
-        }
+        public IReadOnlyList<SliceEventReadout> GetEvents(string jobId, DateTimeOffset? sliceStartUtc = null, DateTimeOffset? sliceEndUtc = null, int take = 50) =>
+            repository.GetSliceStateEvents(jobId, sliceStartUtc, sliceEndUtc, take)
+                .Select(row => new SliceEventReadout(
+                    row.EventId,
+                    row.JobId,
+                    row.SliceStartUtc,
+                    row.SliceEndUtc,
+                    row.EventType,
+                    row.State,
+                    row.Attempt,
+                    row.Reason,
+                    row.Actor,
+                    row.RecordedAtUtc))
+                .ToList();
     }
 }

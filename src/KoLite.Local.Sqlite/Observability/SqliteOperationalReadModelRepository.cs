@@ -11,6 +11,9 @@ namespace KoLite.Local.Sqlite.Observability
     public sealed record SliceStatusReadout(string JobId, DateTimeOffset SliceStartUtc, DateTimeOffset SliceEndUtc, string Status, int Attempt, int? SuccessfulAttempt, string? LatestAttemptStatus, DateTimeOffset? LastAttemptUpdatedAtUtc, DateTimeOffset UpdatedAtUtc);
     public sealed record RetentionCleanupResult(string RetentionRunId, int LogsDeleted, int AttemptsDeleted, int ScheduledSlicesDeleted, int IngestionThrottlesDeleted);
     public sealed record SliceThroughputSample(int SucceededCount, DateTimeOffset? FirstCompletedUtc, DateTimeOffset? LastCompletedUtc);
+    public sealed record SliceAttemptRow(string AttemptId, string JobId, DateTimeOffset SliceStartUtc, DateTimeOffset SliceEndUtc, int Attempt, string Status, string? WorkerId, DateTimeOffset? StartedAtUtc, DateTimeOffset? CompletedAtUtc, string? ErrorCode, string? ErrorMessage);
+    public sealed record OperationalLogRow(string LogId, string? JobId, DateTimeOffset? SliceStartUtc, DateTimeOffset? SliceEndUtc, string Level, string Message, string? Category, string? Exception, DateTimeOffset RecordedAtUtc);
+    public sealed record SliceStateEventRow(string EventId, string JobId, DateTimeOffset SliceStartUtc, DateTimeOffset SliceEndUtc, string EventType, string? State, int? Attempt, string? Reason, string? Actor, DateTimeOffset RecordedAtUtc);
 
     public sealed class SqliteOperationalReadModelRepository
     {
@@ -107,6 +110,161 @@ namespace KoLite.Local.Sqlite.Observability
                 FROM current_slice_state css WHERE css.job_id=$j ORDER BY css.slice_start_utc;
                 """); cmd.Add("$j", jobId); using var r = cmd.ExecuteReader(); var results = new List<SliceStatusReadout>();
             while (r.Read()) results.Add(new SliceStatusReadout(r.GetString(0), SqliteStorage.ReadUtc(r, "slice_start_utc"), SqliteStorage.ReadUtc(r, "slice_end_utc"), r.GetString(3), r.GetInt32(4), r.IsDBNull(5) ? null : r.GetInt32(5), r.IsDBNull(6) ? null : r.GetString(6), r.IsDBNull(7) ? null : DateTimeOffset.Parse(r.GetString(7), System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal), SqliteStorage.ReadUtc(r, "updated_at_utc")));
+            return results;
+        }
+
+        // Per-slice attempt history for one job, optionally narrowed to a single slice window, with the
+        // most recent activity first. Backs the job-details "attempts" readout.
+        public IReadOnlyList<SliceAttemptRow> GetSliceAttempts(string jobId, DateTimeOffset? sliceStartUtc = null, DateTimeOffset? sliceEndUtc = null, int take = 50)
+        {
+            using var c = connectionFactory.OpenConnection();
+            using var cmd = SqliteStorage.Command(c, null, """
+                SELECT attempt_id, job_id, slice_start_utc, slice_end_utc, attempt, status, worker_id, started_at_utc, completed_at_utc, error_code, error_message
+                FROM slice_attempts
+                WHERE job_id=$jobId
+                  AND ($sliceStart IS NULL OR slice_start_utc=$sliceStart)
+                  AND ($sliceEnd IS NULL OR slice_end_utc=$sliceEnd)
+                ORDER BY COALESCE(completed_at_utc, started_at_utc, slice_start_utc) DESC, attempt DESC
+                LIMIT $take;
+                """);
+            cmd.Add("$jobId", jobId);
+            cmd.Add("$sliceStart", sliceStartUtc is null ? null : SqliteStorage.Utc(sliceStartUtc.Value));
+            cmd.Add("$sliceEnd", sliceEndUtc is null ? null : SqliteStorage.Utc(sliceEndUtc.Value));
+            cmd.Add("$take", take);
+            using var r = cmd.ExecuteReader();
+            var rows = new List<SliceAttemptRow>();
+            while (r.Read())
+            {
+                rows.Add(new SliceAttemptRow(
+                    r.GetString(0),
+                    r.GetString(1),
+                    SqliteStorage.ReadUtc(r, "slice_start_utc"),
+                    SqliteStorage.ReadUtc(r, "slice_end_utc"),
+                    r.GetInt32(4),
+                    r.GetString(5),
+                    r.IsDBNull(6) ? null : r.GetString(6),
+                    SqliteStorage.ReadNullableUtc(r, "started_at_utc"),
+                    SqliteStorage.ReadNullableUtc(r, "completed_at_utc"),
+                    r.IsDBNull(9) ? null : r.GetString(9),
+                    r.IsDBNull(10) ? null : r.GetString(10)));
+            }
+
+            return rows;
+        }
+
+        // Operational log lines for one job, optionally narrowed to a single slice window, newest first.
+        // Backs the job-details "logs" readout.
+        public IReadOnlyList<OperationalLogRow> GetOperationalLogs(string jobId, DateTimeOffset? sliceStartUtc = null, DateTimeOffset? sliceEndUtc = null, int take = 50)
+        {
+            using var c = connectionFactory.OpenConnection();
+            using var cmd = SqliteStorage.Command(c, null, """
+                SELECT log_id, job_id, slice_start_utc, slice_end_utc, level, message, category, exception, recorded_at_utc
+                FROM operational_logs
+                WHERE job_id=$jobId
+                  AND ($sliceStart IS NULL OR slice_start_utc=$sliceStart)
+                  AND ($sliceEnd IS NULL OR slice_end_utc=$sliceEnd)
+                ORDER BY recorded_at_utc DESC, log_id DESC
+                LIMIT $take;
+                """);
+            cmd.Add("$jobId", jobId);
+            cmd.Add("$sliceStart", sliceStartUtc is null ? null : SqliteStorage.Utc(sliceStartUtc.Value));
+            cmd.Add("$sliceEnd", sliceEndUtc is null ? null : SqliteStorage.Utc(sliceEndUtc.Value));
+            cmd.Add("$take", take);
+            using var r = cmd.ExecuteReader();
+            var rows = new List<OperationalLogRow>();
+            while (r.Read())
+            {
+                rows.Add(new OperationalLogRow(
+                    r.GetString(0),
+                    r.IsDBNull(1) ? null : r.GetString(1),
+                    SqliteStorage.ReadNullableUtc(r, "slice_start_utc"),
+                    SqliteStorage.ReadNullableUtc(r, "slice_end_utc"),
+                    r.GetString(4),
+                    r.GetString(5),
+                    r.IsDBNull(6) ? null : r.GetString(6),
+                    r.IsDBNull(7) ? null : r.GetString(7),
+                    SqliteStorage.ReadUtc(r, "recorded_at_utc")));
+            }
+
+            return rows;
+        }
+
+        // Slice state-transition events for one job, optionally narrowed to a single slice window, newest
+        // first. Backs the job-details "events" readout.
+        public IReadOnlyList<SliceStateEventRow> GetSliceStateEvents(string jobId, DateTimeOffset? sliceStartUtc = null, DateTimeOffset? sliceEndUtc = null, int take = 50)
+        {
+            using var c = connectionFactory.OpenConnection();
+            using var cmd = SqliteStorage.Command(c, null, """
+                SELECT event_id, job_id, slice_start_utc, slice_end_utc, event_type, state, attempt, reason, actor, recorded_at_utc
+                FROM slice_state_events
+                WHERE job_id=$jobId
+                  AND ($sliceStart IS NULL OR slice_start_utc=$sliceStart)
+                  AND ($sliceEnd IS NULL OR slice_end_utc=$sliceEnd)
+                ORDER BY recorded_at_utc DESC, event_id DESC
+                LIMIT $take;
+                """);
+            cmd.Add("$jobId", jobId);
+            cmd.Add("$sliceStart", sliceStartUtc is null ? null : SqliteStorage.Utc(sliceStartUtc.Value));
+            cmd.Add("$sliceEnd", sliceEndUtc is null ? null : SqliteStorage.Utc(sliceEndUtc.Value));
+            cmd.Add("$take", take);
+            using var r = cmd.ExecuteReader();
+            var rows = new List<SliceStateEventRow>();
+            while (r.Read())
+            {
+                rows.Add(new SliceStateEventRow(
+                    r.GetString(0),
+                    r.GetString(1),
+                    SqliteStorage.ReadUtc(r, "slice_start_utc"),
+                    SqliteStorage.ReadUtc(r, "slice_end_utc"),
+                    r.GetString(4),
+                    r.IsDBNull(5) ? null : r.GetString(5),
+                    r.IsDBNull(6) ? null : r.GetInt32(6),
+                    r.IsDBNull(7) ? null : r.GetString(7),
+                    r.IsDBNull(8) ? null : r.GetString(8),
+                    SqliteStorage.ReadUtc(r, "recorded_at_utc")));
+            }
+
+            return rows;
+        }
+
+        // Earliest available-at time of each job's queued work, keyed by job. Drives the dashboard's
+        // next-eligible hint for jobs that already have queued slices.
+        public IReadOnlyDictionary<string, DateTimeOffset> GetQueuedAvailabilityByJob()
+        {
+            using var c = connectionFactory.OpenConnection();
+            using var cmd = SqliteStorage.Command(c, null, """
+                SELECT job_id, MIN(available_at_utc) AS available_at_utc
+                FROM work_queue
+                WHERE state = 'Queued'
+                GROUP BY job_id;
+                """);
+            using var r = cmd.ExecuteReader();
+            var results = new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal);
+            while (r.Read())
+            {
+                results[r.GetString(0)] = SqliteStorage.ReadUtc(r, "available_at_utc");
+            }
+
+            return results;
+        }
+
+        // Latest materialized slice-end per job, keyed by job. Drives the dashboard's next-window
+        // computation for jobs with no queued work.
+        public IReadOnlyDictionary<string, DateTimeOffset> GetLatestSliceEndsByJob()
+        {
+            using var c = connectionFactory.OpenConnection();
+            using var cmd = SqliteStorage.Command(c, null, """
+                SELECT job_id, MAX(slice_end_utc) AS slice_end_utc
+                FROM current_slice_state
+                GROUP BY job_id;
+                """);
+            using var r = cmd.ExecuteReader();
+            var results = new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal);
+            while (r.Read())
+            {
+                results[r.GetString(0)] = SqliteStorage.ReadUtc(r, "slice_end_utc");
+            }
+
             return results;
         }
 
