@@ -83,6 +83,10 @@ namespace KoLite.LocalApp
 
             LocalDiagnosticsApi.Map(api);
 
+            // The Catalog action endpoints (the former action-only Razor Pages) as a minimal-API group.
+            // Mapped at root (not under /api) so the existing /catalog/... URLs are preserved exactly.
+            CatalogActionsApi.Map(app);
+
             app.MapRazorPages();
 
             app.Run();

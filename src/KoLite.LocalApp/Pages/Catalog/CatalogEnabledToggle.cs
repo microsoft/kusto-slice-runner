@@ -1,25 +1,23 @@
 using KoLite.Local.Sqlite.Catalog;
 using KoLite.LocalApp.Ui;
 using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.Mvc;
-using Microsoft.AspNetCore.Mvc.RazorPages;
 
 namespace KoLite.LocalApp.Pages.Catalog
 {
     internal static class CatalogEnabledToggle
     {
-        public static IActionResult Execute(
-            PageModel page,
+        public static IResult Execute(
+            HttpContext http,
             SqliteJobCatalogRepository catalog,
             DashboardPageQuery dashboard,
             string jobId,
             bool enabled,
             long expectedVersion)
         {
-            if (!IsAjaxRequest(page.Request))
+            if (!IsAjaxRequest(http.Request))
             {
                 catalog.SetEnabled(jobId, enabled, expectedVersion, actor: "local-web");
-                return new RedirectResult($"/jobs/{Uri.EscapeDataString(jobId)}");
+                return Results.Redirect($"/jobs/{Uri.EscapeDataString(jobId)}");
             }
 
             JobCatalogRecord updated;
@@ -41,8 +39,8 @@ namespace KoLite.LocalApp.Pages.Catalog
         private static bool IsAjaxRequest(HttpRequest request) =>
             string.Equals(request.Headers["X-Requested-With"], "XMLHttpRequest", StringComparison.OrdinalIgnoreCase);
 
-        private static IActionResult Json(int statusCode, string jobId, JobListItem? job, JobCatalogRecord? fallback, bool conflict, string? error) =>
-            new JsonResult(new
+        private static IResult Json(int statusCode, string jobId, JobListItem? job, JobCatalogRecord? fallback, bool conflict, string? error) =>
+            Results.Json(new
             {
                 jobId,
                 enabled = job?.Record.IsEnabled ?? fallback?.IsEnabled,
@@ -53,9 +51,6 @@ namespace KoLite.LocalApp.Pages.Catalog
                 nextDetail = job?.NextSlice.Detail,
                 conflict,
                 error
-            })
-            {
-                StatusCode = statusCode
-            };
+            }, statusCode: statusCode);
     }
 }
