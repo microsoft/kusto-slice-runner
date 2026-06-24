@@ -19,6 +19,7 @@ namespace KoLite.Local.Sqlite.Migrations
         [
             new(BaselineVersion, BaselineName, BaselineSchemaSql),
             new(2, "ingestion-throttle-observations", IngestionThrottleObservationsSql),
+            new(3, "ingestion-throttle-terminal", IngestionThrottleTerminalSql),
         ];
 
         private readonly IKoLiteSqliteConnectionFactory connectionFactory;
@@ -49,14 +50,41 @@ namespace KoLite.Local.Sqlite.Migrations
                     continue;
                 }
 
-                using var transaction = connection.BeginTransaction();
-                ExecuteNonQuery(connection, transaction, migration.Sql);
-                InsertLedger(connection, transaction, migration);
-                transaction.Commit();
+                ApplyMigration(connection, migration);
             }
 
             SetMetadata(connection, "schema_version", LatestVersion.ToString(System.Globalization.CultureInfo.InvariantCulture));
         }
+
+        // Applies a not-yet-recorded migration and stamps the ledger. Additive migrations are written
+        // to be idempotent (CREATE ... IF NOT EXISTS). SQLite has no ADD COLUMN IF NOT EXISTS, so a
+        // replay onto a schema that already has the column (e.g. a legacy-ledger collapse on a database
+        // that is already at the latest schema) surfaces as a duplicate-column error; that is treated
+        // as a no-op and the migration is still recorded so the ledger converges.
+        private static void ApplyMigration(SqliteConnection connection, SqliteMigration migration)
+        {
+            using (var transaction = connection.BeginTransaction())
+            {
+                try
+                {
+                    ExecuteNonQuery(connection, transaction, migration.Sql);
+                    InsertLedger(connection, transaction, migration);
+                    transaction.Commit();
+                    return;
+                }
+                catch (SqliteException ex) when (IsAlreadyPresentColumn(ex))
+                {
+                    transaction.Rollback();
+                }
+            }
+
+            using var stamp = connection.BeginTransaction();
+            InsertLedger(connection, stamp, migration);
+            stamp.Commit();
+        }
+
+        private static bool IsAlreadyPresentColumn(SqliteException ex) =>
+            ex.SqliteErrorCode == 1 && ex.Message.Contains("duplicate column name", StringComparison.OrdinalIgnoreCase);
 
         // One-time, in-place collapse of a pre-consolidation ledger to the single baseline. Detected
         // precisely by the legacy version-1 migration name, so it never fires on a baseline database
@@ -451,6 +479,16 @@ namespace KoLite.Local.Sqlite.Migrations
 
             CREATE INDEX IF NOT EXISTS ix_ingestion_throttle_cluster_observed ON ingestion_throttle_observations(cluster_uri, observed_at_utc);
             CREATE INDEX IF NOT EXISTS ix_ingestion_throttle_job ON ingestion_throttle_observations(job_id);
+            """;
+
+        // Version 3 (additive): marks the throttle observation that corresponds to a slice's terminal
+        // (dead-letter) attempt, i.e. the slice gave up after consecutive throttled attempts. This is
+        // the worst throttling outcome (a data gap needing a rerun); the column lets the advisor
+        // surface such slices and force the page/banner to show regardless of the rate gate.
+        private const string IngestionThrottleTerminalSql = """
+            ALTER TABLE ingestion_throttle_observations ADD COLUMN terminal INTEGER NOT NULL DEFAULT 0;
+
+            CREATE INDEX IF NOT EXISTS ix_ingestion_throttle_terminal ON ingestion_throttle_observations(terminal, observed_at_utc);
             """;
     }
 }

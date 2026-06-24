@@ -1839,9 +1839,10 @@ namespace KoLite.LocalApp.Tests
             var page = await client.GetStringAsync("/throttling");
             Assert.Contains("job.throttled", page);
             Assert.Contains("Reduce to 4", page); // keep-up floor = ceil(12/5 * 1.5) = 4
+            Assert.Contains("failed because of throttling", page); // a slice dead-lettered on throttling
 
             var dashboard = await client.GetStringAsync("/");
-            Assert.Contains("under sustained ingestion throttling", dashboard);
+            Assert.Contains("ingestion throttling", dashboard);
 
             // Guardrail: a reduction below the keep-up floor (4) is rejected and the job is unchanged.
             var rejectToken = await ReadFormToken(client, "/throttling");
@@ -1874,10 +1875,13 @@ namespace KoLite.LocalApp.Tests
             var readModels = new SqliteOperationalReadModelRepository(sqlite);
             var throttle = new SqliteIngestionThrottleRepository(sqlite);
 
-            var jobId = catalog.Create(Schedule(activityId, "ThrottleFn", isPaused: false, maxParallelism: maxParallelism)).JobId;
             var now = DateTimeOffset.UtcNow;
+            // A recent startFrom keeps the job at its real-time frontier (not backfilling), so the
+            // keep-up floor governs the recommendation rather than a catch-up floor.
+            var jobId = catalog.Create(ThrottleSchedule(activityId, cluster, maxParallelism, startFrom: now.AddMinutes(-10))).JobId;
 
-            // Six successful slice durations within the last hour give a stable p75 duration estimate.
+            // Six successful slice durations within the last hour give a stable p75 duration estimate
+            // (deliberately outside the recent rate window).
             for (var i = 0; i < 6; i++)
             {
                 var sliceStart = new DateTimeOffset(2026, 6, 23, 0, 0, 0, TimeSpan.Zero).AddMinutes(i * 5);
@@ -1887,15 +1891,37 @@ namespace KoLite.LocalApp.Tests
                 readModels.RecordAttempt($"{jobId}-att-{i}", jobId, sliceStart, sliceEnd, 1, "Succeeded", "worker", startedAt, startedAt.AddMinutes(durationMinutes));
             }
 
-            // Three distinct throttled slices within the window mark the cluster as sustained.
+            // Three distinct throttled slices within the window; the last dead-lettered on throttling,
+            // which forces the advisory to surface and lists the lost slice.
             foreach (var minute in new[] { 1, 2, 3 })
             {
                 var sliceStart = new DateTimeOffset(2026, 6, 23, 6, 0, 0, TimeSpan.Zero).AddMinutes(minute * 5);
-                throttle.Record(new IngestionThrottleObservation(jobId, cluster, sliceStart, sliceStart.AddMinutes(5), Attempt: 2, ReportedCapacity: 18, now.AddMinutes(-minute)));
+                var sliceEnd = sliceStart.AddMinutes(5);
+                var observedAt = now.AddMinutes(-minute);
+                var terminal = minute == 3;
+                state.Append($"{jobId}-thr-st-{minute}", jobId, sliceStart, sliceEnd, terminal ? DurableSliceStatus.DeadLettered : DurableSliceStatus.Running, expectedVersion: 0, reason: terminal ? "throttled out" : null);
+                readModels.RecordAttempt($"{jobId}-thr-att-{minute}", jobId, sliceStart, sliceEnd, 2, terminal ? "DeadLettered" : "FailedRetryable", "worker", observedAt.AddMinutes(-1), observedAt, "KustoRequestThrottledException", "Origin: 'CapacityPolicy/Ingestion'");
+                throttle.Record(new IngestionThrottleObservation(jobId, cluster, sliceStart, sliceEnd, Attempt: 2, ReportedCapacity: 18, observedAt, Terminal: terminal));
             }
 
             return jobId;
         }
+
+        private static string ThrottleSchedule(string activityId, string cluster, int maxParallelism, DateTimeOffset startFrom) => $$"""
+            {
+              "id": "{{JobId(activityId)}}",
+              "activityId": "{{activityId}}",
+              "functionName": "ThrottleFn",
+              "outputTable": "Output",
+              "queryWindowSize": "00:05:00",
+              "delayFromUtcNow": "00:00:00",
+              "maxParallelism": {{maxParallelism}},
+              "queryTimeout": "00:01:00",
+              "isPaused": false,
+              "startFrom": "{{startFrom.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ssZ")}}",
+              "target": { "clusterUri": "{{cluster}}", "database": "DemoDb" }
+            }
+            """;
 
         private async Task<FormToken> ReadFormToken(HttpClient client, string path)
         {

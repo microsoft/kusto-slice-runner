@@ -43,10 +43,17 @@ namespace KoLite.LocalApp.Ui
         // Aligns a [now - range, now) span to bucket boundaries and enumerates the buckets.
         public BucketWindow CreateWindow(DateTimeOffset now, TimeSpan range)
         {
-            var bucketSize = BucketSizeFor(range);
-            var until = AlignUp(now, bucketSize);
-            var since = AlignDown(now.Subtract(range), bucketSize);
-            return new BucketWindow(since, until, bucketSize, EnumerateBuckets(since, until, bucketSize));
+            return CreateWindow(now, range, BucketSizeFor(range));
+        }
+
+        // As above, but with an explicit bucket size (e.g. for the throttle-severity chart, which
+        // wants finer-than-default resolution over a multi-hour range).
+        public BucketWindow CreateWindow(DateTimeOffset now, TimeSpan range, TimeSpan bucketSize)
+        {
+            var size = bucketSize > TimeSpan.Zero ? bucketSize : BucketSizeFor(range);
+            var until = AlignUp(now, size);
+            var since = AlignDown(now.Subtract(range), size);
+            return new BucketWindow(since, until, size, EnumerateBuckets(since, until, size));
         }
 
         // Executes a windowed query. The `$since`/`$until` parameters are bound here;

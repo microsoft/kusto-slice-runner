@@ -1,0 +1,37 @@
+@using System.Text.Json
+@model ThrottleSeverityChart
+
+@{
+    const string chartId = "throttle-severity-chart";
+    var payload = new
+    {
+        title = "Throttled attempts",
+        rangeStartUtc = AppFormatting.Iso(Model.RangeStartUtc),
+        rangeEndUtc = AppFormatting.Iso(Model.RangeEndUtc),
+        bucketMs = (long)Model.BucketSize.TotalMilliseconds,
+        points = Model.Points.Select(point => new
+        {
+            x = point.BucketStartUtc.ToUnixTimeMilliseconds(),
+            y = point.Percent,
+            throttled = point.ThrottledAttempts,
+            total = point.TotalAttempts,
+            bucket = AppFormatting.Iso(point.BucketStartUtc),
+            label = point.BucketLabel,
+            percentText = point.PercentText
+        })
+    };
+}
+
+@if (!Model.HasData)
+{
+    <p class="empty">No slice executions in the selected period.</p>
+}
+else
+{
+    <figure class="success-chart" data-chartjs-throttle="@chartId">
+        <div class="success-chart-canvas-wrap">
+            <canvas id="@chartId" class="success-chart-canvas" aria-label="Throttled attempts over time" role="img"></canvas>
+        </div>
+        <script type="application/json" id="@chartId-data" class="success-chart-payload">@Html.Raw(JsonSerializer.Serialize(payload))</script>
+    </figure>
+}

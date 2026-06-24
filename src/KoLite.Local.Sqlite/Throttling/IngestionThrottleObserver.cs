@@ -38,7 +38,8 @@ namespace KoLite.Local.Sqlite.Throttling
                 progress.SliceEndUtc,
                 progress.Attempt,
                 classification.ReportedCapacity,
-                progress.CompletedAtUtc ?? progress.StartedAtUtc));
+                progress.CompletedAtUtc ?? progress.StartedAtUtc,
+                progress.Status == LocalWorkerProgressStatus.DeadLettered));
             return true;
         }
     }

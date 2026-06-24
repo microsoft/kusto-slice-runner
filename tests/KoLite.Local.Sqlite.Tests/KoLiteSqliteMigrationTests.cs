@@ -193,6 +193,7 @@ namespace KoLite.Local.Sqlite.Tests
                 "ix_system_audit_subject_recorded",
                 "ix_ingestion_throttle_cluster_observed",
                 "ix_ingestion_throttle_job",
+                "ix_ingestion_throttle_terminal",
             };
 
             foreach (var index in expectedIndexes)
@@ -217,6 +218,17 @@ namespace KoLite.Local.Sqlite.Tests
             using var connection = factory.OpenConnection();
 
             Assert.Equal(1, QueryInt(connection, "SELECT COUNT(*) FROM pragma_table_info('repair_batches') WHERE name = 'job_id';"));
+        }
+
+        [Fact]
+        public void IngestionThrottleObservationsHaveTerminalColumn()
+        {
+            var factory = CreateFactory();
+            new KoLiteSqliteMigrator(factory).Migrate();
+
+            using var connection = factory.OpenConnection();
+
+            Assert.Equal(1, QueryInt(connection, "SELECT COUNT(*) FROM pragma_table_info('ingestion_throttle_observations') WHERE name = 'terminal';"));
         }
 
         [Fact]

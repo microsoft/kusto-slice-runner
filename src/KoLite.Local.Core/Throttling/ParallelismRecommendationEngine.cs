@@ -7,6 +7,11 @@ namespace KoLite.Local.Core.Throttling
         // slice-duration variance. 1.0 = exactly keep up; 1.5 = keep up with 50% headroom.
         public double KeepUpSafetyFactor { get; init; } = 1.5;
 
+        // Target wall-clock time within which a backfilling job should clear its eligible backlog.
+        // Used to size the catch-up floor for jobs that are behind real time, so they are not trimmed
+        // all the way down to the keep-up floor (which would make a deliberate backfill crawl).
+        public TimeSpan CatchUpTargetDuration { get; init; } = TimeSpan.FromHours(24);
+
         public static ParallelismRecommendationOptions Default { get; } = new();
     }
 
@@ -24,7 +29,10 @@ namespace KoLite.Local.Core.Throttling
         TimeSpan QueryWindowSize,
         int InFlightCount,
         TimeSpan? ObservedSliceDuration,
-        int DurationSampleCount);
+        int DurationSampleCount,
+        int BacklogSlices = 0,
+        TimeSpan BacklogDataTime = default,
+        bool IsBackfilling = false);
 
     public enum ParallelismRecommendationStatus
     {
@@ -52,6 +60,26 @@ namespace KoLite.Local.Core.Throttling
 
         // Minimum parallelism that still keeps up with real time, or null when it cannot be estimated.
         public int? KeepUpFloor { get; init; }
+
+        // True when the job has a real eligible backlog (it is behind real time and working to catch
+        // up). For these jobs the recommendation targets the catch-up floor, never the lower keep-up
+        // floor, so a deliberate backfill is not throttled down to a crawl.
+        public bool IsBackfilling { get; init; }
+
+        // The job's eligible backlog expressed as data-time (queryWindow * backlogSlices). Zero for a
+        // job that is keeping up with real time.
+        public TimeSpan BacklogDataTime { get; init; }
+
+        // Minimum parallelism that still clears the backlog within the configured target, for a
+        // backfilling job. Null for a non-backfilling job (or when it cannot be estimated). When set,
+        // it is at least the keep-up floor and is used as the recommended target.
+        public int? CatchUpFloor { get; init; }
+
+        // For a backfilling job, the rough projected wall-clock time to clear the backlog at the
+        // current parallelism and at the recommended parallelism, holding single-slice execution time
+        // constant. Null when the job is not backfilling or the rate would never catch up.
+        public TimeSpan? CurrentCatchUpEta { get; init; }
+        public TimeSpan? ProjectedCatchUpEta { get; init; }
 
         // Suggested new maxParallelism (the keep-up floor) for a Recommended job; null otherwise.
         public int? RecommendedMaxParallelism { get; init; }
@@ -86,6 +114,63 @@ namespace KoLite.Local.Core.Throttling
             return Math.Max(1, (int)Math.Ceiling(ratio));
         }
 
+        // Minimum parallelism that clears a backlog of B data-time within the target wall-clock window
+        // T, holding single-slice execution time constant. A slice covers W of data-time in D
+        // wall-clock, so at parallelism P the job advances data-time at rate R = P*W/D; clearing B
+        // within T needs the net gain (R-1) >= B/T, i.e. P >= (D/W)*(1 + B/T). The same safety margin
+        // as the keep-up floor is applied. Returns null when inputs are unusable or there is no
+        // backlog (in which case the keep-up floor governs).
+        public static int? ComputeCatchUpFloor(TimeSpan queryWindowSize, TimeSpan? observedSliceDuration, TimeSpan backlogDataTime, TimeSpan catchUpTarget, double safetyFactor)
+        {
+            if (observedSliceDuration is not { } duration
+                || duration <= TimeSpan.Zero
+                || queryWindowSize <= TimeSpan.Zero
+                || catchUpTarget <= TimeSpan.Zero
+                || backlogDataTime <= TimeSpan.Zero
+                || safetyFactor <= 0)
+            {
+                return null;
+            }
+
+            var ratio = duration.TotalSeconds / queryWindowSize.TotalSeconds
+                * (1d + backlogDataTime.TotalSeconds / catchUpTarget.TotalSeconds)
+                * safetyFactor;
+            return Math.Max(1, (int)Math.Ceiling(ratio));
+        }
+
+        // Rough projected wall-clock time to clear a backlog of B data-time at parallelism P, holding
+        // single-slice execution time constant: the data-time advance rate is R = P*W/D, so the net
+        // gain over real time is (R-1) and the time to clear B is B/(R-1). Returns null when R <= 1
+        // (at this parallelism the job never catches up) or inputs are unusable.
+        public static TimeSpan? ComputeCatchUpEta(TimeSpan queryWindowSize, TimeSpan? observedSliceDuration, TimeSpan backlogDataTime, int parallelism)
+        {
+            if (observedSliceDuration is not { } duration
+                || duration <= TimeSpan.Zero
+                || queryWindowSize <= TimeSpan.Zero
+                || backlogDataTime <= TimeSpan.Zero
+                || parallelism <= 0)
+            {
+                return null;
+            }
+
+            var realTimeMultiple = parallelism * queryWindowSize.TotalSeconds / duration.TotalSeconds;
+            if (realTimeMultiple <= 1d)
+            {
+                return null;
+            }
+
+            // Guard against an effectively-infinite ETA (rate only marginally above real time with a
+            // very large backlog), which would otherwise overflow TimeSpan. Null renders as the same
+            // "won't catch up" text used when the rate cannot keep up at all.
+            var seconds = backlogDataTime.TotalSeconds / (realTimeMultiple - 1d);
+            if (double.IsNaN(seconds) || seconds >= TimeSpan.MaxValue.TotalSeconds)
+            {
+                return null;
+            }
+
+            return TimeSpan.FromSeconds(seconds);
+        }
+
         // Builds one recommendation per snapshot and ranks them: actionable reductions first, ordered
         // by headroom descending (most over-provisioned first), then the jobs that should not be
         // trimmed, then the jobs lacking data. Stable and deterministic.
@@ -110,7 +195,7 @@ namespace KoLite.Local.Core.Throttling
                 ? SecondsPerDay / snapshot.QueryWindowSize.TotalSeconds
                 : 0d;
 
-            var floor = ComputeKeepUpFloor(snapshot.QueryWindowSize, snapshot.ObservedSliceDuration, opts.KeepUpSafetyFactor);
+            var keepUpFloor = ComputeKeepUpFloor(snapshot.QueryWindowSize, snapshot.ObservedSliceDuration, opts.KeepUpSafetyFactor);
 
             var partial = new ParallelismRecommendation
             {
@@ -123,30 +208,54 @@ namespace KoLite.Local.Core.Throttling
                 SlicesPerDay = slicesPerDay,
                 ObservedSliceDuration = snapshot.ObservedSliceDuration,
                 DurationSampleCount = snapshot.DurationSampleCount,
-                InFlightCount = snapshot.InFlightCount
+                InFlightCount = snapshot.InFlightCount,
+                IsBackfilling = snapshot.IsBackfilling,
+                BacklogDataTime = snapshot.BacklogDataTime
             };
 
-            if (floor is not { } keepUpFloor)
+            if (keepUpFloor is not { } floor)
             {
                 return partial;
             }
 
-            var headroom = snapshot.CurrentMaxParallelism - keepUpFloor;
+            // A backfilling job is sized to clear its backlog within the target window, never trimmed
+            // below that catch-up floor (which is itself at least the keep-up floor). A job that is
+            // keeping up uses the keep-up floor directly.
+            var catchUpFloor = snapshot.IsBackfilling
+                ? ComputeCatchUpFloor(snapshot.QueryWindowSize, snapshot.ObservedSliceDuration, snapshot.BacklogDataTime, opts.CatchUpTargetDuration, opts.KeepUpSafetyFactor)
+                : null;
+            var effectiveFloor = catchUpFloor is { } cf ? Math.Max(floor, cf) : floor;
+
+            var currentEta = snapshot.IsBackfilling
+                ? ComputeCatchUpEta(snapshot.QueryWindowSize, snapshot.ObservedSliceDuration, snapshot.BacklogDataTime, snapshot.CurrentMaxParallelism)
+                : null;
+
+            var withFloors = partial with
+            {
+                KeepUpFloor = floor,
+                CatchUpFloor = catchUpFloor,
+                CurrentCatchUpEta = currentEta
+            };
+
+            var headroom = snapshot.CurrentMaxParallelism - effectiveFloor;
             if (headroom > 0)
             {
-                return partial with
+                var projectedEta = snapshot.IsBackfilling
+                    ? ComputeCatchUpEta(snapshot.QueryWindowSize, snapshot.ObservedSliceDuration, snapshot.BacklogDataTime, effectiveFloor)
+                    : null;
+
+                return withFloors with
                 {
                     Status = ParallelismRecommendationStatus.Recommended,
-                    KeepUpFloor = keepUpFloor,
-                    RecommendedMaxParallelism = keepUpFloor,
+                    RecommendedMaxParallelism = effectiveFloor,
+                    ProjectedCatchUpEta = projectedEta,
                     Headroom = headroom
                 };
             }
 
-            return partial with
+            return withFloors with
             {
                 Status = ParallelismRecommendationStatus.AtOrBelowKeepUpFloor,
-                KeepUpFloor = keepUpFloor,
                 Headroom = headroom
             };
         }

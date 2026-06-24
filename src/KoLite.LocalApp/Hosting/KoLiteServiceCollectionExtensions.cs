@@ -58,6 +58,7 @@ namespace KoLite.LocalApp
             services.AddScoped<DashboardPageQuery>();
             services.AddScoped<JobDetailsPageQuery>();
             services.AddScoped<JobChartQuery>();
+            services.AddScoped<ThrottleSeverityQuery>();
             services.AddScoped<LifecycleReadModel>();
             services.AddScoped<OperationalDetailsReadModel>();
         }
@@ -141,6 +142,11 @@ namespace KoLite.LocalApp
                 Enabled = bool.TryParse(configuration["KoLite:Throttling:Enabled"], out var enabled) ? enabled : defaults.Enabled,
                 Window = TimeSpan.FromMinutes(ReadPositiveDouble(configuration, "KoLite:Throttling:WindowMinutes", defaults.Window.TotalMinutes)),
                 MinThrottledSlices = ReadPositiveInt(configuration, "KoLite:Throttling:MinThrottledSlices", defaults.MinThrottledSlices),
+                RateThresholdPercent = ReadPositiveDouble(configuration, "KoLite:Throttling:RateThresholdPercent", defaults.RateThresholdPercent),
+                MinAttemptsForRate = ReadPositiveInt(configuration, "KoLite:Throttling:MinAttemptsForRate", defaults.MinAttemptsForRate),
+                CleanPeriod = TimeSpan.FromMinutes(ReadPositiveDouble(configuration, "KoLite:Throttling:CleanPeriodMinutes", defaults.CleanPeriod.TotalMinutes)),
+                TerminalFailureLookback = TimeSpan.FromMinutes(ReadPositiveDouble(configuration, "KoLite:Throttling:TerminalFailureLookbackMinutes", defaults.TerminalFailureLookback.TotalMinutes)),
+                CatchUpTargetDuration = TimeSpan.FromHours(ReadPositiveDouble(configuration, "KoLite:Throttling:CatchUpTargetHours", defaults.CatchUpTargetDuration.TotalHours)),
                 DurationLookback = TimeSpan.FromHours(ReadPositiveDouble(configuration, "KoLite:Throttling:DurationLookbackHours", defaults.DurationLookback.TotalHours)),
                 MinDurationSamples = ReadPositiveInt(configuration, "KoLite:Throttling:MinDurationSamples", defaults.MinDurationSamples),
                 DurationPercentile = Math.Clamp(ReadPositiveDouble(configuration, "KoLite:Throttling:DurationPercentile", defaults.DurationPercentile), 0.01, 1.0),

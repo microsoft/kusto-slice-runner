@@ -4,6 +4,7 @@
 @model KoLite.LocalApp.Pages.Throttling.IndexModel
 @{
     ViewData["Title"] = "Throttling advisor";
+    var ci = System.Globalization.CultureInfo.InvariantCulture;
 
     static string StatusBadge(ParallelismRecommendationStatus status) => status switch
     {
@@ -18,6 +19,23 @@
         ParallelismRecommendationStatus.AtOrBelowKeepUpFloor => "At keep-up floor",
         _ => "Insufficient data"
     };
+
+    static string EtaText(System.TimeSpan? eta) => eta is { } value
+        ? "~" + AppFormatting.ApproxDuration(value)
+        : "won't catch up";
+
+    static string CatchUpCell(ParallelismRecommendation rec)
+    {
+        if (!rec.IsBackfilling)
+        {
+            return "—";
+        }
+
+        var current = EtaText(rec.CurrentCatchUpEta);
+        return rec.RecommendedMaxParallelism is not null
+            ? current + " → " + EtaText(rec.ProjectedCatchUpEta)
+            : current;
+    }
 }
 
 <div class="page-heading">
@@ -35,16 +53,30 @@
     <div class="alert @(Model.StatusIsError ? "danger" : "success")" role="status">@Model.StatusMessage</div>
 }
 
+@if (Model.Severity is { HasData: true } severity)
+{
+    <div class="card section-block">
+        <div class="card-header"><h2>Throttling severity</h2></div>
+        <p class="muted">
+            In the last @AppFormatting.ApproxDuration(Model.HeadlineWindow),
+            <span class="strong">@severity.HeadlinePercentText</span> of slice attempts failed with throttling
+            (@severity.HeadlineThrottledAttempts.ToString("N0", ci) of @severity.HeadlineTotalAttempts.ToString("N0", ci)).
+            Advisories below appear while this stays at or above @Model.RateThresholdPercent.ToString("0.#", ci)% and clear after @AppFormatting.ApproxDuration(Model.CleanPeriod) with no throttling.
+        </p>
+        <partial name="_ThrottleSeverityChart" model="severity" />
+    </div>
+}
+
 @if (Model.Advisories.Count == 0)
 {
     <div class="card">
-        <p class="empty">No clusters are currently under sustained ingestion throttling. This page lists recommendations only while throttling is active.</p>
+        <p class="empty">No clusters are currently under sustained ingestion throttling. This page lists recommendations only while throttling is active, or while a slice has recently failed because of throttling.</p>
     </div>
 }
 else
 {
     <div class="alert warning" role="note">
-        Ingestion capacity is shared across every job (and every other tool) hitting a cluster, so the throttled slice is not necessarily the biggest pressure source &mdash; and trimming KO Lite may not clear throttling if external load dominates. Consider the cluster's ingestion <strong>capacity policy</strong> / scaling as well. Reductions below the keep-up floor are blocked so a job can still keep up with real time.
+        Ingestion capacity is shared across every job (and every other tool) hitting a cluster, so the throttled slice is not necessarily the biggest pressure source &mdash; and trimming KO Lite may not clear throttling if external load dominates. Consider the cluster's ingestion <strong>capacity policy</strong> / scaling as well. A backfilling job is only trimmed to the parallelism that still clears its backlog within the catch-up target, and reductions below the keep-up floor are always blocked.
     </div>
 
     foreach (var advisory in Model.Advisories)
@@ -54,13 +86,51 @@ else
                 <h3 class="text-truncate" title="@advisory.ClusterUri">@advisory.ClusterUri</h3>
             </div>
             <p class="muted">
-                @advisory.ThrottledSliceCount throttled slice(s) (@advisory.ObservationCount observation(s)) in the last @AppFormatting.ApproxDuration(advisory.Window)
+                <span class="strong">@advisory.ThrottledAttemptPercent.ToString("0.0", ci)%</span> of attempts throttled
+                (@advisory.ThrottledAttemptCount.ToString("N0", ci) of @advisory.TotalAttemptCount.ToString("N0", ci)) &middot;
+                @advisory.ThrottledSliceCount throttled slice(s) in the last @AppFormatting.ApproxDuration(advisory.Window)
                 @if (advisory.LatestReportedCapacity is { } capacity)
                 {
                     <text>&middot; reported ingestion capacity: <span class="strong">@capacity</span></text>
                 }
                 &middot; latest @AppFormatting.Local(advisory.LatestObservedUtc)
             </p>
+
+            @if (advisory.TerminalFailures.Count > 0)
+            {
+                <div class="alert danger" role="alert">
+                    <strong>@advisory.TerminalFailures.Count slice(s) failed because of throttling</strong> after consecutive throttled attempts and need a rerun.
+                </div>
+                <div class="table-wrap">
+                    <table class="ko-table">
+                        <thead>
+                            <tr>
+                                <th>Job</th>
+                                <th>Slice</th>
+                                <th>Throttled&nbsp;attempts</th>
+                                <th>State</th>
+                                <th>Last&nbsp;throttle</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var failure in advisory.TerminalFailures)
+                            {
+                                <tr>
+                                    <td><a href="/jobs/@Uri.EscapeDataString(failure.JobId)">@failure.ActivityId</a></td>
+                                    <td>
+                                        <a href="/jobs/@Uri.EscapeDataString(failure.JobId)/slices?start=@Uri.EscapeDataString(AppFormatting.Iso(failure.SliceStartUtc))&amp;end=@Uri.EscapeDataString(AppFormatting.Iso(failure.SliceEndUtc))">
+                                            @AppFormatting.Local(failure.SliceStartUtc) &ndash; @AppFormatting.Local(failure.SliceEndUtc)
+                                        </a>
+                                    </td>
+                                    <td>@failure.ThrottledAttempts</td>
+                                    <td><span class="badge @AppFormatting.BadgeCss(failure.CurrentState)">@AppFormatting.StatusLabel(failure.CurrentState)</span></td>
+                                    <td>@AppFormatting.Local(failure.LastObservedUtc)</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
 
             <div class="table-wrap">
                 <table class="ko-table">
@@ -70,9 +140,10 @@ else
                             <th>In&nbsp;flight</th>
                             <th>Current</th>
                             <th>Keep-up floor</th>
+                            <th>Suggested</th>
                             <th>Slice p75</th>
-                            <th>Slices/day</th>
-                            <th>Headroom</th>
+                            <th>Backlog</th>
+                            <th>Catch-up</th>
                             <th>Status</th>
                             <th>Action</th>
                         </tr>
@@ -85,10 +156,17 @@ else
                                 <td>@rec.InFlightCount</td>
                                 <td>@rec.CurrentMaxParallelism</td>
                                 <td>@(rec.KeepUpFloor?.ToString() ?? "—")</td>
+                                <td>@(rec.RecommendedMaxParallelism?.ToString() ?? "—")</td>
                                 <td>@(rec.ObservedSliceDuration is { } d ? AppFormatting.ApproxDuration(d) : "—")</td>
-                                <td>@rec.SlicesPerDay.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)</td>
-                                <td>@(rec.Headroom?.ToString() ?? "—")</td>
-                                <td><span class="badge @StatusBadge(rec.Status)">@StatusLabel(rec.Status)</span></td>
+                                <td>@(rec.IsBackfilling ? AppFormatting.ApproxDuration(rec.BacklogDataTime) : "—")</td>
+                                <td>@CatchUpCell(rec)</td>
+                                <td>
+                                    <span class="badge @StatusBadge(rec.Status)">@StatusLabel(rec.Status)</span>
+                                    @if (rec.IsBackfilling)
+                                    {
+                                        <span class="badge badge-neutral">Backfill</span>
+                                    }
+                                </td>
                                 <td>
                                     @if (rec.Status == ParallelismRecommendationStatus.Recommended && rec.RecommendedMaxParallelism is { } target)
                                     {

@@ -46,6 +46,8 @@ namespace KoLite.Local.Sqlite.Tests
             var summary = Assert.Single(store.SummarizeWindow(DateTimeOffset.UtcNow.AddHours(-1)));
             Assert.Equal("https://sample-data.centralus.kusto.windows.net", summary.ClusterUri);
             Assert.Equal(18, summary.LatestReportedCapacity);
+            // A retryable throttle is not terminal.
+            Assert.Equal(0, ReadSingleTerminalFlag());
         }
 
         [Fact]
@@ -85,6 +87,16 @@ namespace KoLite.Local.Sqlite.Tests
 
             Assert.True(recorded);
             Assert.Single(store.SummarizeWindow(DateTimeOffset.UtcNow.AddHours(-1)));
+            // A dead-letter on throttling is recorded as terminal.
+            Assert.Equal(1, ReadSingleTerminalFlag());
+        }
+
+        private int ReadSingleTerminalFlag()
+        {
+            using var c = factory.OpenConnection();
+            using var cmd = c.CreateCommand();
+            cmd.CommandText = "SELECT terminal FROM ingestion_throttle_observations;";
+            return Convert.ToInt32(cmd.ExecuteScalar());
         }
 
         private static LocalWorkerProgressEvent Event(LocalWorkerProgressStatus status, string? errorCode, string? errorMessage, string? clusterUri)

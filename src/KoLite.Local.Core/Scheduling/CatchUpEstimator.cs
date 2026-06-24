@@ -260,6 +260,16 @@ namespace KoLite.Local.Core.Scheduling
             }
 
             var projectedHours = backlogDataTime.TotalHours / (realTimeMultiple - 1.0);
+
+            // Guard against an effectively-infinite projection (rate only marginally above real time
+            // with a very large backlog): constructing the TimeSpan/ETA would overflow. At that point
+            // the job will not catch up in any meaningful timeframe, so report it as not keeping up.
+            var maxProjectionHours = (DateTimeOffset.MaxValue - nowUtc).TotalHours;
+            if (double.IsNaN(projectedHours) || projectedHours >= maxProjectionHours)
+            {
+                return withRate with { Status = CatchUpStatus.NotKeepingUp };
+            }
+
             var projected = TimeSpan.FromHours(projectedHours);
 
             return withRate with

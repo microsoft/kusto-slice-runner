@@ -27,8 +27,8 @@
 @if (Model.ThrottledClusterCount > 0)
 {
     <div class="alert warning" role="alert">
-        @Model.ThrottledClusterCount cluster(s) under sustained ingestion throttling.
-        <a href="/throttling">View parallelism recommendations</a>.
+        @Model.ThrottledClusterCount cluster(s) under ingestion throttling or with slices recently lost to throttling.
+        <a href="/throttling">View throttling severity and recommendations</a>.
     </div>
 }
 
