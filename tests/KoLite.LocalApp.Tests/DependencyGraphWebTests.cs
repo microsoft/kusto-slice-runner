@@ -1,6 +1,7 @@
 using System.Net;
 using KoLite.Local.Sqlite.Catalog;
 using KoLite.Local.Sqlite.Connections;
+using KoLite.Local.Sqlite.Lifecycle;
 using KoLite.Local.Sqlite.Migrations;
 using KoLite.LocalApp.Ui;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -76,6 +77,33 @@ namespace KoLite.LocalApp.Tests
         }
 
         [Fact]
+        public void Query_excludes_a_soft_deleted_upstream_and_drops_its_edge()
+        {
+            var catalog = new SqliteJobCatalogRepository(sqlite);
+            catalog.Create(Schedule("sd.upstream"));
+            catalog.Create(Schedule("sd.downstream", dependsOn: "sd.upstream"));
+            SoftDelete("sd.upstream");
+
+            var graph = BuildGraph(JobId("sd.downstream"));
+
+            var node = Assert.Single(graph.Nodes);
+            Assert.Equal("sd.downstream", node.Label);
+            // The soft-deleted upstream is hidden entirely - not drawn, and not an "unknown" placeholder.
+            Assert.Empty(graph.Edges);
+            Assert.DoesNotContain(graph.Nodes, n => !n.Resolved);
+        }
+
+        [Fact]
+        public void Query_returns_empty_when_the_only_focal_job_is_soft_deleted()
+        {
+            var catalog = new SqliteJobCatalogRepository(sqlite);
+            catalog.Create(Schedule("sd.only"));
+            SoftDelete("sd.only");
+
+            Assert.True(BuildGraph(JobId("sd.only")).IsEmpty);
+        }
+
+        [Fact]
         public async Task Dependencies_page_with_no_selection_prompts_to_select_jobs()
         {
             using var client = factory.CreateClient();
@@ -101,6 +129,21 @@ namespace KoLite.LocalApp.Tests
             Assert.Contains("page.upstream", html);
             Assert.Contains("page.downstream", html);
             Assert.Contains($"/jobs/{JobId("page.downstream")}", html);
+        }
+
+        [Fact]
+        public async Task Dependencies_page_omits_a_soft_deleted_job_from_the_chain()
+        {
+            var catalog = new SqliteJobCatalogRepository(sqlite);
+            catalog.Create(Schedule("hide.upstream"));
+            catalog.Create(Schedule("hide.downstream", dependsOn: "hide.upstream"));
+            SoftDelete("hide.upstream");
+            using var client = factory.CreateClient();
+
+            var html = await client.GetStringAsync($"/dependencies?job={JobId("hide.downstream")}");
+
+            Assert.Contains("hide.downstream", html);
+            Assert.DoesNotContain("hide.upstream", html);
         }
 
         [Fact]
@@ -142,6 +185,13 @@ namespace KoLite.LocalApp.Tests
             using var scope = factory.Services.CreateScope();
             var query = scope.ServiceProvider.GetRequiredService<DependencyGraphQuery>();
             return query.Build(focalJobIds);
+        }
+
+        private void SoftDelete(string activityId)
+        {
+            var catalog = new SqliteJobCatalogRepository(sqlite);
+            var record = catalog.GetByActivityId(activityId) ?? throw new InvalidOperationException($"Missing job '{activityId}'.");
+            new SqliteJobLifecycleService(sqlite, catalog).SoftDelete(record.JobId, record.CatalogVersion, "test", "graph test", force: true);
         }
 
         private WebApplicationFactory<Program> CreateFactory() =>

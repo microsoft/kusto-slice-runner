@@ -86,15 +86,31 @@ namespace KoLite.LocalApp.Ui
         {
             if (focalJobIds is null) throw new ArgumentNullException(nameof(focalJobIds));
 
+            var requestedFocal = focalJobIds.Where(id => !string.IsNullOrWhiteSpace(id)).ToList();
+            if (requestedFocal.Count == 0)
+            {
+                return DependencyGraphViewModel.Empty;
+            }
+
+            var allJobs = dashboard.GetAllJobs();
+
+            // Soft-deleted jobs are excluded from the graph entirely: they are not drawn, their
+            // edges are dropped, and a soft-deleted focal selection is ignored (rather than shown as
+            // an unresolved placeholder). Genuinely unknown upstream ids are still surfaced as
+            // placeholders below so a dangling dependency stays visible.
+            var softDeletedIds = new HashSet<string>(
+                allJobs.Where(job => job.LifecycleStatus == "SoftDeleted").Select(job => job.Record.JobId),
+                StringComparer.Ordinal);
+
             var focal = new HashSet<string>(
-                focalJobIds.Where(id => !string.IsNullOrWhiteSpace(id)),
+                requestedFocal.Where(id => !softDeletedIds.Contains(id)),
                 StringComparer.Ordinal);
             if (focal.Count == 0)
             {
                 return DependencyGraphViewModel.Empty;
             }
 
-            var jobs = dashboard.GetAllJobs();
+            var jobs = allJobs.Where(job => job.LifecycleStatus != "SoftDeleted").ToList();
             var byId = jobs.ToDictionary(job => job.Record.JobId, StringComparer.Ordinal);
 
             var edges = new List<DependencyEdge>();
@@ -102,10 +118,12 @@ namespace KoLite.LocalApp.Ui
             {
                 foreach (var dependency in job.Definition.DependsOn)
                 {
-                    if (!string.IsNullOrWhiteSpace(dependency.Id))
+                    if (string.IsNullOrWhiteSpace(dependency.Id) || softDeletedIds.Contains(dependency.Id!))
                     {
-                        edges.Add(new DependencyEdge(dependency.Id!, job.Record.JobId));
+                        continue;
                     }
+
+                    edges.Add(new DependencyEdge(dependency.Id!, job.Record.JobId));
                 }
             }
 
