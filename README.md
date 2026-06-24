@@ -1,4 +1,4 @@
-# KO Lite
+# <img src="src/KoLite.LocalApp/wwwroot/favicon.svg" alt="KO Lite icon" width="32" height="32"> KO Lite
 
 KO Lite is a local, develop-desktop system for scheduled Kusto set-or-append jobs. It is designed for an authenticated user or service identity that already has permission to execute the configured Kusto functions and append to the configured output tables.
 
