@@ -13,7 +13,13 @@ namespace KoLite.LocalApp
         {
             var builder = WebApplication.CreateBuilder(args);
 
-            builder.Services.AddRazorPages();
+            builder.Services.AddRazorPages().AddRazorPagesOptions(options =>
+            {
+                // Preserve the historical GET entry URLs after merging the New/Create and
+                // Edit/Update page splits into single self-posting pages.
+                options.Conventions.AddPageRoute("/Catalog/Create", "/catalog/new");
+                options.Conventions.AddPageRoute("/Catalog/Update", "/catalog/{jobId}/edit");
+            });
             builder.Services.AddAntiforgery(options => options.HeaderName = "X-CSRF-TOKEN");
             builder.Services.AddKoLiteServices(builder.Configuration);
             builder.WebHost.UseUrls(builder.Configuration["KoLite:Urls"] ?? "http://127.0.0.1:5057");

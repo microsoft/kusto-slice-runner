@@ -1,13 +1,13 @@
 @page "/catalog/create"
 @model KoLite.LocalApp.Pages.Catalog.CreateModel
 @{
-    ViewData["Title"] = "Create job";
+    ViewData["Title"] = string.IsNullOrWhiteSpace(Model.ErrorMessage) ? "New job" : "Create job";
 }
 
 <div class="page-heading">
     <div>
         <h1>Create job</h1>
-        <p class="muted">Fix validation errors and submit again.</p>
+        <p class="muted">@(string.IsNullOrWhiteSpace(Model.ErrorMessage) ? "Create a local KO Lite job definition." : "Fix validation errors and submit again.")</p>
     </div>
     <a class="btn" href="/">Back to jobs</a>
 </div>

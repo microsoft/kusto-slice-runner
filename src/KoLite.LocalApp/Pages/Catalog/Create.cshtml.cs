@@ -20,7 +20,17 @@ namespace KoLite.LocalApp.Pages.Catalog
         public string? ErrorMessage { get; private set; }
         public ScheduleEditorViewModel Editor => new("/catalog/create", Input, ScheduleJson, null, false, "Create job");
 
-        public IActionResult OnGet() => StatusCode(StatusCodes.Status405MethodNotAllowed);
+        public IActionResult OnGet()
+        {
+            // /catalog/create is POST-only; the GET entry point is the /catalog/new alias.
+            if (!IsNewEntry())
+            {
+                return StatusCode(StatusCodes.Status405MethodNotAllowed);
+            }
+
+            ScheduleJson = AppFormatting.PrettyJson(SampleScheduleFactory.CreateJson());
+            return Page();
+        }
 
         public IActionResult OnPost()
         {
@@ -48,5 +58,8 @@ namespace KoLite.LocalApp.Pages.Catalog
                 return Page();
             }
         }
+
+        private bool IsNewEntry() =>
+            string.Equals(Request.Path.Value?.TrimEnd('/'), "/catalog/new", StringComparison.OrdinalIgnoreCase);
     }
 }
