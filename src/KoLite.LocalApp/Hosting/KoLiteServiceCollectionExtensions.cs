@@ -57,6 +57,7 @@ namespace KoLite.LocalApp
         {
             services.AddScoped<DashboardPageQuery>();
             services.AddScoped<DependencyGraphQuery>();
+            services.AddScoped<DependencyGraphKustoEnricher>();
             services.AddScoped<JobDetailsPageQuery>();
             services.AddScoped<JobChartQuery>();
             services.AddScoped<ThrottleSeverityQuery>();
@@ -71,6 +72,7 @@ namespace KoLite.LocalApp
             services.AddSingleton(_ => ResolveKustoOptions(configuration));
             services.AddScoped<IKustoControlCommandClientFactory, KoLiteKustoConnectionFactory>();
             services.AddScoped<IKustoExecutor, KustoSdkExecutor>();
+            services.AddScoped<IKustoEntityDependencyReader, KustoSdkEntityDependencyReader>();
             services.AddScoped<ILocalSliceOutputExecutor, KustoLocalSliceOutputExecutor>();
             services.AddSingleton<LocalShutdownDrainCoordinator>();
             services.AddSingleton(new LocalWorkerOptions(WorkerId: "local-web-worker", EnforceJobParallelism: true));

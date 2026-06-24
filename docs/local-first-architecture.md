@@ -13,7 +13,7 @@ KO Lite runs as a local ASP.NET Core Razor Pages app with hosted background serv
 | Kusto execution | `src\KoLite.Local.Kusto` | Builds `.set-or-append` commands, configures auth, executes live Kusto writes, and classifies Kusto errors. |
 | Ingestion throttling advisor | `src\KoLite.LocalApp` + `src\KoLite.Local.Sqlite` + `src\KoLite.Local.Core` | Records Kusto ingestion-capacity throttles (`ingestion_throttle_observations`, schema v3, with a `terminal` dead-letter flag) and surfaces a severity view (throttled-attempt rate + chart) plus read-only `maxParallelism` reduction recommendations. A cluster shows when the throttled-attempt rate crosses a threshold with enough volume (and clears after a clean period), or whenever a slice has recently dead-lettered on throttling. Recommendations are guarded by a per-job keep-up floor, and a backfilling job is only trimmed to the catch-up floor that still clears its backlog within the target. Operators apply reductions explicitly. |
 | Update-check service | `src\KoLite.LocalApp` | Periodically compares the built git commit against the remote branch HEAD via the GitHub CLI and surfaces a top-bar badge (up to date, update available, ahead of published, diverged, or unavailable) plus `/status/health` fields; read-only and failure-tolerant. |
-| Local management API | `src\KoLite.LocalApp` | Loopback-only JSON API (`/api/jobs*`) that lets a same-machine agent read jobs and create/update schedules through the validated catalog import path. Exposes no enable/disable, delete, Kusto, rerun, or repair surface. |
+| Local management API | `src\KoLite.LocalApp` | Loopback-only JSON API (`/api/jobs*`) that lets a same-machine agent read jobs and create/update schedules through the validated catalog import path. Exposes no enable/disable, delete, rerun, or repair surface; the only Kusto contact is the on-demand, read-only dependency-graph consumer endpoint (`POST /api/dependency-graph/kusto-consumers`). |
 | Operational scripts | `scripts` | Publish, run, UI-only run, drain shutdown, in-use database reporting, service metadata, diagnostics, and crash-recovery inspection. |
 
 ## Data flow
@@ -25,7 +25,8 @@ KO Lite runs as a local ASP.NET Core Razor Pages app with hosted background serv
 5. The Kusto executor runs the configured function for the slice window and appends results to the schedule output table.
 6. Slice state, queue state, attempts, events, and operational logs are updated in SQLite.
 7. Dashboard read models query SQLite to show job status, history, failures, and worker/scheduler health.
-8. The job dependency graph is a read-only UI projection (`DependencyGraphQuery` in `src\KoLite.LocalApp`): it reuses the dashboard's per-job status projection and the stored `dependsOn` GUID edges, and the pure layered layout lives in `src\KoLite.Local.Core` (`Graph\DependencyGraphLayout.cs`). It adds no persistence and contacts no Kusto.
+8. The job dependency graph is a read-only UI projection (`DependencyGraphQuery` in `src\KoLite.LocalApp`): it reuses the dashboard's per-job status projection and the stored `dependsOn` GUID edges, and the pure layered layout lives in `src\KoLite.Local.Core` (`Graph\DependencyGraphLayout.cs`). It adds no persistence.
+9. On demand only (the graph's "Resolve Kusto consumers" button), the graph can be enriched with the downstream Kusto functions and materialized views that consume each job's output table. This runs one read-only `.show databases entities` per cluster (`IKustoEntityDependencyReader` in `src\KoLite.Local.Kusto`; pure consumer lineage in `src\KoLite.Local.Core` `Graph\KustoLineage.cs`), is the only graph path that contacts Kusto, performs no writes, and persists nothing.
 
 ## Job identity model
 

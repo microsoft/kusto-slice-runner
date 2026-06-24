@@ -30,6 +30,6 @@ else
         </div>
     }
     <section class="card">
-        <partial name="_DependencyGraph" model="Model.Graph" />
+        <partial name="_DependencyGraph" model="new DependencyGraphPanelViewModel(Model.Graph, Model.JobIds)" />
     </section>
 }

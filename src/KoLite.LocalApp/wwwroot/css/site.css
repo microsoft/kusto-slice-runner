@@ -992,3 +992,24 @@ h3 { font-size: 16px; margin-bottom: 10px; }
 .dependency-graph-fallback li { display: flex; align-items: center; gap: 8px; }
 .dependency-graph.is-rendered .dependency-graph-fallback { display: none; }
 .dependency-graph-tooltip .tooltip-row { grid-template-columns: 96px minmax(0, 1fr); }
+
+/* Dependency graph: Kusto consumer enrichment */
+.dependency-graph-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  margin-bottom: 12px;
+}
+.dependency-graph-toolbar .dependency-graph-legend { margin: 0; }
+.dependency-graph-actions { display: flex; align-items: center; gap: 10px; }
+.dependency-graph-status { font-size: 12px; }
+.dependency-graph-status.is-error { color: var(--danger); }
+.dependency-graph-node.status-kustofunction .dependency-graph-node-box,
+.dependency-graph-swatch.status-kustofunction { fill: #fbefff; background: #fbefff; stroke: #8250df; border-color: #8250df; }
+.dependency-graph-node.status-kustomaterializedview .dependency-graph-node-box,
+.dependency-graph-swatch.status-kustomaterializedview { fill: #e8f6f8; background: #e8f6f8; stroke: #1b7c83; border-color: #1b7c83; }
+/* Kusto consumer nodes are read-only references (no job page), so they use a quieter label. */
+.dependency-graph-node.node-kind-kustofunction .dependency-graph-node-label,
+.dependency-graph-node.node-kind-kustomaterializedview .dependency-graph-node-label { font-weight: 500; }

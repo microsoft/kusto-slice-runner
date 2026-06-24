@@ -112,7 +112,17 @@ See [schedule-json.md](schedule-json.md) for the schedule contract.
 
 ## Local management API
 
-KO Lite hosts a localhost-only JSON API so a same-machine agent or tool can read jobs and create/update schedules without using the dashboard. It starts and stops with the app. Every write goes through the same validated, additive/update-only import path as the dashboard, and the API exposes no enable/disable, delete, Kusto, rerun, or repair surface. Reads are `GET /api/jobs`, `GET /api/jobs/{jobId}`, and `GET /api/jobs/export`; writes are `POST /api/jobs/import`. All `/api` routes are loopback-only. See [local-api.md](local-api.md) for the full contract and the `ko-lite-job-manager` skill that drives it.
+KO Lite hosts a localhost-only JSON API so a same-machine agent or tool can read jobs and create/update schedules without using the dashboard. It starts and stops with the app. Every write goes through the same validated, additive/update-only import path as the dashboard, and the API exposes no enable/disable, delete, rerun, or repair surface. Reads are `GET /api/jobs`, `GET /api/jobs/{jobId}`, and `GET /api/jobs/export`; writes are `POST /api/jobs/import`. The one Kusto-touching route is the on-demand, read-only dependency-graph consumer endpoint (`POST /api/dependency-graph/kusto-consumers`; see [Dependency graph](#dependency-graph)). All `/api` routes are loopback-only. See [local-api.md](local-api.md) for the full contract and the `ko-lite-job-manager` skill that drives it.
+
+## Dependency graph
+
+Open a job's **Dependencies** tab, or multi-select jobs on the dashboard and choose **Dependencies**, to see the job's full dependency chain (transitive upstream and downstream `dependsOn` edges) as a graph colored by current job status. This view is a pure, read-only projection of local state and contacts no Kusto.
+
+The graph's **Resolve Kusto consumers** button additionally fetches the downstream Kusto **functions and materialized views** that consume each charted job's output table. This is the only graph action that contacts Kusto:
+
+- It runs a single read-only `.show databases entities with (resolveDependencies = true, resolveFunctionsSchema = true)` per distinct cluster in the chain, using the same Kusto auth (`KoLite:Kusto:AuthMode`) as live execution. It performs no writes and persists nothing — each click re-queries live.
+- Consumers that are themselves KO Lite jobs map onto the existing job node (the job→job link is already shown); only non-job functions/views are added. Pass-through tables (e.g. update-policy targets) are bridged through but not drawn.
+- Scope is the charted jobs' own cluster(s); one call returns consumers across every accessible database on that cluster. A consumer hosted on a *different* cluster than the job is not discovered. Failures (auth, permission, unreachable cluster, timeout) surface as an inline message beside the button and leave the job graph intact.
 
 ## Bulk actions on the dashboard
 

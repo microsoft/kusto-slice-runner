@@ -130,7 +130,7 @@ else
                         <p class="muted">This job (outlined) with its full upstream and downstream dependency chain, colored by current status. Click any node to open that job.</p>
                     </div>
                 </div>
-                <partial name="_DependencyGraph" model="Model.DependencyGraph" />
+                <partial name="_DependencyGraph" model="new DependencyGraphPanelViewModel(Model.DependencyGraph, new[] { data.Job.JobId })" />
             </section>
         </section>
 

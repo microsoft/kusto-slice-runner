@@ -31,6 +31,7 @@ namespace KoLite.Local.Kusto.Execution
     public interface IKustoControlCommandClientFactory
     {
         IKustoControlCommandClient Create(KustoExecutionRequest request);
+        IKustoControlCommandClient CreateForDatabase(Uri clusterUri, string database);
         KoLiteKustoConnectionDescriptor Describe(KustoExecutionRequest request);
     }
 
@@ -50,6 +51,14 @@ namespace KoLite.Local.Kusto.Execution
             return new KustoSdkControlCommandClient(provider);
         }
 
+        public IKustoControlCommandClient CreateForDatabase(Uri clusterUri, string database)
+        {
+            ArgumentNullException.ThrowIfNull(clusterUri);
+            if (string.IsNullOrWhiteSpace(database)) throw new ArgumentException("Database is required.", nameof(database));
+            var provider = KustoClientFactory.CreateCslAdminProvider(BuildConnectionString(clusterUri.ToString(), database, options));
+            return new KustoSdkControlCommandClient(provider);
+        }
+
         public KoLiteKustoConnectionDescriptor Describe(KustoExecutionRequest request)
         {
             ArgumentNullException.ThrowIfNull(request);
@@ -63,9 +72,15 @@ namespace KoLite.Local.Kusto.Execution
         public static KustoConnectionStringBuilder BuildConnectionString(KustoExecutionRequest request, KoLiteKustoOptions options)
         {
             ArgumentNullException.ThrowIfNull(request);
+            return BuildConnectionString(request.ClusterUri.ToString(), request.Database, options);
+        }
+
+        public static KustoConnectionStringBuilder BuildConnectionString(string clusterUri, string database, KoLiteKustoOptions options)
+        {
+            ArgumentNullException.ThrowIfNull(clusterUri);
             ArgumentNullException.ThrowIfNull(options);
 
-            var builder = new KustoConnectionStringBuilder(request.ClusterUri.ToString(), request.Database);
+            var builder = new KustoConnectionStringBuilder(clusterUri, database);
             return options.AuthMode switch
             {
                 KoLiteKustoAuthMode.AzureCli => builder.WithAadAzCliAuthentication(interactive: false),

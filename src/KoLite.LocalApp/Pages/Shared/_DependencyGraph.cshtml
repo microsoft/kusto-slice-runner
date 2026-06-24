@@ -1,64 +1,40 @@
 @using System.Text.Json
-@model DependencyGraphViewModel
+@model DependencyGraphPanelViewModel
+@{
+    var graph = Model.Graph;
+}
 
-@if (Model.IsEmpty)
+@if (graph.IsEmpty)
 {
     <p class="empty">No jobs to graph. The selected job(s) may have been deleted.</p>
 }
 else
 {
-    var labelsById = Model.Nodes.ToDictionary(node => node.Id, node => node.Label, StringComparer.Ordinal);
-    var payload = new
-    {
-        width = Model.Width,
-        height = Model.Height,
-        nodes = Model.Nodes.Select(node => new
-        {
-            id = node.Id,
-            label = node.Label,
-            status = node.Status,
-            statusKey = node.Status.ToLowerInvariant(),
-            statusText = node.StatusText,
-            resolved = node.Resolved,
-            focal = node.Focal,
-            href = node.Href,
-            x = node.X,
-            y = node.Y,
-            w = node.Width,
-            h = node.Height,
-            counts = node.Counts is null ? null : new
-            {
-                total = node.Counts.Total,
-                missing = node.Counts.Missing,
-                queued = node.Counts.Queued,
-                running = node.Counts.Running,
-                completed = node.Counts.Completed,
-                failed = node.Counts.Failed,
-                deadLettered = node.Counts.DeadLettered,
-                dependencyBlocked = node.Counts.DependencyBlocked
-            }
-        }),
-        edges = Model.Edges.Select(edge => new { from = edge.FromId, to = edge.ToId })
-    };
+    var labelsById = graph.Nodes.ToDictionary(node => node.Id, node => node.Label, StringComparer.Ordinal);
+    var payloadJson = JsonSerializer.Serialize(DependencyGraphPayload.Build(graph));
+    var focalIds = string.Join(" ", Model.FocalJobIds.Where(id => !string.IsNullOrWhiteSpace(id)));
 
-    <figure class="dependency-graph" data-dependency-graph aria-label="Job dependency graph">
-        @if (Model.Legend.Count > 0)
-        {
-            <figcaption class="dependency-graph-legend">
-                @foreach (var item in Model.Legend)
+    <figure class="dependency-graph" data-dependency-graph data-dependency-graph-focal="@focalIds" aria-label="Job dependency graph">
+        <div class="dependency-graph-toolbar">
+            <div class="dependency-graph-legend" data-dependency-graph-legend>
+                @foreach (var item in graph.Legend)
                 {
                     <span class="dependency-graph-legend-item">
                         <span class="dependency-graph-swatch status-@item.Status.ToLowerInvariant()" aria-hidden="true"></span>
                         @item.Label
                     </span>
                 }
-            </figcaption>
-        }
+            </div>
+            <div class="dependency-graph-actions">
+                <button type="button" class="btn small" data-dependency-graph-resolve>@UiIcons.IconText("graph", "Resolve Kusto consumers")</button>
+                <span class="dependency-graph-status muted" data-dependency-graph-status role="status" aria-live="polite"></span>
+            </div>
+        </div>
         <div class="dependency-graph-viewport" data-dependency-graph-viewport></div>
         <div class="dependency-graph-fallback" data-dependency-graph-fallback>
             <p class="muted">Dependency graph (text view):</p>
             <ul class="plain-list">
-                @foreach (var node in Model.Nodes)
+                @foreach (var node in graph.Nodes)
                 {
                     <li>
                         @if (node.Href is not null)
@@ -73,17 +49,17 @@ else
                     </li>
                 }
             </ul>
-            @if (Model.Edges.Count > 0)
+            @if (graph.Edges.Count > 0)
             {
                 <p class="muted">Dependencies (upstream &rarr; downstream):</p>
                 <ul class="plain-list">
-                    @foreach (var edge in Model.Edges)
+                    @foreach (var edge in graph.Edges)
                     {
                         <li>@(labelsById.TryGetValue(edge.FromId, out var fromLabel) ? fromLabel : edge.FromId) &rarr; @(labelsById.TryGetValue(edge.ToId, out var toLabel) ? toLabel : edge.ToId)</li>
                     }
                 </ul>
             }
         </div>
-        <script type="application/json" class="dependency-graph-payload" data-dependency-graph-data>@Html.Raw(JsonSerializer.Serialize(payload))</script>
+        <script type="application/json" class="dependency-graph-payload" data-dependency-graph-data>@Html.Raw(payloadJson)</script>
     </figure>
 }

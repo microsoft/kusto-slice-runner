@@ -1288,6 +1288,7 @@
   function buildDependencyNode(node) {
     var group = svgElement("g", {
       class: "dependency-graph-node status-" + node.statusKey +
+        " node-kind-" + (node.kind ? node.kind.toLowerCase() : "job") +
         (node.focal ? " is-focal" : "") +
         (node.resolved ? "" : " is-unresolved"),
       transform: "translate(" + node.x + " " + node.y + ")"
@@ -1346,18 +1347,27 @@
     return group;
   }
 
-  function renderDependencyGraph(container) {
-    var dataNode = container.querySelector("[data-dependency-graph-data]");
-    var viewport = container.querySelector("[data-dependency-graph-viewport]");
-    if (!dataNode || !viewport) return;
+  function renderDependencyLegend(container, legend) {
+    var legendEl = container.querySelector("[data-dependency-graph-legend]");
+    if (!legendEl) return;
+    while (legendEl.firstChild) legendEl.removeChild(legendEl.firstChild);
+    (legend || []).forEach(function (item) {
+      var entry = document.createElement("span");
+      entry.className = "dependency-graph-legend-item";
+      var swatch = document.createElement("span");
+      swatch.className = "dependency-graph-swatch status-" + item.statusKey;
+      swatch.setAttribute("aria-hidden", "true");
+      entry.appendChild(swatch);
+      entry.appendChild(document.createTextNode(item.label));
+      legendEl.appendChild(entry);
+    });
+  }
 
-    var data;
-    try {
-      data = JSON.parse(dataNode.textContent);
-    } catch (error) {
-      return;
-    }
-    if (!data || !data.nodes || !data.nodes.length) return;
+  function drawDependencyGraph(container, data) {
+    var viewport = container.querySelector("[data-dependency-graph-viewport]");
+    if (!viewport || !data || !data.nodes || !data.nodes.length) return;
+
+    while (viewport.firstChild) viewport.removeChild(viewport.firstChild);
 
     var nodesById = {};
     data.nodes.forEach(function (node) { nodesById[node.id] = node; });
@@ -1404,10 +1414,69 @@
 
     viewport.appendChild(svg);
     container.classList.add("is-rendered");
+    renderDependencyLegend(container, data.legend);
+  }
+
+  function renderDependencyGraph(container) {
+    var dataNode = container.querySelector("[data-dependency-graph-data]");
+    if (!dataNode) return;
+    var data;
+    try {
+      data = JSON.parse(dataNode.textContent);
+    } catch (error) {
+      return;
+    }
+    drawDependencyGraph(container, data);
+  }
+
+  function resolveKustoConsumers(figure, button, statusEl) {
+    var focalAttr = figure.getAttribute("data-dependency-graph-focal") || "";
+    var jobIds = focalAttr.split(/\s+/).filter(function (id) { return id.length; });
+    if (!jobIds.length) return;
+
+    button.disabled = true;
+    if (statusEl) {
+      statusEl.classList.remove("is-error");
+      statusEl.textContent = "Resolving Kusto consumers\u2026";
+    }
+
+    fetch("/api/dependency-graph/kusto-consumers", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jobIds: jobIds })
+    }).then(function (response) {
+      return response.json().then(function (body) { return { ok: response.ok, body: body }; });
+    }).then(function (result) {
+      if (!result.ok || !result.body || result.body.error) {
+        throw new Error((result.body && result.body.error) || "Failed to resolve Kusto consumers.");
+      }
+      drawDependencyGraph(figure, result.body);
+      var kustoCount = (result.body.nodes || []).filter(function (node) {
+        return node.kind && node.kind.indexOf("Kusto") === 0;
+      }).length;
+      if (statusEl) {
+        statusEl.classList.remove("is-error");
+        statusEl.textContent = kustoCount ? ("Added " + kustoCount + " Kusto consumer(s).") : "No Kusto consumers found.";
+      }
+      button.disabled = false;
+    }).catch(function (error) {
+      if (statusEl) {
+        statusEl.classList.add("is-error");
+        statusEl.textContent = error && error.message ? error.message : "Failed to resolve Kusto consumers.";
+      }
+      button.disabled = false;
+    });
   }
 
   function initDependencyGraphs() {
-    document.querySelectorAll("[data-dependency-graph]").forEach(renderDependencyGraph);
+    document.querySelectorAll("[data-dependency-graph]").forEach(function (figure) {
+      renderDependencyGraph(figure);
+      var button = figure.querySelector("[data-dependency-graph-resolve]");
+      var statusEl = figure.querySelector("[data-dependency-graph-status]");
+      if (button) {
+        button.addEventListener("click", function () { resolveKustoConsumers(figure, button, statusEl); });
+      }
+    });
   }
 
   window.initDependencyGraphs = initDependencyGraphs;

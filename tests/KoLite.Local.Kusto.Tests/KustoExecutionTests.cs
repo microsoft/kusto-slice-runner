@@ -187,6 +187,13 @@ namespace KoLite.Local.Kusto.Tests
                 return client;
             }
 
+            public IKustoControlCommandClient CreateForDatabase(Uri clusterUri, string database)
+            {
+                var client = new RecordingControlCommandClient();
+                Clients.Add(client);
+                return client;
+            }
+
             public KoLiteKustoConnectionDescriptor Describe(KustoExecutionRequest request) =>
                 new(request.ClusterUri.ToString(), request.Database, KoLiteKustoAuthMode.AzureCli, null);
         }
@@ -201,6 +208,8 @@ namespace KoLite.Local.Kusto.Tests
             }
 
             public IKustoControlCommandClient Create(KustoExecutionRequest request) => new ThrowingControlCommandClient(exception);
+
+            public IKustoControlCommandClient CreateForDatabase(Uri clusterUri, string database) => new ThrowingControlCommandClient(exception);
 
             public KoLiteKustoConnectionDescriptor Describe(KustoExecutionRequest request) =>
                 new(request.ClusterUri.ToString(), request.Database, KoLiteKustoAuthMode.AzureCli, null);

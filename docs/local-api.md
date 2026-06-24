@@ -18,7 +18,9 @@ authoring skill `ko-lite-schedule-json` does not upload.
 
 - **Schedules only.** The API can read jobs and create/update schedules. It
   exposes **no** enable/disable, soft/hard delete, Kusto execution, rerun,
-  cleanup, or repair surface.
+  cleanup, or repair surface. (The separate, read-only
+  `POST /api/dependency-graph/kusto-consumers` endpoint issues a read-only Kusto
+  metadata query for the dependency graph — see the operations runbook.)
 - **Validated path.** Every write goes through the same
   `SqliteJobCatalogRepository.Import` path the dashboard import uses, so strict
   schedule parsing, started-job mutation policy (immutable permanent `id`;

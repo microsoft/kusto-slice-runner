@@ -1,4 +1,8 @@
 using System.Net;
+using System.Net.Http.Json;
+using System.Text.Json;
+using KoLite.Local.Core.Graph;
+using KoLite.Local.Kusto.Execution;
 using KoLite.Local.Sqlite.Catalog;
 using KoLite.Local.Sqlite.Connections;
 using KoLite.Local.Sqlite.Lifecycle;
@@ -7,6 +11,7 @@ using KoLite.LocalApp.Ui;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 
 namespace KoLite.LocalApp.Tests
@@ -20,6 +25,7 @@ namespace KoLite.LocalApp.Tests
         private readonly string databasePath;
         private readonly WebApplicationFactory<Program> factory;
         private readonly KoLiteSqliteConnectionFactory sqlite;
+        private readonly TestKustoEntityDependencyReader kustoReader = new();
 
         public DependencyGraphWebTests()
         {
@@ -174,6 +180,43 @@ namespace KoLite.LocalApp.Tests
             Assert.Contains("data-bulk-dependencies", html);
         }
 
+        [Fact]
+        public async Task Kusto_consumers_endpoint_enriches_the_graph_with_consumer_nodes()
+        {
+            var catalog = new SqliteJobCatalogRepository(sqlite);
+            catalog.Create(Schedule("kusto.job", functionName: "BuildT", outputTable: "_T"));
+            // A non-job function LatestT reads the job's output table _T.
+            kustoReader.Edges = new[] { new KustoEntityEdge("DemoDb", "LatestT", "Function", "DemoDb", "_T", "Table") };
+            using var client = factory.CreateClient();
+
+            using var response = await client.PostAsJsonAsync(
+                "/api/dependency-graph/kusto-consumers",
+                new { jobIds = new[] { JobId("kusto.job") } });
+
+            response.EnsureSuccessStatusCode();
+            var payload = await response.Content.ReadFromJsonAsync<JsonElement>();
+            var nodes = payload.GetProperty("nodes").EnumerateArray().ToList();
+            Assert.Contains(nodes, n => n.GetProperty("kind").GetString() == "KustoFunction" && n.GetProperty("label").GetString() == "LatestT");
+            Assert.Contains(nodes, n => n.GetProperty("kind").GetString() == "Job" && n.GetProperty("label").GetString() == "kusto.job");
+        }
+
+        [Fact]
+        public async Task Kusto_consumers_endpoint_returns_an_error_envelope_on_reader_failure()
+        {
+            var catalog = new SqliteJobCatalogRepository(sqlite);
+            catalog.Create(Schedule("kusto.fail", functionName: "BuildT", outputTable: "_T"));
+            kustoReader.Error = new InvalidOperationException("kusto unreachable");
+            using var client = factory.CreateClient();
+
+            using var response = await client.PostAsJsonAsync(
+                "/api/dependency-graph/kusto-consumers",
+                new { jobIds = new[] { JobId("kusto.fail") } });
+
+            Assert.Equal(HttpStatusCode.BadGateway, response.StatusCode);
+            var payload = await response.Content.ReadFromJsonAsync<JsonElement>();
+            Assert.Contains("kusto unreachable", payload.GetProperty("error").GetString());
+        }
+
         public void Dispose()
         {
             factory.Dispose();
@@ -206,7 +249,13 @@ namespace KoLite.LocalApp.Tests
                         ["KoLite:UpdateCheck:Enabled"] = "false"
                     });
                 });
-                builder.ConfigureServices(services => services.AddLogging(logging => logging.ClearProviders()));
+                builder.ConfigureServices(services =>
+                {
+                    services.AddLogging(logging => logging.ClearProviders());
+                    // No live Kusto in tests: the enrichment endpoint reads through this fake.
+                    services.RemoveAll<IKustoEntityDependencyReader>();
+                    services.AddSingleton<IKustoEntityDependencyReader>(kustoReader);
+                });
             });
 
         private static string JobId(string activityId)
@@ -215,12 +264,12 @@ namespace KoLite.LocalApp.Tests
             return new Guid(bytes).ToString("N");
         }
 
-        private static string Schedule(string activityId, string? dependsOn = null) => $$"""
+        private static string Schedule(string activityId, string? dependsOn = null, string functionName = "DependencyGraphFunction", string outputTable = "Output") => $$"""
         {
           "id": "{{JobId(activityId)}}",
           "activityId": "{{activityId}}",
-          "functionName": "DependencyGraphFunction",
-          "outputTable": "Output",
+          "functionName": "{{functionName}}",
+          "outputTable": "{{outputTable}}",
           "queryWindowSize": "00:05:00",
           "delayFromUtcNow": "00:00:00",
           "maxParallelism": 1,
@@ -231,5 +280,21 @@ namespace KoLite.LocalApp.Tests
           "target": { "clusterUri": "https://kolite-example.invalid", "database": "DemoDb" }
         }
         """;
+
+        private sealed class TestKustoEntityDependencyReader : IKustoEntityDependencyReader
+        {
+            public IReadOnlyList<KustoEntityEdge> Edges { get; set; } = Array.Empty<KustoEntityEdge>();
+            public Exception? Error { get; set; }
+
+            public Task<IReadOnlyList<KustoEntityEdge>> ReadAsync(Uri clusterUri, string database, CancellationToken cancellationToken = default)
+            {
+                if (Error is not null)
+                {
+                    throw Error;
+                }
+
+                return Task.FromResult(Edges);
+            }
+        }
     }
 }
