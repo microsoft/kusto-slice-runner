@@ -56,6 +56,7 @@ namespace KoLite.LocalApp
         private static void AddReadModels(IServiceCollection services)
         {
             services.AddScoped<DashboardPageQuery>();
+            services.AddScoped<DependencyGraphQuery>();
             services.AddScoped<JobDetailsPageQuery>();
             services.AddScoped<JobChartQuery>();
             services.AddScoped<ThrottleSeverityQuery>();

@@ -911,3 +911,84 @@ h3 { font-size: 16px; margin-bottom: 10px; }
 .catch-up-check-item.met .catch-up-check-icon { color: var(--success); }
 .catch-up-check-label { font-weight: 600; }
 .catch-up-check-detail { color: var(--muted); }
+
+/* Dependency graph */
+.dependency-graph { margin: 0; }
+.dependency-graph-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin: 0 0 12px;
+  padding: 0;
+}
+.dependency-graph-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.dependency-graph-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  border: 1.5px solid #8c959f;
+  background: #f6f8fa;
+}
+.dependency-graph-viewport {
+  overflow: auto;
+  max-height: 72vh;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+}
+.dependency-graph-svg { display: block; }
+.dependency-graph-edge { fill: none; stroke: #afb8c1; stroke-width: 1.5; }
+.dependency-graph-arrow { fill: #afb8c1; }
+.dependency-graph-node-box {
+  fill: #fff;
+  stroke: var(--border);
+  stroke-width: 1.5;
+  transition: filter 100ms ease;
+}
+.dependency-graph-node-label {
+  fill: #1f2328;
+  font-size: 13px;
+  font-weight: 600;
+  text-anchor: middle;
+  dominant-baseline: middle;
+}
+.dependency-graph-node-status {
+  fill: var(--muted);
+  font-size: 11px;
+  text-anchor: middle;
+  dominant-baseline: middle;
+}
+.dependency-graph-node.is-interactive { cursor: pointer; }
+.dependency-graph-node.is-interactive:hover .dependency-graph-node-box { filter: brightness(0.96); }
+.dependency-graph-node:focus { outline: none; }
+.dependency-graph-node.is-interactive:focus-visible .dependency-graph-node-box { stroke-width: 3; }
+.dependency-graph-node.is-focal .dependency-graph-node-box { stroke-width: 3; }
+
+/* Status colors mirror the job status badges. */
+.dependency-graph-node.status-healthy .dependency-graph-node-box,
+.dependency-graph-swatch.status-healthy { fill: #dafbe1; background: #dafbe1; stroke: var(--success); border-color: var(--success); }
+.dependency-graph-node.status-running .dependency-graph-node-box,
+.dependency-graph-swatch.status-running { fill: #ddf4ff; background: #ddf4ff; stroke: var(--info); border-color: var(--info); }
+.dependency-graph-node.status-dependencyblocked .dependency-graph-node-box,
+.dependency-graph-swatch.status-dependencyblocked,
+.dependency-graph-node.status-paused .dependency-graph-node-box,
+.dependency-graph-swatch.status-paused { fill: #fff8c5; background: #fff8c5; stroke: var(--warning); border-color: var(--warning); }
+.dependency-graph-node.status-failed .dependency-graph-node-box,
+.dependency-graph-swatch.status-failed { fill: #ffebe9; background: #ffebe9; stroke: var(--danger); border-color: var(--danger); }
+.dependency-graph-node.status-completed .dependency-graph-node-box,
+.dependency-graph-swatch.status-completed { fill: #f6f8fa; background: #f6f8fa; stroke: #8c959f; border-color: #8c959f; }
+.dependency-graph-node.status-softdeleted .dependency-graph-node-box,
+.dependency-graph-swatch.status-softdeleted { fill: #f6f8fa; background: #f6f8fa; stroke: var(--danger); border-color: var(--danger); stroke-dasharray: 4 3; }
+.dependency-graph-node.status-unknown .dependency-graph-node-box,
+.dependency-graph-swatch.status-unknown { fill: #f6f8fa; background: #f6f8fa; stroke: #8c959f; border-color: #8c959f; stroke-dasharray: 4 3; }
+
+.dependency-graph-fallback { margin-top: 12px; }
+.dependency-graph-fallback li { display: flex; align-items: center; gap: 8px; }
+.dependency-graph.is-rendered .dependency-graph-fallback { display: none; }
+.dependency-graph-tooltip .tooltip-row { grid-template-columns: 96px minmax(0, 1fr); }

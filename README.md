@@ -20,6 +20,7 @@ If you're familiar with [scheduled Kusto jobs](https://learn.microsoft.com/kusto
 
 - Imports and exports strict schedule JSON for Kusto output jobs, including optional job organization tags.
 - Shows active, completed, and soft-deleted jobs in a local dashboard.
+- Visualizes job dependencies as a graph (colored by current job status) from a job's details page or by multi-selecting jobs on the dashboard and choosing "Dependencies".
 - Schedules due time slices from enabled jobs into a local SQLite queue.
 - Executes live Kusto `.set-or-append` commands for each claimed slice.
 - Tracks queue state, slice history, attempts, logs, failures, and success-rate charts.

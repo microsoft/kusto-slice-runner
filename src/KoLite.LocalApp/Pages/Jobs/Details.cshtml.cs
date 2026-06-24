@@ -10,17 +10,20 @@ namespace KoLite.LocalApp.Pages.Jobs
         private readonly JobDetailsPageQuery query;
         private readonly JobChartQuery chartQuery;
         private readonly SqliteJobCatalogRepository catalog;
+        private readonly DependencyGraphQuery dependencyGraphQuery;
 
-        public DetailsModel(JobDetailsPageQuery query, JobChartQuery chartQuery, SqliteJobCatalogRepository catalog)
+        public DetailsModel(JobDetailsPageQuery query, JobChartQuery chartQuery, SqliteJobCatalogRepository catalog, DependencyGraphQuery dependencyGraphQuery)
         {
             this.query = query;
             this.chartQuery = chartQuery;
             this.catalog = catalog;
+            this.dependencyGraphQuery = dependencyGraphQuery;
         }
 
         public JobDetailsPageData? Data { get; private set; }
         public ScheduleEditorViewModel? Editor { get; private set; }
         public JobDetailsCharts? Charts { get; private set; }
+        public DependencyGraphViewModel DependencyGraph { get; private set; } = DependencyGraphViewModel.Empty;
         public string Range { get; private set; } = "1d";
         public IReadOnlyList<ChartRangeLink> RangeLinks => ChartRangeOptions.Links;
 
@@ -35,6 +38,7 @@ namespace KoLite.LocalApp.Pages.Jobs
             }
 
             Charts = chartQuery.GetJobDetailsCharts(jobId, ChartRangeOptions.Parse(Range));
+            DependencyGraph = dependencyGraphQuery.Build(new[] { Data.Job.JobId });
             Editor = new ScheduleEditorViewModel(
                 $"/catalog/{Uri.EscapeDataString(Data.Job.JobId)}/update",
                 ScheduleFormInput.FromDefinition(Data.Definition),

@@ -1,0 +1,35 @@
+@page "/dependencies"
+@model KoLite.LocalApp.Pages.Dependencies.IndexModel
+@{
+    ViewData["Title"] = "Dependencies";
+    var unresolvedFocal = Model.Graph.FocalCount - Model.Graph.ResolvedFocalCount;
+}
+
+<div class="page-heading">
+    <div>
+        <h1>Job dependencies</h1>
+        <p class="muted">The full dependency chain (transitive upstream and downstream) for the selected job(s), colored by current status.</p>
+    </div>
+    <div class="button-row">
+        <a class="btn" href="/">@UiIcons.IconText("history", "Back to jobs")</a>
+    </div>
+</div>
+
+@if (Model.RequestedCount == 0)
+{
+    <section class="card">
+        <p class="empty">No jobs selected. Select one or more jobs on the dashboard and choose &ldquo;Dependencies&rdquo;.</p>
+    </section>
+}
+else
+{
+    @if (unresolvedFocal > 0)
+    {
+        <div class="alert warning" role="alert">
+            @unresolvedFocal of @Model.Graph.FocalCount selected job(s) could not be found and are shown as placeholders.
+        </div>
+    }
+    <section class="card">
+        <partial name="_DependencyGraph" model="Model.Graph" />
+    </section>
+}

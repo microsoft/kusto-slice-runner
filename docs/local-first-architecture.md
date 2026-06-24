@@ -6,7 +6,7 @@ KO Lite runs as a local ASP.NET Core Razor Pages app with hosted background serv
 
 | Component | Project | Responsibility |
 | --- | --- | --- |
-| Web dashboard | `src\KoLite.LocalApp` | Razor Pages UI for catalog management, dashboard views, slice history, rerun planning, repair, health, and shutdown. |
+| Web dashboard | `src\KoLite.LocalApp` | Razor Pages UI for catalog management, dashboard views, slice history, the job dependency graph, rerun planning, repair, health, and shutdown. |
 | Scheduler service | `src\KoLite.LocalApp` + `src\KoLite.Local.Core` | Each pass tops up every enabled job's queue to its `maxParallelism` (dependency-ready slices only). There is no global per-tick enqueue throttle; a pass is naturally bounded by the sum of per-job `maxParallelism`. |
 | Worker pool | `src\KoLite.LocalApp` + `src\KoLite.Local.Core` | Claims queued work, extends leases, executes output writes, records progress, retries, and terminal state. |
 | SQLite persistence | `src\KoLite.Local.Sqlite` | Owns migrations, catalog, queue, state, operational read models, rerun snapshots, failure summaries, and repair services. |
@@ -25,6 +25,7 @@ KO Lite runs as a local ASP.NET Core Razor Pages app with hosted background serv
 5. The Kusto executor runs the configured function for the slice window and appends results to the schedule output table.
 6. Slice state, queue state, attempts, events, and operational logs are updated in SQLite.
 7. Dashboard read models query SQLite to show job status, history, failures, and worker/scheduler health.
+8. The job dependency graph is a read-only UI projection (`DependencyGraphQuery` in `src\KoLite.LocalApp`): it reuses the dashboard's per-job status projection and the stored `dependsOn` GUID edges, and the pure layered layout lives in `src\KoLite.Local.Core` (`Graph\DependencyGraphLayout.cs`). It adds no persistence and contacts no Kusto.
 
 ## Job identity model
 

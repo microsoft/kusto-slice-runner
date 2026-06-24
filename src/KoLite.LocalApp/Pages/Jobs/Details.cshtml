@@ -67,6 +67,7 @@ else
         <nav class="tab-list" role="tablist" aria-label="Job details sections">
             <a id="slice-history-tab" class="tab-link active" href="#slice-history" role="tab" aria-controls="slice-history" aria-selected="true">Slice history</a>
             <a id="definition-tab" class="tab-link" href="#definition" role="tab" aria-controls="definition" aria-selected="false">Job definition</a>
+            <a id="dependencies-tab" class="tab-link" href="#dependencies" role="tab" aria-controls="dependencies" aria-selected="false">Dependencies</a>
             <a id="operations-tab" class="tab-link" href="#operations" role="tab" aria-controls="operations" aria-selected="false">Operations</a>
             <a id="change-history-tab" class="tab-link" href="#change-history" role="tab" aria-controls="change-history" aria-selected="false">Change history</a>
         </nav>
@@ -119,6 +120,18 @@ else
                 <p class="muted">Edit the schedule fields or the raw schedule JSON for this job.</p>
             </div>
             <partial name="_ScheduleEditor" model="Model.Editor" />
+        </section>
+
+        <section id="dependencies" class="tab-panel" role="tabpanel" aria-labelledby="dependencies-tab">
+            <section class="card">
+                <div class="card-header">
+                    <div>
+                        <h2>Dependencies</h2>
+                        <p class="muted">This job (outlined) with its full upstream and downstream dependency chain, colored by current status. Click any node to open that job.</p>
+                    </div>
+                </div>
+                <partial name="_DependencyGraph" model="Model.DependencyGraph" />
+            </section>
         </section>
 
         <section id="operations" class="tab-panel" role="tabpanel" aria-labelledby="operations-tab">

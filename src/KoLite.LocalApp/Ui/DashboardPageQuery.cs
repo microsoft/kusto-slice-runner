@@ -108,15 +108,8 @@ namespace KoLite.LocalApp.Ui
         public DashboardPageData Get(TimeSpan selectedRange, IEnumerable<string>? selectedTags = null, DashboardSort? sort = null)
         {
             var effectiveSort = sort ?? DashboardSort.Default;
-            var now = clock.UtcNow;
             var normalizedSelectedTags = ScheduleTags.NormalizeDistinct(selectedTags ?? Array.Empty<string>());
-            var lifecycleStates = lifecycleReadModel.GetLatestStates();
-            var summaries = readModels.GetJobStatusSummaries().ToDictionary(s => s.JobId, StringComparer.Ordinal);
-            var queuedAvailability = readModels.GetQueuedAvailabilityByJob();
-            var latestSliceEnds = readModels.GetLatestSliceEndsByJob();
-            var jobs = catalog.List()
-                .Select(record => BuildJobListItem(record, lifecycleStates, summaries, queuedAvailability, latestSliceEnds, now))
-                .ToList();
+            var jobs = GetAllJobs();
             var tagSummaries = BuildTagSummaries(jobs, normalizedSelectedTags);
             var filteredJobs = normalizedSelectedTags.Count == 0
                 ? jobs
@@ -136,6 +129,21 @@ namespace KoLite.LocalApp.Ui
                 readModels.GetRecentFailures(10),
                 selectedRange,
                 effectiveSort);
+        }
+
+        // Every job in the catalog projected to a JobListItem (status, summary, lifecycle, next
+        // slice) in one batched read pass. Shared by the dashboard and the dependency graph so the
+        // exact same status logic backs both.
+        public IReadOnlyList<JobListItem> GetAllJobs()
+        {
+            var now = clock.UtcNow;
+            var lifecycleStates = lifecycleReadModel.GetLatestStates();
+            var summaries = readModels.GetJobStatusSummaries().ToDictionary(s => s.JobId, StringComparer.Ordinal);
+            var queuedAvailability = readModels.GetQueuedAvailabilityByJob();
+            var latestSliceEnds = readModels.GetLatestSliceEndsByJob();
+            return catalog.List()
+                .Select(record => BuildJobListItem(record, lifecycleStates, summaries, queuedAvailability, latestSliceEnds, now))
+                .ToList();
         }
 
         private static IReadOnlyList<JobListItem> ApplySort(IEnumerable<JobListItem> jobs, DashboardSort sort)

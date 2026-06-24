@@ -53,6 +53,7 @@
         @Html.AntiForgeryToken()
         <span class="bulk-action-inputs" data-bulk-inputs></span>
         <div class="button-row">
+            <button class="btn small" type="button" data-bulk-dependencies>@UiIcons.IconText("graph", "Dependencies")</button>
             <button class="btn small" type="submit" formaction="/catalog/bulk/pause">@UiIcons.IconText("pause", "Pause")</button>
             <button class="btn small" type="submit" formaction="/catalog/bulk/resume">@UiIcons.IconText("play", "Resume")</button>
             <button class="btn small danger" type="submit" formaction="/catalog/bulk/soft-delete">@UiIcons.IconText("trash", "Soft delete")</button>

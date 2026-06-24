@@ -1055,6 +1055,18 @@
       });
     }
 
+    var dependencies = bar.querySelector("[data-bulk-dependencies]");
+    if (dependencies) {
+      dependencies.addEventListener("click", function () {
+        var selected = bulkSelectedRows(root);
+        if (selected.length === 0) return;
+        var query = selected
+          .map(function (checkbox) { return "job=" + encodeURIComponent(checkbox.value); })
+          .join("&");
+        window.location.href = "/dependencies?" + query;
+      });
+    }
+
     document.addEventListener("dashboard:filtered", function () {
       bulkCheckboxes(root).forEach(function (checkbox) {
         var row = checkbox.closest("tr");
@@ -1202,6 +1214,203 @@
     });
   }
 
+  var depGraphTooltip;
+  var DEP_GRAPH_SVG_NS = "http://www.w3.org/2000/svg";
+
+  function ensureDepGraphTooltip() {
+    if (depGraphTooltip) return depGraphTooltip;
+    depGraphTooltip = document.createElement("div");
+    depGraphTooltip.className = "slice-history-tooltip dependency-graph-tooltip";
+    depGraphTooltip.setAttribute("role", "tooltip");
+    document.body.appendChild(depGraphTooltip);
+    return depGraphTooltip;
+  }
+
+  function showDepGraphTooltip(node, target) {
+    var tooltip = ensureDepGraphTooltip();
+    tooltip.textContent = "";
+
+    var title = document.createElement("div");
+    title.className = "tooltip-title";
+    title.textContent = node.label;
+    tooltip.appendChild(title);
+
+    tooltip.appendChild(tooltipRow("Status", node.statusText));
+
+    if (node.counts) {
+      var counts = node.counts;
+      [
+        ["Completed", counts.completed],
+        ["Running", counts.running],
+        ["Queued", counts.queued],
+        ["Failed", counts.failed],
+        ["Dead-lettered", counts.deadLettered],
+        ["Blocked", counts.dependencyBlocked],
+        ["Missing", counts.missing]
+      ].forEach(function (row) {
+        if (row[1] > 0) tooltip.appendChild(tooltipRow(row[0], String(row[1])));
+      });
+      tooltip.appendChild(tooltipRow("Total", String(counts.total)));
+    }
+
+    tooltip.style.left = "0";
+    tooltip.style.top = "0";
+    positionTooltip(target, tooltip);
+    tooltip.classList.add("visible");
+  }
+
+  function hideDepGraphTooltip() {
+    if (depGraphTooltip) depGraphTooltip.classList.remove("visible");
+  }
+
+  function truncateLabel(text, max) {
+    if (!text) return "";
+    return text.length > max ? text.slice(0, max - 1) + "\u2026" : text;
+  }
+
+  function svgElement(name, attrs) {
+    var el = document.createElementNS(DEP_GRAPH_SVG_NS, name);
+    Object.keys(attrs || {}).forEach(function (key) {
+      el.setAttribute(key, attrs[key]);
+    });
+    return el;
+  }
+
+  function dependencyEdgePath(from, to) {
+    var x1 = from.x + from.w / 2;
+    var y1 = from.y + from.h;
+    var x2 = to.x + to.w / 2;
+    var y2 = to.y;
+    var midY = (y1 + y2) / 2;
+    return "M" + x1 + " " + y1 + " C " + x1 + " " + midY + " " + x2 + " " + midY + " " + x2 + " " + y2;
+  }
+
+  function buildDependencyNode(node) {
+    var group = svgElement("g", {
+      class: "dependency-graph-node status-" + node.statusKey +
+        (node.focal ? " is-focal" : "") +
+        (node.resolved ? "" : " is-unresolved"),
+      transform: "translate(" + node.x + " " + node.y + ")"
+    });
+
+    group.appendChild(svgElement("rect", {
+      class: "dependency-graph-node-box",
+      width: node.w,
+      height: node.h,
+      rx: "10",
+      ry: "10"
+    }));
+
+    var hasStatusLine = node.statusText && node.statusText !== node.label;
+    var label = svgElement("text", {
+      class: "dependency-graph-node-label",
+      x: node.w / 2,
+      y: hasStatusLine ? node.h / 2 - 3 : node.h / 2 + 4
+    });
+    label.textContent = truncateLabel(node.label, 24);
+    group.appendChild(label);
+
+    if (hasStatusLine) {
+      var status = svgElement("text", {
+        class: "dependency-graph-node-status",
+        x: node.w / 2,
+        y: node.h / 2 + 15
+      });
+      status.textContent = node.statusText;
+      group.appendChild(status);
+    }
+
+    var title = svgElement("title", {});
+    title.textContent = node.label + " \u2014 " + node.statusText;
+    group.appendChild(title);
+
+    if (node.resolved && node.href) {
+      group.classList.add("is-interactive");
+      group.setAttribute("tabindex", "0");
+      group.setAttribute("role", "link");
+      group.setAttribute("aria-label", node.label + ", " + node.statusText);
+      group.addEventListener("click", function () { window.location.href = node.href; });
+      group.addEventListener("keydown", function (event) {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          window.location.href = node.href;
+        }
+      });
+    }
+
+    group.addEventListener("mouseenter", function () { showDepGraphTooltip(node, group); });
+    group.addEventListener("mouseleave", hideDepGraphTooltip);
+    group.addEventListener("focus", function () { showDepGraphTooltip(node, group); });
+    group.addEventListener("blur", hideDepGraphTooltip);
+
+    return group;
+  }
+
+  function renderDependencyGraph(container) {
+    var dataNode = container.querySelector("[data-dependency-graph-data]");
+    var viewport = container.querySelector("[data-dependency-graph-viewport]");
+    if (!dataNode || !viewport) return;
+
+    var data;
+    try {
+      data = JSON.parse(dataNode.textContent);
+    } catch (error) {
+      return;
+    }
+    if (!data || !data.nodes || !data.nodes.length) return;
+
+    var nodesById = {};
+    data.nodes.forEach(function (node) { nodesById[node.id] = node; });
+
+    var svg = svgElement("svg", {
+      class: "dependency-graph-svg",
+      viewBox: "0 0 " + data.width + " " + data.height,
+      width: data.width,
+      height: data.height,
+      role: "img",
+      "aria-label": "Job dependency graph"
+    });
+
+    var defs = svgElement("defs", {});
+    var marker = svgElement("marker", {
+      id: "dep-graph-arrow",
+      viewBox: "0 0 10 10",
+      refX: "9",
+      refY: "5",
+      markerWidth: "7",
+      markerHeight: "7",
+      orient: "auto-start-reverse"
+    });
+    marker.appendChild(svgElement("path", { class: "dependency-graph-arrow", d: "M0 0 L10 5 L0 10 z" }));
+    defs.appendChild(marker);
+    svg.appendChild(defs);
+
+    var edgeLayer = svgElement("g", { class: "dependency-graph-edges" });
+    data.edges.forEach(function (edge) {
+      var from = nodesById[edge.from];
+      var to = nodesById[edge.to];
+      if (!from || !to) return;
+      edgeLayer.appendChild(svgElement("path", {
+        class: "dependency-graph-edge",
+        d: dependencyEdgePath(from, to),
+        "marker-end": "url(#dep-graph-arrow)"
+      }));
+    });
+    svg.appendChild(edgeLayer);
+
+    var nodeLayer = svgElement("g", { class: "dependency-graph-nodes" });
+    data.nodes.forEach(function (node) { nodeLayer.appendChild(buildDependencyNode(node)); });
+    svg.appendChild(nodeLayer);
+
+    viewport.appendChild(svg);
+    container.classList.add("is-rendered");
+  }
+
+  function initDependencyGraphs() {
+    document.querySelectorAll("[data-dependency-graph]").forEach(renderDependencyGraph);
+  }
+
+  window.initDependencyGraphs = initDependencyGraphs;
   window.initDependencyPickers = initDependencyPickers;
   window.initBulkSelect = initBulkSelect;
   initSuccessRateCharts();
@@ -1214,4 +1423,5 @@
   initBulkSelect();
   initUpdateBadge();
   initDependencyPickers();
+  initDependencyGraphs();
 })();

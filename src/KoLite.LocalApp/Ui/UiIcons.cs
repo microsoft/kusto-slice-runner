@@ -20,6 +20,7 @@ namespace KoLite.LocalApp.Ui
             "plus",
             "upload",
             "x",
+            "graph",
         };
 
         public static IHtmlContent Icon(string name)
