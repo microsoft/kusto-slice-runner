@@ -1347,7 +1347,7 @@
     return group;
   }
 
-  function renderDependencyLegend(container, legend) {
+  function renderDependencyLegend(container, legend, hasImplicit) {
     var legendEl = container.querySelector("[data-dependency-graph-legend]");
     if (!legendEl) return;
     while (legendEl.firstChild) legendEl.removeChild(legendEl.firstChild);
@@ -1361,6 +1361,16 @@
       entry.appendChild(document.createTextNode(item.label));
       legendEl.appendChild(entry);
     });
+    if (hasImplicit) {
+      var implicitEntry = document.createElement("span");
+      implicitEntry.className = "dependency-graph-legend-item";
+      var line = document.createElement("span");
+      line.className = "dependency-graph-legend-line is-implicit";
+      line.setAttribute("aria-hidden", "true");
+      implicitEntry.appendChild(line);
+      implicitEntry.appendChild(document.createTextNode("Implicit dependency (undeclared)"));
+      legendEl.appendChild(implicitEntry);
+    }
   }
 
   function drawDependencyGraph(container, data) {
@@ -1382,17 +1392,8 @@
     });
 
     var defs = svgElement("defs", {});
-    var marker = svgElement("marker", {
-      id: "dep-graph-arrow",
-      viewBox: "0 0 10 10",
-      refX: "9",
-      refY: "5",
-      markerWidth: "7",
-      markerHeight: "7",
-      orient: "auto-start-reverse"
-    });
-    marker.appendChild(svgElement("path", { class: "dependency-graph-arrow", d: "M0 0 L10 5 L0 10 z" }));
-    defs.appendChild(marker);
+    defs.appendChild(dependencyArrowMarker("dep-graph-arrow", "dependency-graph-arrow"));
+    defs.appendChild(dependencyArrowMarker("dep-graph-arrow-implicit", "dependency-graph-arrow is-implicit"));
     svg.appendChild(defs);
 
     var edgeLayer = svgElement("g", { class: "dependency-graph-edges" });
@@ -1401,9 +1402,9 @@
       var to = nodesById[edge.to];
       if (!from || !to) return;
       edgeLayer.appendChild(svgElement("path", {
-        class: "dependency-graph-edge",
+        class: "dependency-graph-edge" + (edge.implicit ? " is-implicit" : ""),
         d: dependencyEdgePath(from, to),
-        "marker-end": "url(#dep-graph-arrow)"
+        "marker-end": edge.implicit ? "url(#dep-graph-arrow-implicit)" : "url(#dep-graph-arrow)"
       }));
     });
     svg.appendChild(edgeLayer);
@@ -1414,7 +1415,21 @@
 
     viewport.appendChild(svg);
     container.classList.add("is-rendered");
-    renderDependencyLegend(container, data.legend);
+    renderDependencyLegend(container, data.legend, (data.edges || []).some(function (edge) { return edge.implicit; }));
+  }
+
+  function dependencyArrowMarker(id, pathClass) {
+    var marker = svgElement("marker", {
+      id: id,
+      viewBox: "0 0 10 10",
+      refX: "9",
+      refY: "5",
+      markerWidth: "7",
+      markerHeight: "7",
+      orient: "auto-start-reverse"
+    });
+    marker.appendChild(svgElement("path", { class: pathClass, d: "M0 0 L10 5 L0 10 z" }));
+    return marker;
   }
 
   function renderDependencyGraph(container) {
@@ -1437,7 +1452,7 @@
     button.disabled = true;
     if (statusEl) {
       statusEl.classList.remove("is-error");
-      statusEl.textContent = "Resolving Kusto consumers\u2026";
+      statusEl.textContent = "Resolving Kusto lineage\u2026";
     }
 
     fetch("/api/dependency-graph/kusto-consumers", {
@@ -1448,21 +1463,27 @@
       return response.json().then(function (body) { return { ok: response.ok, body: body }; });
     }).then(function (result) {
       if (!result.ok || !result.body || result.body.error) {
-        throw new Error((result.body && result.body.error) || "Failed to resolve Kusto consumers.");
+        throw new Error((result.body && result.body.error) || "Failed to resolve Kusto lineage.");
       }
       drawDependencyGraph(figure, result.body);
       var kustoCount = (result.body.nodes || []).filter(function (node) {
         return node.kind && node.kind.indexOf("Kusto") === 0;
       }).length;
+      var implicitCount = (result.body.edges || []).filter(function (edge) { return edge.implicit; }).length;
       if (statusEl) {
         statusEl.classList.remove("is-error");
-        statusEl.textContent = kustoCount ? ("Added " + kustoCount + " Kusto consumer(s).") : "No Kusto consumers found.";
+        if (kustoCount || implicitCount) {
+          statusEl.textContent = "Resolved " + kustoCount + " Kusto entity(ies)" +
+            (implicitCount ? (" and " + implicitCount + " implicit dependency(ies)") : "") + ".";
+        } else {
+          statusEl.textContent = "No Kusto lineage found.";
+        }
       }
       button.disabled = false;
     }).catch(function (error) {
       if (statusEl) {
         statusEl.classList.add("is-error");
-        statusEl.textContent = error && error.message ? error.message : "Failed to resolve Kusto consumers.";
+        statusEl.textContent = error && error.message ? error.message : "Failed to resolve Kusto lineage.";
       }
       button.disabled = false;
     });

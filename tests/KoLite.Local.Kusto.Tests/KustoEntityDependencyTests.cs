@@ -42,14 +42,17 @@ namespace KoLite.Local.Kusto.Tests
         }
 
         [Fact]
-        public void Cross_cluster_dependency_is_dropped()
+        public void Cross_cluster_dependency_is_kept_with_its_cluster()
         {
             var parsed = KustoSdkEntityDependencyReader.ParseDependency(
                 "cluster('https://sample-compute.centralus.kusto.windows.net/').database('compute').fetchMetrics",
                 "SampleAnalytics",
                 Host);
 
-            Assert.Null(parsed);
+            Assert.NotNull(parsed);
+            Assert.Equal("sample-compute.centralus.kusto.windows.net", parsed!.Value.Cluster);
+            Assert.Equal("compute", parsed.Value.Database);
+            Assert.Equal("fetchMetrics", parsed.Value.Name);
         }
 
         [Fact]
@@ -63,19 +66,22 @@ namespace KoLite.Local.Kusto.Tests
         }
 
         [Fact]
-        public void Parse_skips_cross_cluster_rows_and_keeps_local_edges()
+        public void Parse_keeps_local_and_cross_cluster_edges_with_their_clusters()
         {
             using var table = EdgeTable(
                 ("SampleAnalytics", "BuildEcu5MinProfile", "Function", "_NodeCpu5Min", "Table"),
                 ("SampleAnalytics", "LatestEcu5MinProfile", "Function", "_Ecu5MinProfile", "Table"),
-                ("SampleAnalytics", "AzureOptimization", "Function", "cluster('https://other.centralus.kusto.windows.net/').database('compute').fetchMetrics", "Table"));
+                ("SampleAnalytics", "BuildNodeCpu5Min", "Function", "cluster('https://sample-fleet.centralus.kusto.windows.net/').database('fleet').MetricsPerNode", "RemoteEntity"));
 
             var edges = KustoSdkEntityDependencyReader.Parse(table.CreateDataReader(), Host);
 
-            Assert.Equal(2, edges.Count);
-            Assert.Contains(edges, e => e.SourceName == "BuildEcu5MinProfile" && e.DependencyName == "_NodeCpu5Min" && e.DependencyDatabase == "SampleAnalytics");
-            Assert.Contains(edges, e => e.SourceName == "LatestEcu5MinProfile" && e.DependencyName == "_Ecu5MinProfile");
-            Assert.DoesNotContain(edges, e => e.SourceName == "AzureOptimization");
+            Assert.Equal(3, edges.Count);
+            Assert.All(edges, e => Assert.Equal(Host, e.SourceCluster));
+            Assert.Contains(edges, e => e.SourceName == "BuildEcu5MinProfile" && e.DependencyName == "_NodeCpu5Min" && e.DependencyCluster == Host && e.DependencyDatabase == "SampleAnalytics");
+            var remote = Assert.Single(edges, e => e.SourceName == "BuildNodeCpu5Min");
+            Assert.Equal("sample-fleet.centralus.kusto.windows.net", remote.DependencyCluster);
+            Assert.Equal("fleet", remote.DependencyDatabase);
+            Assert.Equal("MetricsPerNode", remote.DependencyName);
         }
 
         [Fact]

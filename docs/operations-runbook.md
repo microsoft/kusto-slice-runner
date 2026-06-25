@@ -118,11 +118,13 @@ KO Lite hosts a localhost-only JSON API so a same-machine agent or tool can read
 
 Open a job's **Dependencies** tab, or multi-select jobs on the dashboard and choose **Dependencies**, to see the job's full dependency chain (transitive upstream and downstream `dependsOn` edges) as a graph colored by current job status. This view is a pure, read-only projection of local state and contacts no Kusto.
 
-The graph's **Resolve Kusto consumers** button additionally fetches the downstream Kusto **functions and materialized views** that consume each charted job's output table. This is the only graph action that contacts Kusto:
+The graph's **Resolve Kusto lineage** button additionally fetches, from Kusto, both directions of each charted job's data lineage. This is the only graph action that contacts Kusto:
 
 - It runs a single read-only `.show databases entities with (resolveDependencies = true, resolveFunctionsSchema = true)` per distinct cluster in the chain, using the same Kusto auth (`KoLite:Kusto:AuthMode`) as live execution. It performs no writes and persists nothing — each click re-queries live.
-- Consumers that are themselves KO Lite jobs map onto the existing job node (the job→job link is already shown); only non-job functions/views are added. Pass-through tables (e.g. update-policy targets) are bridged through but not drawn.
-- Scope is the charted jobs' own cluster(s); one call returns consumers across every accessible database on that cluster. A consumer hosted on a *different* cluster than the job is not discovered. Failures (auth, permission, unreachable cluster, timeout) surface as an inline message beside the button and leave the job graph intact.
+- **Downstream consumers.** The non-job **functions and materialized views** that read each job's output table are added. Consumers that are themselves KO Lite jobs map onto the existing job node (that link is already shown); pass-through tables (e.g. update-policy targets) are bridged through but not drawn.
+- **Upstream sources.** The tables/functions each job's function **directly reads** are added as source nodes — **including cross-cluster sources**, which are named directly in the function's dependencies (and labelled `@cluster`), so no second cluster is queried.
+- **Implicit (undeclared) dependencies.** When a job's function reads **another KO job's output table that is not in its `dependsOn`**, a **dashed amber** edge is drawn (and noted in the legend). This is informational — it does **not** change scheduler readiness, which still uses the declared `dependsOn`. Consider adding the edge to `dependsOn` if the ordering matters.
+- Scope is the charted jobs' own cluster(s); one call returns lineage across every accessible database on that cluster. A downstream consumer hosted on a *different* cluster than the job is not discovered (cross-cluster *sources*, named directly, are). Failures (auth, permission, unreachable cluster, timeout) surface as an inline message beside the button and leave the job graph intact.
 
 ## Bulk actions on the dashboard
 

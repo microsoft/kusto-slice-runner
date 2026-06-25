@@ -1012,4 +1012,19 @@ h3 { font-size: 16px; margin-bottom: 10px; }
 .dependency-graph-swatch.status-kustomaterializedview { fill: #e8f6f8; background: #e8f6f8; stroke: #1b7c83; border-color: #1b7c83; }
 /* Kusto consumer nodes are read-only references (no job page), so they use a quieter label. */
 .dependency-graph-node.node-kind-kustofunction .dependency-graph-node-label,
-.dependency-graph-node.node-kind-kustomaterializedview .dependency-graph-node-label { font-weight: 500; }
+.dependency-graph-node.node-kind-kustomaterializedview .dependency-graph-node-label,
+.dependency-graph-node.node-kind-kustotable .dependency-graph-node-label { font-weight: 500; }
+
+/* Upstream source tables (a job's raw inputs). */
+.dependency-graph-node.status-kustotable .dependency-graph-node-box,
+.dependency-graph-swatch.status-kustotable { fill: #eef1f4; background: #eef1f4; stroke: #57606a; border-color: #57606a; }
+
+/* Implicit (Kusto-discovered, undeclared) job dependencies: dashed amber edges. */
+.dependency-graph-edge.is-implicit { stroke: var(--warning); stroke-dasharray: 6 4; }
+.dependency-graph-arrow.is-implicit { fill: var(--warning); }
+.dependency-graph-legend-line {
+  width: 18px;
+  height: 0;
+  border-top: 2px solid #afb8c1;
+}
+.dependency-graph-legend-line.is-implicit { border-top-style: dashed; border-top-color: var(--warning); }

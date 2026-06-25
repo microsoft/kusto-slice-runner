@@ -76,9 +76,11 @@ namespace KoLite.Local.Kusto.Execution
                 }
 
                 edges.Add(new KustoEntityEdge(
+                    queriedClusterHost,
                     sourceDatabase,
                     sourceName,
                     sourceType,
+                    dependency.Value.Cluster,
                     dependency.Value.Database,
                     dependency.Value.Name,
                     depType));
@@ -88,20 +90,19 @@ namespace KoLite.Local.Kusto.Execution
         }
 
         // Normalizes a dependency reference (bare name, database('X').name, or
-        // cluster('https://host/').database('X').name) to (database, name) within the queried
-        // cluster. Returns null for an unparseable reference or one hosted on a different cluster.
-        internal static (string Database, string Name)? ParseDependency(string rawReference, string sourceDatabase, string queriedClusterHost)
+        // cluster('https://host/').database('X').name) to (cluster, database, name). The cluster is
+        // the queried cluster for bare and database()-qualified references, or the referenced host for
+        // a cluster()-qualified (possibly cross-cluster) reference. Cross-cluster references are kept
+        // (a job's source can live on another cluster); null is returned only when no name resolves.
+        internal static (string Cluster, string Database, string Name)? ParseDependency(string rawReference, string sourceDatabase, string queriedClusterHost)
         {
             var reference = rawReference.Trim();
 
+            var cluster = queriedClusterHost;
             var clusterMatch = ClusterRegex().Match(reference);
-            if (clusterMatch.Success)
+            if (clusterMatch.Success && TryGetHost(clusterMatch.Groups[1].Value) is { } host)
             {
-                var host = TryGetHost(clusterMatch.Groups[1].Value);
-                if (host is null || !string.Equals(host, queriedClusterHost, StringComparison.OrdinalIgnoreCase))
-                {
-                    return null; // different cluster - not a consumer of this cluster's jobs
-                }
+                cluster = host;
             }
 
             var dbMatch = DatabaseRegex().Match(reference);
@@ -114,7 +115,7 @@ namespace KoLite.Local.Kusto.Execution
                 return null;
             }
 
-            return (database, name);
+            return (cluster, database, name);
         }
 
         private static string ExtractName(string remainder)

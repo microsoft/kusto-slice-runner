@@ -128,11 +128,53 @@ namespace KoLite.Local.Core.Tests
             Assert.Single(result.Nodes);
         }
 
+        [Fact]
+        public void Upstream_read_of_another_jobs_output_is_a_job_link()
+        {
+            var result = KustoLineageEngine.ComputeUpstream(
+                new[] { new KustoEntityEdge("c1", "db", "BuildB", "Function", "c1", "db", "_A", "Table") },
+                new[] { Job("jobB", "db", "_B", "BuildB") },
+                new[] { Job("jobA", "db", "_A", "BuildA"), Job("jobB", "db", "_B", "BuildB") });
+
+            Assert.Empty(result.SourceNodes);
+            var link = Assert.Single(result.JobLinks);
+            Assert.Equal("jobA", link.UpstreamJobId);
+            Assert.Equal("jobB", link.DownstreamJobId);
+        }
+
+        [Fact]
+        public void Upstream_non_job_read_is_a_source_node()
+        {
+            var result = KustoLineageEngine.ComputeUpstream(
+                new[] { new KustoEntityEdge("c1", "db", "BuildB", "Function", "c1", "db", "RawTable", "Table") },
+                new[] { Job("jobB", "db", "_B", "BuildB") });
+
+            Assert.Empty(result.JobLinks);
+            var node = Assert.Single(result.SourceNodes);
+            Assert.Equal("RawTable", node.Name);
+            Assert.Equal("Table", node.EntityType);
+            Assert.False(node.IsRemote);
+            Assert.Contains(new KustoConsumerEdge(node.Key, "jobB"), result.SourceEdges);
+        }
+
+        [Fact]
+        public void Upstream_cross_cluster_source_is_flagged_remote()
+        {
+            var result = KustoLineageEngine.ComputeUpstream(
+                new[] { new KustoEntityEdge("c1", "db", "BuildB", "Function", "remote.host", "fleet", "MetricsPerNode", "RemoteEntity") },
+                new[] { Job("jobB", "db", "_B", "BuildB") });
+
+            var node = Assert.Single(result.SourceNodes);
+            Assert.Equal("MetricsPerNode", node.Name);
+            Assert.Equal("remote.host", node.Cluster);
+            Assert.True(node.IsRemote);
+        }
+
         private static KustoEntityEdge Edge(string sourceDb, string sourceName, string sourceType, string depDb, string depName, string depType) =>
-            new(sourceDb, sourceName, sourceType, depDb, depName, depType);
+            new("c1", sourceDb, sourceName, sourceType, "c1", depDb, depName, depType);
 
         private static KustoJobOutput Job(string jobId, string database, string outputTable, string functionName) =>
-            new(jobId, database, outputTable, functionName);
+            new(jobId, "c1", database, outputTable, functionName);
 
         private static string KeyOf(KustoLineageResult result, string name) =>
             result.Nodes.Single(n => n.Name == name).Key;

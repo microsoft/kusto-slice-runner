@@ -43,7 +43,7 @@ namespace KoLite.LocalApp.Ui
                             dependencyBlocked = node.Counts.DependencyBlocked
                         }
                 }).ToList(),
-                edges = model.Edges.Select(edge => new { from = edge.FromId, to = edge.ToId }).ToList(),
+                edges = model.Edges.Select(edge => new { from = edge.FromId, to = edge.ToId, @implicit = edge.Implicit }).ToList(),
                 legend = model.Legend.Select(item => new
                 {
                     status = item.Status,

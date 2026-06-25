@@ -1,4 +1,5 @@
 using KoLite.Local.Core.Graph;
+using KoLite.Local.Core.Schedules;
 using KoLite.Local.Kusto.Execution;
 using KoLite.Local.Sqlite.Catalog;
 
@@ -36,7 +37,8 @@ namespace KoLite.LocalApp.Ui
                 return baseGraph;
             }
 
-            // The chain's resolved jobs are the ones whose output tables we look for consumers of.
+            // The chain's resolved jobs are the ones whose lineage we resolve. All of them become
+            // engine inputs (cluster-qualified) so cross-cluster reads can be matched to a KO job.
             var chainRecords = baseGraph.Nodes
                 .Where(node => node.Kind == "Job" && node.Resolved)
                 .Select(node => catalog.Get(node.Id))
@@ -48,8 +50,48 @@ namespace KoLite.LocalApp.Ui
                 return baseGraph;
             }
 
-            var kustoNodes = new List<KustoConsumerNode>();
-            var kustoEdges = new List<KustoConsumerEdge>();
+            var jobOutputs = chainRecords
+                .Select(record => new KustoJobOutput(
+                    record.JobId,
+                    ClusterHost(record.Definition.Target.ClusterUri),
+                    record.Definition.Target.Database,
+                    record.Definition.OutputTable,
+                    record.Definition.FunctionName))
+                .ToList();
+
+            // Match reads/consumers against every catalog job (not just the chain) so an undeclared
+            // upstream that is not in the focal chain is still recognized as a KO job.
+            var allJobOutputs = new List<KustoJobOutput>();
+            foreach (var record in catalog.List())
+            {
+                JobDefinition definition;
+                try
+                {
+                    definition = record.Definition;
+                }
+                catch (InvalidOperationException)
+                {
+                    continue;
+                }
+
+                allJobOutputs.Add(new KustoJobOutput(
+                    record.JobId,
+                    ClusterHost(definition.Target.ClusterUri),
+                    definition.Target.Database,
+                    definition.OutputTable,
+                    definition.FunctionName));
+            }
+
+            var declaredDeps = chainRecords.ToDictionary(
+                record => record.JobId,
+                record => new HashSet<string>(
+                    record.Definition.DependsOn.Where(d => !string.IsNullOrWhiteSpace(d.Id)).Select(d => d.Id!),
+                    StringComparer.Ordinal),
+                StringComparer.Ordinal);
+
+            var nodes = new Dictionary<string, KustoConsumerNode>(StringComparer.Ordinal);
+            var edges = new HashSet<KustoConsumerEdge>();
+            var implicitEdges = new HashSet<KustoConsumerEdge>();
 
             foreach (var clusterGroup in chainRecords.GroupBy(record => ClusterKey(record.Definition.Target.ClusterUri), StringComparer.OrdinalIgnoreCase))
             {
@@ -59,36 +101,34 @@ namespace KoLite.LocalApp.Ui
                 }
 
                 var connectionDatabase = clusterGroup.First().Definition.Target.Database;
-                var edges = await reader.ReadAsync(clusterUri, connectionDatabase, cancellationToken).ConfigureAwait(false);
+                var clusterEdges = await reader.ReadAsync(clusterUri, connectionDatabase, cancellationToken).ConfigureAwait(false);
 
-                var jobOutputs = clusterGroup
-                    .Select(record => new KustoJobOutput(record.JobId, record.Definition.Target.Database, record.Definition.OutputTable, record.Definition.FunctionName))
-                    .ToList();
-                var jobIdsOnCluster = new HashSet<string>(clusterGroup.Select(record => record.JobId), StringComparer.Ordinal);
+                // Downstream consumers of job outputs.
+                var consumers = KustoLineageEngine.ComputeConsumers(clusterEdges, jobOutputs, allJobOutputs);
+                foreach (var node in consumers.Nodes) nodes.TryAdd(node.Key, node);
+                foreach (var edge in consumers.Edges) edges.Add(edge);
 
-                var lineage = KustoLineageEngine.ComputeConsumers(edges, jobOutputs);
-                var host = clusterUri.Host;
-
-                foreach (var node in lineage.Nodes)
+                // Upstream: source nodes a job's function reads + discovered job->job links.
+                var upstream = KustoLineageEngine.ComputeUpstream(clusterEdges, jobOutputs, allJobOutputs);
+                foreach (var node in upstream.SourceNodes) nodes.TryAdd(node.Key, node);
+                foreach (var edge in upstream.SourceEdges) edges.Add(edge);
+                foreach (var link in upstream.JobLinks)
                 {
-                    kustoNodes.Add(node with { Key = Qualify(host, node.Key) });
-                }
-
-                foreach (var edge in lineage.Edges)
-                {
-                    // FromId is a KO Lite job id (global) for a direct consumer, otherwise a consumer
-                    // key that must be cluster-qualified to match the qualified node keys above.
-                    var from = jobIdsOnCluster.Contains(edge.FromId) ? edge.FromId : Qualify(host, edge.FromId);
-                    kustoEdges.Add(new KustoConsumerEdge(from, Qualify(host, edge.ToId)));
+                    var declared = declaredDeps.TryGetValue(link.DownstreamJobId, out var deps) && deps.Contains(link.UpstreamJobId);
+                    if (!declared)
+                    {
+                        implicitEdges.Add(new KustoConsumerEdge(link.UpstreamJobId, link.DownstreamJobId));
+                    }
                 }
             }
 
-            return query.Build(focal, kustoNodes, kustoEdges);
+            return query.Build(focal, nodes.Values.ToList(), edges.ToList(), implicitEdges.ToList());
         }
 
         private static string ClusterKey(string clusterUri) =>
             Uri.TryCreate(clusterUri, UriKind.Absolute, out var uri) ? uri.GetLeftPart(UriPartial.Authority) : clusterUri;
 
-        private static string Qualify(string host, string key) => host + "\u0001" + key;
+        private static string ClusterHost(string clusterUri) =>
+            Uri.TryCreate(clusterUri, UriKind.Absolute, out var uri) ? uri.Host : clusterUri;
     }
 }

@@ -38,7 +38,7 @@ namespace KoLite.LocalApp.Ui
         double Height,
         DependencyGraphCounts? Counts);
 
-    public sealed record DependencyGraphEdgeViewModel(string FromId, string ToId);
+    public sealed record DependencyGraphEdgeViewModel(string FromId, string ToId, bool Implicit = false);
 
     public sealed record DependencyGraphLegendItem(string Status, string Label, string StatusCss);
 
@@ -83,7 +83,7 @@ namespace KoLite.LocalApp.Ui
         private static readonly IReadOnlyList<string> LegendStatusOrder = new[]
         {
             "Healthy", "Running", "DependencyBlocked", "Failed", "Paused", "Completed", "SoftDeleted", "Unknown",
-            "KustoFunction", "KustoMaterializedView"
+            "KustoFunction", "KustoMaterializedView", "KustoTable"
         };
 
         private readonly DashboardPageQuery dashboard;
@@ -91,19 +91,29 @@ namespace KoLite.LocalApp.Ui
         public DependencyGraphQuery(DashboardPageQuery dashboard) => this.dashboard = dashboard ?? throw new ArgumentNullException(nameof(dashboard));
 
         public DependencyGraphViewModel Build(IEnumerable<string> focalJobIds) =>
-            Build(focalJobIds, Array.Empty<KustoConsumerNode>(), Array.Empty<KustoConsumerEdge>());
+            Build(focalJobIds, Array.Empty<KustoConsumerNode>(), Array.Empty<KustoConsumerEdge>(), Array.Empty<KustoConsumerEdge>());
 
-        // Builds the graph, optionally enriched with downstream Kusto consumer nodes/edges (computed
-        // live elsewhere). Kusto edges connect a producing job id (or another consumer key) to a
-        // consumer key; they extend the same connected-component layout as the job dependsOn edges.
         public DependencyGraphViewModel Build(
             IEnumerable<string> focalJobIds,
             IReadOnlyList<KustoConsumerNode> kustoNodes,
-            IReadOnlyList<KustoConsumerEdge> kustoEdges)
+            IReadOnlyList<KustoConsumerEdge> kustoEdges) =>
+            Build(focalJobIds, kustoNodes, kustoEdges, Array.Empty<KustoConsumerEdge>());
+
+        // Builds the graph, optionally enriched with downstream Kusto consumer nodes/edges, upstream
+        // source nodes/edges, and implicit job->job edges (a job's function reads another KO job's
+        // output but doesn't declare it). Kusto/source edges connect a job id or a node key to a node
+        // key or job id; implicit job edges connect two job ids and are flagged so the UI can draw them
+        // distinctly from declared dependsOn edges. All extend the same connected-component layout.
+        public DependencyGraphViewModel Build(
+            IEnumerable<string> focalJobIds,
+            IReadOnlyList<KustoConsumerNode> kustoNodes,
+            IReadOnlyList<KustoConsumerEdge> kustoEdges,
+            IReadOnlyList<KustoConsumerEdge> implicitJobEdges)
         {
             if (focalJobIds is null) throw new ArgumentNullException(nameof(focalJobIds));
             if (kustoNodes is null) throw new ArgumentNullException(nameof(kustoNodes));
             if (kustoEdges is null) throw new ArgumentNullException(nameof(kustoEdges));
+            if (implicitJobEdges is null) throw new ArgumentNullException(nameof(implicitJobEdges));
 
             var requestedFocal = focalJobIds.Where(id => !string.IsNullOrWhiteSpace(id)).ToList();
             if (requestedFocal.Count == 0)
@@ -149,13 +159,27 @@ namespace KoLite.LocalApp.Ui
                 }
             }
 
-            // Only keep Kusto edges whose endpoints we can render (a live job or a supplied consumer),
-            // so a stale producer reference never injects an unresolved placeholder.
+            bool IsRenderable(string id) => byId.ContainsKey(id) || byKusto.ContainsKey(id);
+
+            // Consumer (job->node), source (node->job), and node->node edges. Both endpoints must be
+            // renderable so a stale reference never injects an unresolved placeholder.
             foreach (var edge in kustoEdges)
             {
-                if ((byId.ContainsKey(edge.FromId) || byKusto.ContainsKey(edge.FromId)) && byKusto.ContainsKey(edge.ToId))
+                if (IsRenderable(edge.FromId) && IsRenderable(edge.ToId))
                 {
                     edges.Add(new DependencyEdge(edge.FromId, edge.ToId));
+                }
+            }
+
+            // Implicit (undeclared) job->job edges connect two live job nodes; flag them so they can be
+            // drawn distinctly from declared dependsOn edges.
+            var implicitEdgeKeys = new HashSet<(string, string)>();
+            foreach (var edge in implicitJobEdges)
+            {
+                if (byId.ContainsKey(edge.FromId) && byId.ContainsKey(edge.ToId))
+                {
+                    edges.Add(new DependencyEdge(edge.FromId, edge.ToId));
+                    implicitEdgeKeys.Add((edge.FromId, edge.ToId));
                 }
             }
 
@@ -181,7 +205,10 @@ namespace KoLite.LocalApp.Ui
                 .ToList();
 
             var edgeViewModels = layout.Edges
-                .Select(edge => new DependencyGraphEdgeViewModel(edge.UpstreamId, edge.DownstreamId))
+                .Select(edge => new DependencyGraphEdgeViewModel(
+                    edge.UpstreamId,
+                    edge.DownstreamId,
+                    implicitEdgeKeys.Contains((edge.UpstreamId, edge.DownstreamId))))
                 .ToList();
 
             var resolvedFocal = focal.Count(id => byId.ContainsKey(id));
@@ -233,15 +260,21 @@ namespace KoLite.LocalApp.Ui
                     BuildCounts(job.Summary));
             }
 
-            if (byKusto.TryGetValue(placement.Id, out var consumer))
+            if (byKusto.TryGetValue(placement.Id, out var entity))
             {
-                var isView = string.Equals(consumer.EntityType, "MaterializedView", StringComparison.OrdinalIgnoreCase);
-                var kind = isView ? "KustoMaterializedView" : "KustoFunction";
+                var kind = ResolveKustoKind(entity.EntityType);
+                var typeLabel = kind switch
+                {
+                    "KustoMaterializedView" => "Materialized view",
+                    "KustoTable" => "Table",
+                    _ => "Function"
+                };
+                var statusText = entity.IsRemote ? $"{typeLabel} @ {ShortCluster(entity.Cluster)}" : typeLabel;
                 return new DependencyGraphNodeViewModel(
                     placement.Id,
-                    consumer.Name,
+                    entity.Name,
                     kind,
-                    isView ? "Materialized view" : "Function",
+                    statusText,
                     "badge-neutral",
                     kind,
                     Resolved: true,
@@ -273,6 +306,24 @@ namespace KoLite.LocalApp.Ui
                 NodeWidth,
                 NodeHeight,
                 Counts: null);
+        }
+
+        private static string ResolveKustoKind(string entityType) =>
+            string.Equals(entityType, "MaterializedView", StringComparison.OrdinalIgnoreCase) ? "KustoMaterializedView"
+            : string.Equals(entityType, "Table", StringComparison.OrdinalIgnoreCase) ? "KustoTable"
+            : "KustoFunction";
+
+        // The first label of the cluster host (e.g. "sample-fleet" from
+        // "sample-fleet.centralus.kusto.windows.net") - enough to disambiguate a remote source.
+        private static string ShortCluster(string clusterHost)
+        {
+            if (string.IsNullOrWhiteSpace(clusterHost))
+            {
+                return "remote";
+            }
+
+            var dot = clusterHost.IndexOf('.');
+            return dot > 0 ? clusterHost[..dot] : clusterHost;
         }
 
         private static DependencyGraphCounts? BuildCounts(JobStatusSummary? summary)

@@ -26,6 +26,7 @@ namespace KoLite.LocalApp.Tests
         private readonly WebApplicationFactory<Program> factory;
         private readonly KoLiteSqliteConnectionFactory sqlite;
         private readonly TestKustoEntityDependencyReader kustoReader = new();
+        private const string Cluster = "kolite-example.invalid";
 
         public DependencyGraphWebTests()
         {
@@ -186,7 +187,7 @@ namespace KoLite.LocalApp.Tests
             var catalog = new SqliteJobCatalogRepository(sqlite);
             catalog.Create(Schedule("kusto.job", functionName: "BuildT", outputTable: "_T"));
             // A non-job function LatestT reads the job's output table _T.
-            kustoReader.Edges = new[] { new KustoEntityEdge("DemoDb", "LatestT", "Function", "DemoDb", "_T", "Table") };
+            kustoReader.Edges = new[] { new KustoEntityEdge(Cluster, "DemoDb", "LatestT", "Function", Cluster, "DemoDb", "_T", "Table") };
             using var client = factory.CreateClient();
 
             using var response = await client.PostAsJsonAsync(
@@ -198,6 +199,86 @@ namespace KoLite.LocalApp.Tests
             var nodes = payload.GetProperty("nodes").EnumerateArray().ToList();
             Assert.Contains(nodes, n => n.GetProperty("kind").GetString() == "KustoFunction" && n.GetProperty("label").GetString() == "LatestT");
             Assert.Contains(nodes, n => n.GetProperty("kind").GetString() == "Job" && n.GetProperty("label").GetString() == "kusto.job");
+        }
+
+        [Fact]
+        public async Task Kusto_endpoint_adds_upstream_source_nodes()
+        {
+            var catalog = new SqliteJobCatalogRepository(sqlite);
+            catalog.Create(Schedule("src.job", functionName: "BuildSrc", outputTable: "_Out"));
+            // The job's function reads a non-job raw table -> a source node.
+            kustoReader.Edges = new[] { new KustoEntityEdge(Cluster, "DemoDb", "BuildSrc", "Function", Cluster, "DemoDb", "RawSource", "Table") };
+            using var client = factory.CreateClient();
+
+            using var response = await client.PostAsJsonAsync(
+                "/api/dependency-graph/kusto-consumers",
+                new { jobIds = new[] { JobId("src.job") } });
+
+            response.EnsureSuccessStatusCode();
+            var payload = await response.Content.ReadFromJsonAsync<JsonElement>();
+            var nodes = payload.GetProperty("nodes").EnumerateArray().ToList();
+            Assert.Contains(nodes, n => n.GetProperty("kind").GetString() == "KustoTable" && n.GetProperty("label").GetString() == "RawSource");
+        }
+
+        [Fact]
+        public async Task Kusto_endpoint_adds_a_cross_cluster_source_node()
+        {
+            var catalog = new SqliteJobCatalogRepository(sqlite);
+            catalog.Create(Schedule("remote.job", functionName: "BuildRemote", outputTable: "_Out"));
+            // The job reads a table on another cluster (named directly in its dependencies).
+            kustoReader.Edges = new[] { new KustoEntityEdge(Cluster, "DemoDb", "BuildRemote", "Function", "other.kusto.windows.net", "fleet", "MetricsPerNode", "RemoteEntity") };
+            using var client = factory.CreateClient();
+
+            using var response = await client.PostAsJsonAsync(
+                "/api/dependency-graph/kusto-consumers",
+                new { jobIds = new[] { JobId("remote.job") } });
+
+            response.EnsureSuccessStatusCode();
+            var payload = await response.Content.ReadFromJsonAsync<JsonElement>();
+            var nodes = payload.GetProperty("nodes").EnumerateArray().ToList();
+            Assert.Contains(nodes, n => n.GetProperty("label").GetString() == "MetricsPerNode" && n.GetProperty("statusText").GetString()!.Contains("@ other"));
+        }
+
+        [Fact]
+        public async Task Kusto_endpoint_flags_an_implicit_job_dependency()
+        {
+            var catalog = new SqliteJobCatalogRepository(sqlite);
+            catalog.Create(Schedule("impl.a", functionName: "BuildA", outputTable: "_A"));
+            // B does NOT declare A in dependsOn, but its function reads A's output table _A.
+            catalog.Create(Schedule("impl.b", functionName: "BuildB", outputTable: "_B"));
+            kustoReader.Edges = new[] { new KustoEntityEdge(Cluster, "DemoDb", "BuildB", "Function", Cluster, "DemoDb", "_A", "Table") };
+            using var client = factory.CreateClient();
+
+            using var response = await client.PostAsJsonAsync(
+                "/api/dependency-graph/kusto-consumers",
+                new { jobIds = new[] { JobId("impl.b") } });
+
+            response.EnsureSuccessStatusCode();
+            var payload = await response.Content.ReadFromJsonAsync<JsonElement>();
+            var edges = payload.GetProperty("edges").EnumerateArray().ToList();
+            Assert.Contains(edges, e => e.GetProperty("from").GetString() == JobId("impl.a") && e.GetProperty("to").GetString() == JobId("impl.b") && e.GetProperty("implicit").GetBoolean());
+            var nodes = payload.GetProperty("nodes").EnumerateArray().ToList();
+            Assert.Contains(nodes, n => n.GetProperty("kind").GetString() == "Job" && n.GetProperty("label").GetString() == "impl.a");
+        }
+
+        [Fact]
+        public async Task Kusto_endpoint_does_not_flag_a_declared_dependency_as_implicit()
+        {
+            var catalog = new SqliteJobCatalogRepository(sqlite);
+            catalog.Create(Schedule("decl.a", functionName: "BuildA", outputTable: "_A"));
+            catalog.Create(Schedule("decl.b", dependsOn: "decl.a", functionName: "BuildB", outputTable: "_B"));
+            kustoReader.Edges = new[] { new KustoEntityEdge(Cluster, "DemoDb", "BuildB", "Function", Cluster, "DemoDb", "_A", "Table") };
+            using var client = factory.CreateClient();
+
+            using var response = await client.PostAsJsonAsync(
+                "/api/dependency-graph/kusto-consumers",
+                new { jobIds = new[] { JobId("decl.b") } });
+
+            response.EnsureSuccessStatusCode();
+            var payload = await response.Content.ReadFromJsonAsync<JsonElement>();
+            var edges = payload.GetProperty("edges").EnumerateArray().ToList();
+            Assert.Contains(edges, e => e.GetProperty("from").GetString() == JobId("decl.a") && e.GetProperty("to").GetString() == JobId("decl.b"));
+            Assert.DoesNotContain(edges, e => e.GetProperty("from").GetString() == JobId("decl.a") && e.GetProperty("to").GetString() == JobId("decl.b") && e.GetProperty("implicit").GetBoolean());
         }
 
         [Fact]
