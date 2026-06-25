@@ -1285,13 +1285,14 @@
     return "M" + x1 + " " + y1 + " C " + x1 + " " + midY + " " + x2 + " " + midY + " " + x2 + " " + y2;
   }
 
-  function buildDependencyNode(node) {
+  function buildDependencyNode(node, focus) {
     var group = svgElement("g", {
       class: "dependency-graph-node status-" + node.statusKey +
         " node-kind-" + (node.kind ? node.kind.toLowerCase() : "job") +
         (node.focal ? " is-focal" : "") +
         (node.resolved ? "" : " is-unresolved"),
-      transform: "translate(" + node.x + " " + node.y + ")"
+      transform: "translate(" + node.x + " " + node.y + ")",
+      "data-node-id": node.id
     });
 
     group.appendChild(svgElement("rect", {
@@ -1348,10 +1349,10 @@
       });
     }
 
-    group.addEventListener("mouseenter", function () { showDepGraphTooltip(node, group); });
-    group.addEventListener("mouseleave", hideDepGraphTooltip);
-    group.addEventListener("focus", function () { showDepGraphTooltip(node, group); });
-    group.addEventListener("blur", hideDepGraphTooltip);
+    group.addEventListener("mouseenter", function () { showDepGraphTooltip(node, group); if (focus) focus.activate(node.id); });
+    group.addEventListener("mouseleave", function () { hideDepGraphTooltip(); if (focus) focus.clear(); });
+    group.addEventListener("focus", function () { showDepGraphTooltip(node, group); if (focus) focus.activate(node.id); });
+    group.addEventListener("blur", function () { hideDepGraphTooltip(); if (focus) focus.clear(); });
 
     return group;
   }
@@ -1406,20 +1407,55 @@
     svg.appendChild(defs);
 
     var edgeLayer = svgElement("g", { class: "dependency-graph-edges" });
+    // Adjacency maps drive hover focus mode: which edge elements touch a node, and its neighbors.
+    var edgesByNode = {};
+    var neighborsByNode = {};
+    function track(map, key, value) {
+      if (!map[key]) map[key] = [];
+      map[key].push(value);
+    }
     data.edges.forEach(function (edge) {
       var from = nodesById[edge.from];
       var to = nodesById[edge.to];
       if (!from || !to) return;
-      edgeLayer.appendChild(svgElement("path", {
+      var path = svgElement("path", {
         class: "dependency-graph-edge" + (edge.implicit ? " is-implicit" : ""),
         d: dependencyEdgePath(from, to),
-        "marker-end": edge.implicit ? "url(#dep-graph-arrow-implicit)" : "url(#dep-graph-arrow)"
-      }));
+        "marker-end": edge.implicit ? "url(#dep-graph-arrow-implicit)" : "url(#dep-graph-arrow)",
+        "data-from": edge.from,
+        "data-to": edge.to
+      });
+      edgeLayer.appendChild(path);
+      track(edgesByNode, edge.from, path);
+      track(edgesByNode, edge.to, path);
+      track(neighborsByNode, edge.from, edge.to);
+      track(neighborsByNode, edge.to, edge.from);
     });
     svg.appendChild(edgeLayer);
 
+    var nodeElsById = {};
     var nodeLayer = svgElement("g", { class: "dependency-graph-nodes" });
-    data.nodes.forEach(function (node) { nodeLayer.appendChild(buildDependencyNode(node)); });
+    var focus = {
+      activate: function (id) {
+        svg.classList.add("is-focus-active");
+        var node = nodeElsById[id];
+        if (node) node.classList.add("is-highlight");
+        (edgesByNode[id] || []).forEach(function (edge) { edge.classList.add("is-highlight"); });
+        (neighborsByNode[id] || []).forEach(function (neighborId) {
+          var neighbor = nodeElsById[neighborId];
+          if (neighbor) neighbor.classList.add("is-highlight");
+        });
+      },
+      clear: function () {
+        svg.classList.remove("is-focus-active");
+        svg.querySelectorAll(".is-highlight").forEach(function (el) { el.classList.remove("is-highlight"); });
+      }
+    };
+    data.nodes.forEach(function (node) {
+      var el = buildDependencyNode(node, focus);
+      nodeElsById[node.id] = el;
+      nodeLayer.appendChild(el);
+    });
     svg.appendChild(nodeLayer);
 
     viewport.appendChild(svg);

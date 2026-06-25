@@ -945,6 +945,15 @@ h3 { font-size: 16px; margin-bottom: 10px; }
 .dependency-graph-svg { display: block; }
 .dependency-graph-edge { fill: none; stroke: #afb8c1; stroke-width: 1.5; }
 .dependency-graph-arrow { fill: #afb8c1; }
+
+/* Hover focus mode: emphasize the hovered node's edges + neighbors, dim the rest. */
+.dependency-graph-svg.is-focus-active .dependency-graph-node,
+.dependency-graph-svg.is-focus-active .dependency-graph-edge { opacity: 0.22; transition: opacity 80ms ease; }
+.dependency-graph-svg.is-focus-active .dependency-graph-node.is-highlight,
+.dependency-graph-svg.is-focus-active .dependency-graph-edge.is-highlight { opacity: 1; }
+.dependency-graph-svg.is-focus-active .dependency-graph-edge.is-highlight { stroke: #57606a; stroke-width: 2.5; }
+.dependency-graph-svg.is-focus-active .dependency-graph-edge.is-highlight.is-implicit { stroke: var(--warning); }
+.dependency-graph-svg.is-focus-active .dependency-graph-node.is-highlight .dependency-graph-node-box { stroke-width: 2.5; }
 .dependency-graph-node-box {
   fill: #fff;
   stroke: var(--border);
