@@ -1308,7 +1308,7 @@
       x: node.w / 2,
       y: hasStatusLine ? node.h / 2 - 3 : node.h / 2 + 4
     });
-    label.textContent = truncateLabel(node.label, 24);
+    label.textContent = truncateLabel(node.label, 30);
     group.appendChild(label);
 
     if (hasStatusLine) {

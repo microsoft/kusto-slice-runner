@@ -1019,6 +1019,10 @@ h3 { font-size: 16px; margin-bottom: 10px; }
 .dependency-graph-node.status-kustotable .dependency-graph-node-box,
 .dependency-graph-swatch.status-kustotable { fill: #eef1f4; background: #eef1f4; stroke: #57606a; border-color: #57606a; }
 
+/* External / whole-database (wildcard) references that Kusto could not resolve to a single entity. */
+.dependency-graph-node.status-kustoexternal .dependency-graph-node-box,
+.dependency-graph-swatch.status-kustoexternal { fill: #f6f8fa; background: #f6f8fa; stroke: #8c959f; border-color: #8c959f; stroke-dasharray: 4 3; }
+
 /* Implicit (Kusto-discovered, undeclared) job dependencies: dashed amber edges. */
 .dependency-graph-edge.is-implicit { stroke: var(--warning); stroke-dasharray: 6 4; }
 .dependency-graph-arrow.is-implicit { fill: var(--warning); }

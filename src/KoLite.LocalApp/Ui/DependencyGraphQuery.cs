@@ -83,7 +83,7 @@ namespace KoLite.LocalApp.Ui
         private static readonly IReadOnlyList<string> LegendStatusOrder = new[]
         {
             "Healthy", "Running", "DependencyBlocked", "Failed", "Paused", "Completed", "SoftDeleted", "Unknown",
-            "KustoFunction", "KustoMaterializedView", "KustoTable"
+            "KustoFunction", "KustoMaterializedView", "KustoTable", "KustoExternal"
         };
 
         private readonly DashboardPageQuery dashboard;
@@ -200,8 +200,16 @@ namespace KoLite.LocalApp.Ui
                 ? NodeHeight
                 : (layout.LayerCount * NodeHeight) + ((layout.LayerCount - 1) * VerticalGap);
 
+            // A reference is shown qualified unless it lives in a graph job's own cluster+database.
+            var graphJobTargets = layout.Nodes
+                .Where(placement => byId.ContainsKey(placement.Id))
+                .Select(placement => byId[placement.Id].Definition.Target)
+                .ToList();
+            var homePairs = new HashSet<string>(graphJobTargets.Select(target => HomeKey(HostOf(target.ClusterUri), target.Database)), StringComparer.Ordinal);
+            var homeClusters = new HashSet<string>(graphJobTargets.Select(target => HostOf(target.ClusterUri).ToLowerInvariant()), StringComparer.Ordinal);
+
             var nodes = layout.Nodes
-                .Select(placement => BuildNode(placement, byId, byKusto, focal, layerWidths[placement.Layer], contentWidth))
+                .Select(placement => BuildNode(placement, byId, byKusto, focal, layerWidths[placement.Layer], contentWidth, homePairs, homeClusters))
                 .ToList();
 
             var edgeViewModels = layout.Edges
@@ -229,7 +237,9 @@ namespace KoLite.LocalApp.Ui
             IReadOnlyDictionary<string, KustoConsumerNode> byKusto,
             IReadOnlySet<string> focal,
             int layerWidth,
-            double contentWidth)
+            double contentWidth,
+            IReadOnlySet<string> homePairs,
+            IReadOnlySet<string> homeClusters)
         {
             var layerSpan = layerWidth <= 0
                 ? NodeWidth
@@ -262,19 +272,12 @@ namespace KoLite.LocalApp.Ui
 
             if (byKusto.TryGetValue(placement.Id, out var entity))
             {
-                var kind = ResolveKustoKind(entity.EntityType);
-                var typeLabel = kind switch
-                {
-                    "KustoMaterializedView" => "Materialized view",
-                    "KustoTable" => "Table",
-                    _ => "Function"
-                };
-                var statusText = entity.IsRemote ? $"{typeLabel} @ {ShortCluster(entity.Cluster)}" : typeLabel;
+                var kind = ResolveKustoKind(entity.EntityType, entity.Name);
                 return new DependencyGraphNodeViewModel(
                     placement.Id,
-                    entity.Name,
+                    QualifyKustoReference(entity, homePairs, homeClusters),
                     kind,
-                    statusText,
+                    KustoTypeLabel(entity.EntityType, entity.Name),
                     "badge-neutral",
                     kind,
                     Resolved: true,
@@ -308,14 +311,56 @@ namespace KoLite.LocalApp.Ui
                 Counts: null);
         }
 
-        private static string ResolveKustoKind(string entityType) =>
-            string.Equals(entityType, "MaterializedView", StringComparison.OrdinalIgnoreCase) ? "KustoMaterializedView"
-            : string.Equals(entityType, "Table", StringComparison.OrdinalIgnoreCase) ? "KustoTable"
-            : "KustoFunction";
+        // Shows a Kusto entity the way it would be referenced from a graph job: bare when it lives in
+        // a graph job's own cluster+database, otherwise prefixed with database('db') (cross-database,
+        // same cluster) or cluster('short').database('db') (cross-cluster). A known function gets a
+        // trailing () in the qualified form to read like a call; a wildcard ('*') is shown verbatim.
+        private static string QualifyKustoReference(KustoConsumerNode entity, IReadOnlySet<string> homePairs, IReadOnlySet<string> homeClusters)
+        {
+            var name = entity.Name;
+            if (homePairs.Contains(HomeKey(entity.Cluster, entity.Database)))
+            {
+                return name;
+            }
+
+            var display = string.Equals(entity.EntityType, "Function", StringComparison.OrdinalIgnoreCase) && name != "*"
+                ? name + "()"
+                : name;
+
+            return homeClusters.Contains((entity.Cluster ?? string.Empty).ToLowerInvariant())
+                ? $"database('{entity.Database}').{display}"
+                : $"cluster('{ShortCluster(entity.Cluster)}').database('{entity.Database}').{display}";
+        }
+
+        // A wildcard ('*') or an unresolved cross-cluster reference (RemoteEntity) is not a function -
+        // it is an external/whole-database reference, so it gets a neutral "external" kind.
+        private static string ResolveKustoKind(string entityType, string entityName)
+        {
+            if (entityName == "*") return "KustoExternal";
+            if (string.Equals(entityType, "MaterializedView", StringComparison.OrdinalIgnoreCase)) return "KustoMaterializedView";
+            if (string.Equals(entityType, "Table", StringComparison.OrdinalIgnoreCase)) return "KustoTable";
+            if (string.Equals(entityType, "Function", StringComparison.OrdinalIgnoreCase)) return "KustoFunction";
+            return "KustoExternal";
+        }
+
+        private static string KustoTypeLabel(string entityType, string entityName)
+        {
+            if (entityName == "*") return "All entities";
+            if (string.Equals(entityType, "MaterializedView", StringComparison.OrdinalIgnoreCase)) return "Materialized view";
+            if (string.Equals(entityType, "Table", StringComparison.OrdinalIgnoreCase)) return "Table";
+            if (string.Equals(entityType, "Function", StringComparison.OrdinalIgnoreCase)) return "Function";
+            return "External";
+        }
+
+        private static string HomeKey(string cluster, string database) =>
+            (cluster ?? string.Empty).ToLowerInvariant() + "|" + (database ?? string.Empty).ToLowerInvariant();
+
+        private static string HostOf(string clusterUri) =>
+            Uri.TryCreate(clusterUri, UriKind.Absolute, out var uri) ? uri.Host : (clusterUri ?? string.Empty);
 
         // The first label of the cluster host (e.g. "sample-fleet" from
-        // "sample-fleet.centralus.kusto.windows.net") - enough to disambiguate a remote source.
-        private static string ShortCluster(string clusterHost)
+        // "sample-fleet.centralus.kusto.windows.net") - enough to disambiguate a remote reference.
+        private static string ShortCluster(string? clusterHost)
         {
             if (string.IsNullOrWhiteSpace(clusterHost))
             {

@@ -236,7 +236,45 @@ namespace KoLite.LocalApp.Tests
             response.EnsureSuccessStatusCode();
             var payload = await response.Content.ReadFromJsonAsync<JsonElement>();
             var nodes = payload.GetProperty("nodes").EnumerateArray().ToList();
-            Assert.Contains(nodes, n => n.GetProperty("label").GetString() == "MetricsPerNode" && n.GetProperty("statusText").GetString()!.Contains("@ other"));
+            Assert.Contains(nodes, n => n.GetProperty("label").GetString() == "cluster('other').database('fleet').MetricsPerNode" && n.GetProperty("kind").GetString() == "KustoExternal");
+        }
+
+        [Fact]
+        public async Task Kusto_endpoint_qualifies_a_cross_database_source()
+        {
+            var catalog = new SqliteJobCatalogRepository(sqlite);
+            catalog.Create(Schedule("xdb.job", functionName: "BuildXdb", outputTable: "_Out"));
+            // Same cluster, different database -> database('Other').RawX
+            kustoReader.Edges = new[] { new KustoEntityEdge(Cluster, "DemoDb", "BuildXdb", "Function", Cluster, "Other", "RawX", "Table") };
+            using var client = factory.CreateClient();
+
+            using var response = await client.PostAsJsonAsync(
+                "/api/dependency-graph/kusto-consumers",
+                new { jobIds = new[] { JobId("xdb.job") } });
+
+            response.EnsureSuccessStatusCode();
+            var payload = await response.Content.ReadFromJsonAsync<JsonElement>();
+            var nodes = payload.GetProperty("nodes").EnumerateArray().ToList();
+            Assert.Contains(nodes, n => n.GetProperty("label").GetString() == "database('Other').RawX" && n.GetProperty("kind").GetString() == "KustoTable");
+        }
+
+        [Fact]
+        public async Task Kusto_endpoint_qualifies_a_wildcard_reference_and_does_not_call_it_a_function()
+        {
+            var catalog = new SqliteJobCatalogRepository(sqlite);
+            catalog.Create(Schedule("wild.job", functionName: "BuildWild", outputTable: "_Out"));
+            // A `union database('fc').*`-style read is reported by Kusto as a RemoteEntity named "*".
+            kustoReader.Edges = new[] { new KustoEntityEdge(Cluster, "DemoDb", "BuildWild", "Function", Cluster, "fc", "*", "RemoteEntity") };
+            using var client = factory.CreateClient();
+
+            using var response = await client.PostAsJsonAsync(
+                "/api/dependency-graph/kusto-consumers",
+                new { jobIds = new[] { JobId("wild.job") } });
+
+            response.EnsureSuccessStatusCode();
+            var payload = await response.Content.ReadFromJsonAsync<JsonElement>();
+            var nodes = payload.GetProperty("nodes").EnumerateArray().ToList();
+            Assert.Contains(nodes, n => n.GetProperty("label").GetString() == "database('fc').*" && n.GetProperty("kind").GetString() == "KustoExternal" && n.GetProperty("statusText").GetString() == "All entities");
         }
 
         [Fact]
