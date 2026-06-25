@@ -85,7 +85,13 @@ namespace KoLite.LocalApp.Ui
         private const double StatusLineHeight = 14;
         private const double NodeVerticalPadding = 11;
         private const double MinNodeHeight = 48;
-        private const int WrapCharsPerLine = 27;
+
+        // Label wrap width, tuned to NodeWidth (230) and the Segoe UI 13px bold label font.
+        // Measured glyph widths show the longest real entity names fit one line within the box
+        // (e.g. a 32-char name is ~221px < 230px), so 32 keeps them on one line - shrinking the
+        // effective horizontal padding toward the ~11px vertical padding - while still hard-splitting
+        // any single chunk longer than a line. Going higher risks overflow for wide-glyph names.
+        private const int WrapCharsPerLine = 32;
         private const int MaxLabelLines = 3;
 
         private static readonly IReadOnlyList<string> LegendStatusOrder = new[]
