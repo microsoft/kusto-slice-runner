@@ -3,7 +3,7 @@ using KoLite.Local.Sqlite.Observability;
 
 namespace KoLite.LocalApp.Ui
 {
-    // Per-node slice counts shown in the hover tooltip. Null on the view model when the job has no
+    // Per-node slice counts shown in the details panel. Null on the view model when the job has no
     // recorded slices yet (or for an unresolved placeholder node).
     public sealed record DependencyGraphCounts(
         int Missing,
@@ -30,14 +30,7 @@ namespace KoLite.LocalApp.Ui
         bool Resolved,
         bool Focal,
         string? Href,
-        int Layer,
-        int Order,
-        double X,
-        double Y,
-        double Width,
-        double Height,
-        DependencyGraphCounts? Counts,
-        IReadOnlyList<string> Lines);
+        DependencyGraphCounts? Counts);
 
     public sealed record DependencyGraphEdgeViewModel(string FromId, string ToId, bool Implicit = false);
 
@@ -50,8 +43,6 @@ namespace KoLite.LocalApp.Ui
     public sealed record DependencyGraphViewModel(
         IReadOnlyList<DependencyGraphNodeViewModel> Nodes,
         IReadOnlyList<DependencyGraphEdgeViewModel> Edges,
-        double Width,
-        double Height,
         int FocalCount,
         int ResolvedFocalCount,
         IReadOnlyList<DependencyGraphLegendItem> Legend)
@@ -63,37 +54,15 @@ namespace KoLite.LocalApp.Ui
             Array.Empty<DependencyGraphEdgeViewModel>(),
             0,
             0,
-            0,
-            0,
             Array.Empty<DependencyGraphLegendItem>());
     }
 
     // Builds the dependency graph view model for a focal set of jobs. It reuses the dashboard's
     // status projection for every job so node colors match the rest of the UI, derives dependency
     // edges from each job's stored dependsOn (upstream GUIDs), and asks the pure Core layout engine
-    // for the connected component(s) and their topological placement before mapping to pixels.
+    // for the connected component(s). Pixel layout is left to the Cytoscape client renderer.
     public sealed class DependencyGraphQuery
     {
-        // SVG geometry. Kept here (not in Core) because pixels are a presentation concern. Node height
-        // is variable - it grows to fit a wrapped, multi-line label - so each layer is spaced by the
-        // tallest node it contains.
-        private const double NodeWidth = 230;
-        private const double HorizontalGap = 30;
-        private const double VerticalGap = 52;
-        private const double Padding = 28;
-        private const double LabelLineHeight = 16;
-        private const double StatusLineHeight = 14;
-        private const double NodeVerticalPadding = 11;
-        private const double MinNodeHeight = 48;
-
-        // Label wrap width, tuned to NodeWidth (230) and the Segoe UI 13px bold label font.
-        // Measured glyph widths show the longest real entity names fit one line within the box
-        // (e.g. a 32-char name is ~221px < 230px), so 32 keeps them on one line - shrinking the
-        // effective horizontal padding toward the ~11px vertical padding - while still hard-splitting
-        // any single chunk longer than a line. Going higher risks overflow for wide-glyph names.
-        private const int WrapCharsPerLine = 32;
-        private const int MaxLabelLines = 3;
-
         private static readonly IReadOnlyList<string> LegendStatusOrder = new[]
         {
             "Healthy", "Running", "DependencyBlocked", "Failed", "Paused", "Completed", "SoftDeleted", "Unknown",
@@ -212,49 +181,11 @@ namespace KoLite.LocalApp.Ui
             var homePairs = new HashSet<string>(graphJobTargets.Select(target => HomeKey(HostOf(target.ClusterUri), target.Database)), StringComparer.Ordinal);
             var homeClusters = new HashSet<string>(graphJobTargets.Select(target => HostOf(target.ClusterUri).ToLowerInvariant()), StringComparer.Ordinal);
 
-            // 1. Position-independent content per node (label, wrapped lines, height, status, counts).
-            var contents = layout.Nodes.ToDictionary(
-                placement => placement.Id,
-                placement => BuildNodeContent(placement, byId, byKusto, focal, homePairs, homeClusters),
-                StringComparer.Ordinal);
-
-            // 2. Layer geometry: width from node counts, height from the tallest node in each layer.
-            var layerWidths = layout.Nodes
-                .GroupBy(node => node.Layer)
-                .ToDictionary(group => group.Key, group => group.Count());
-            var layerHeights = layout.Nodes
-                .GroupBy(node => node.Layer)
-                .ToDictionary(group => group.Key, group => group.Max(node => contents[node.Id].Height));
-            var contentWidth = layout.MaxLayerWidth <= 0
-                ? NodeWidth
-                : (layout.MaxLayerWidth * NodeWidth) + ((layout.MaxLayerWidth - 1) * HorizontalGap);
-
-            var layerTop = new Dictionary<int, double>();
-            var cursorY = Padding;
-            for (var layer = 0; layer < layout.LayerCount; layer++)
-            {
-                layerTop[layer] = cursorY;
-                cursorY += layerHeights.GetValueOrDefault(layer, MinNodeHeight) + VerticalGap;
-            }
-
-            var contentBottom = layout.LayerCount == 0
-                ? Padding + MinNodeHeight
-                : layerTop[layout.LayerCount - 1] + layerHeights.GetValueOrDefault(layout.LayerCount - 1, MinNodeHeight);
-
-            // 3. Final view models: centre each node within its layer band, horizontally and vertically.
-            var nodes = layout.Nodes.Select(placement =>
-            {
-                var content = contents[placement.Id];
-                var layerWidth = layerWidths[placement.Layer];
-                var layerSpan = layerWidth <= 0
-                    ? NodeWidth
-                    : (layerWidth * NodeWidth) + ((layerWidth - 1) * HorizontalGap);
-                var startX = Padding + ((contentWidth - layerSpan) / 2);
-                var x = startX + (placement.Order * (NodeWidth + HorizontalGap));
-                var bandHeight = layerHeights.GetValueOrDefault(placement.Layer, MinNodeHeight);
-                var y = layerTop.GetValueOrDefault(placement.Layer, Padding) + ((bandHeight - content.Height) / 2);
-                return content.ToViewModel(x, y, NodeWidth, content.Height);
-            }).ToList();
+            // Position-independent content per node (label, status, kind, counts). Cytoscape lays the
+            // graph out client-side via dagre, so the server no longer computes pixel geometry.
+            var nodes = layout.Nodes
+                .Select(placement => BuildNodeContent(placement, byId, byKusto, focal, homePairs, homeClusters).ToViewModel())
+                .ToList();
 
             var edgeViewModels = layout.Edges
                 .Select(edge => new DependencyGraphEdgeViewModel(
@@ -268,8 +199,6 @@ namespace KoLite.LocalApp.Ui
             return new DependencyGraphViewModel(
                 nodes,
                 edgeViewModels,
-                contentWidth + (Padding * 2),
-                contentBottom + Padding,
                 focal.Count,
                 resolvedFocal,
                 BuildLegend(nodes));
@@ -285,13 +214,10 @@ namespace KoLite.LocalApp.Ui
             bool Resolved,
             bool Focal,
             string? Href,
-            DependencyGraphCounts? Counts,
-            IReadOnlyList<string> Lines,
-            double Height)
+            DependencyGraphCounts? Counts)
         {
-            public DependencyGraphNodeViewModel ToViewModel(double x, double y, double width, double height) =>
-                new(Placement.Id, Label, Status, StatusText, StatusCss, Kind, Resolved, Focal, Href,
-                    Placement.Layer, Placement.Order, x, y, width, height, Counts, Lines);
+            public DependencyGraphNodeViewModel ToViewModel() =>
+                new(Placement.Id, Label, Status, StatusText, StatusCss, Kind, Resolved, Focal, Href, Counts);
         }
 
         private static NodeContent BuildNodeContent(
@@ -349,92 +275,7 @@ namespace KoLite.LocalApp.Ui
                 counts = null;
             }
 
-            var lines = WrapLabel(label);
-            var hasStatusLine = !string.IsNullOrEmpty(statusText) && !StringComparer.Ordinal.Equals(statusText, label);
-            var height = Math.Max(
-                MinNodeHeight,
-                (NodeVerticalPadding * 2) + (lines.Count * LabelLineHeight) + (hasStatusLine ? StatusLineHeight : 0));
-
-            return new NodeContent(placement, label, status, statusText, statusCss, kind, resolved, isFocal, href, counts, lines, height);
-        }
-
-        // Wraps a label into at most MaxLabelLines lines by packing dot-delimited chunks (keeping each
-        // '.' with its chunk so qualified references such as cluster('x').database('y').Foo break at
-        // the segment boundaries), hard-splitting any chunk longer than a line and ellipsizing overflow.
-        private static IReadOnlyList<string> WrapLabel(string label)
-        {
-            if (string.IsNullOrEmpty(label))
-            {
-                return new[] { string.Empty };
-            }
-
-            var lines = new List<string>();
-            var current = new System.Text.StringBuilder();
-
-            void Flush()
-            {
-                if (current.Length > 0)
-                {
-                    lines.Add(current.ToString());
-                    current.Clear();
-                }
-            }
-
-            foreach (var chunk in ChunkByDot(label))
-            {
-                var remaining = chunk;
-                while (remaining.Length > WrapCharsPerLine)
-                {
-                    Flush();
-                    lines.Add(remaining[..WrapCharsPerLine]);
-                    remaining = remaining[WrapCharsPerLine..];
-                }
-
-                if (current.Length > 0 && current.Length + remaining.Length > WrapCharsPerLine)
-                {
-                    Flush();
-                }
-
-                current.Append(remaining);
-            }
-
-            Flush();
-
-            if (lines.Count == 0)
-            {
-                lines.Add(label);
-            }
-
-            if (lines.Count > MaxLabelLines)
-            {
-                var kept = lines.Take(MaxLabelLines).ToList();
-                var last = kept[^1];
-                kept[^1] = (last.Length > WrapCharsPerLine - 1 ? last[..(WrapCharsPerLine - 1)] : last) + "\u2026";
-                return kept;
-            }
-
-            return lines;
-        }
-
-        private static IEnumerable<string> ChunkByDot(string label)
-        {
-            var chunks = new List<string>();
-            var start = 0;
-            for (var i = 0; i < label.Length; i++)
-            {
-                if (label[i] == '.')
-                {
-                    chunks.Add(label[start..(i + 1)]);
-                    start = i + 1;
-                }
-            }
-
-            if (start < label.Length)
-            {
-                chunks.Add(label[start..]);
-            }
-
-            return chunks;
+            return new NodeContent(placement, label, status, statusText, statusCss, kind, resolved, isFocal, href, counts);
         }
 
         // Shows a Kusto entity the way it would be referenced from a graph job: bare when it lives in

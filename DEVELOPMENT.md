@@ -5,7 +5,7 @@ This guide covers repository layout and local validation commands for KO Lite co
 ## Prerequisites
 
 - .NET SDK `10.0.300` or a later feature band compatible with `global.json`.
-- Node.js and npm for restoring Chart.js assets.
+- Node.js and npm for restoring the bundled browser assets (Chart.js and Cytoscape.js).
 - Azure CLI sign-in for default Kusto auth, or managed identity configuration for service-style runs.
 - Kusto permissions to execute the configured function and append to the configured output table when live scheduling is enabled.
 
@@ -35,7 +35,7 @@ dotnet list .\KoLite.Local.sln package --vulnerable
 npm audit --omit=dev --audit-level=moderate
 ```
 
-`npm ci` restores Chart.js and runs the `postinstall` copy step for `src\KoLite.LocalApp\wwwroot\lib\chartjs`. The generated static assets are intentionally tracked so the .NET app can build and test without npm during normal development, but `npm ci` remains the source-of-truth refresh path.
+`npm ci` restores Chart.js and Cytoscape.js (plus cytoscape-dagre) and runs the `postinstall` copy step for `src\KoLite.LocalApp\wwwroot\lib\chartjs` and `src\KoLite.LocalApp\wwwroot\lib\cytoscape`. The generated static assets are intentionally tracked so the .NET app can build and test without npm during normal development, but `npm ci` remains the source-of-truth refresh path.
 
 ## Local development run
 

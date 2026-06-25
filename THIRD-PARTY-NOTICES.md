@@ -6,8 +6,10 @@ KO Lite uses the following third-party JavaScript packages for dashboard assets.
 | --- | --- | --- | --- |
 | Chart.js | 4.5.1 | MIT | `package-lock.json`, `src\KoLite.LocalApp\wwwroot\lib\chartjs\chart.umd.min.js` |
 | @kurkle/color | 0.3.4 | MIT | Transitive dependency of Chart.js in `package-lock.json` |
+| Cytoscape.js | 3.34.0 | MIT | `package-lock.json`, `src\KoLite.LocalApp\wwwroot\lib\cytoscape\cytoscape.min.js` |
+| cytoscape-dagre | 4.0.0 | MIT | `package-lock.json`, `src\KoLite.LocalApp\wwwroot\lib\cytoscape\cytoscape-dagre.js` (bundles dagre/graphlib, MIT) |
 
-The Chart.js browser bundle and source map are tracked under `src\KoLite.LocalApp\wwwroot\lib\chartjs` so the .NET app can run without requiring npm during every build. Refresh them with:
+The Chart.js and Cytoscape.js browser bundles (and the Chart.js source map) are tracked under `src\KoLite.LocalApp\wwwroot\lib` so the .NET app can run without requiring npm during every build. Refresh them with:
 
 ```powershell
 npm ci

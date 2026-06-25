@@ -20,7 +20,7 @@ dotnet list .\KoLite.Local.sln package --vulnerable
 npm audit --omit=dev --audit-level=moderate
 ```
 
-For targeted changes, run the narrow relevant test project first, then decide whether the full solution test is needed. `npm ci` refreshes Chart.js assets under `src\KoLite.LocalApp\wwwroot\lib\chartjs`.
+For targeted changes, run the narrow relevant test project first, then decide whether the full solution test is needed. `npm ci` refreshes the bundled browser assets under `src\KoLite.LocalApp\wwwroot\lib` (Chart.js in `lib\chartjs`; Cytoscape.js + cytoscape-dagre in `lib\cytoscape`).
 
 ## High-level architecture
 
@@ -30,7 +30,7 @@ For targeted changes, run the narrow relevant test project first, then decide wh
 - `src\KoLite.Local.Kusto` contains live Kusto request building, authentication, execution, and error classification.
 - `src\KoLite.LocalApp` contains the ASP.NET Core/Razor dashboard, hosted scheduler and worker services, health/shutdown endpoints, UI read models, and static assets.
 - `tests\KoLite.Local.*` mirrors the active solution with unit, integration, web, and local end-to-end tests.
-- `scripts` contains `Stop-KoLiteApp.ps1` (graceful drain shutdown of the local app), `Get-KoLiteDatabase.ps1` (reports the in-use local SQLite database path), and `copy-chartjs.mjs` (refreshes the bundled Chart.js assets, run via `npm ci`).
+- `scripts` contains `Stop-KoLiteApp.ps1` (graceful drain shutdown of the local app), `Get-KoLiteDatabase.ps1` (reports the in-use local SQLite database path), `copy-chartjs.mjs` (refreshes the bundled Chart.js assets), and `copy-cytoscape.mjs` (refreshes the bundled Cytoscape.js + cytoscape-dagre assets); the copy scripts run via `npm ci`.
 
 ## Key conventions
 

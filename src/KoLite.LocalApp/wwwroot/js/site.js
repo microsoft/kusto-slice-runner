@@ -1214,8 +1214,6 @@
     });
   }
 
-  var DEP_GRAPH_SVG_NS = "http://www.w3.org/2000/svg";
-
   function friendlyDepGraphKind(kind) {
     switch (kind) {
       case "Job": return "Job";
@@ -1312,100 +1310,6 @@
     };
   }
 
-  function truncateLabel(text, max) {
-    if (!text) return "";
-    return text.length > max ? text.slice(0, max - 1) + "\u2026" : text;
-  }
-
-  function svgElement(name, attrs) {
-    var el = document.createElementNS(DEP_GRAPH_SVG_NS, name);
-    Object.keys(attrs || {}).forEach(function (key) {
-      el.setAttribute(key, attrs[key]);
-    });
-    return el;
-  }
-
-  function dependencyEdgePath(from, to) {
-    var x1 = from.x + from.w / 2;
-    var y1 = from.y + from.h;
-    var x2 = to.x + to.w / 2;
-    var y2 = to.y;
-    var midY = (y1 + y2) / 2;
-    return "M" + x1 + " " + y1 + " C " + x1 + " " + midY + " " + x2 + " " + midY + " " + x2 + " " + y2;
-  }
-
-  function buildDependencyNode(node, focus, inspector) {
-    var group = svgElement("g", {
-      class: "dependency-graph-node status-" + node.statusKey +
-        " node-kind-" + (node.kind ? node.kind.toLowerCase() : "job") +
-        (node.focal ? " is-focal" : "") +
-        (node.resolved ? "" : " is-unresolved"),
-      transform: "translate(" + node.x + " " + node.y + ")",
-      "data-node-id": node.id
-    });
-
-    group.appendChild(svgElement("rect", {
-      class: "dependency-graph-node-box",
-      width: node.w,
-      height: node.h,
-      rx: "10",
-      ry: "10"
-    }));
-
-    var LABEL_LINE_H = 16;
-    var STATUS_LINE_H = 14;
-    var lines = (node.lines && node.lines.length) ? node.lines : [node.label];
-    var hasStatusLine = node.statusText && node.statusText !== node.label;
-    var contentHeight = lines.length * LABEL_LINE_H + (hasStatusLine ? STATUS_LINE_H : 0);
-    var blockTop = (node.h - contentHeight) / 2;
-
-    var label = svgElement("text", { class: "dependency-graph-node-label" });
-    lines.forEach(function (line, index) {
-      var tspan = svgElement("tspan", {
-        x: node.w / 2,
-        y: blockTop + (index * LABEL_LINE_H) + (LABEL_LINE_H / 2)
-      });
-      tspan.textContent = line;
-      label.appendChild(tspan);
-    });
-    group.appendChild(label);
-
-    if (hasStatusLine) {
-      var status = svgElement("text", {
-        class: "dependency-graph-node-status",
-        x: node.w / 2,
-        y: blockTop + (lines.length * LABEL_LINE_H) + (STATUS_LINE_H / 2)
-      });
-      status.textContent = node.statusText;
-      group.appendChild(status);
-    }
-
-    var title = svgElement("title", {});
-    title.textContent = node.label + " \u2014 " + node.statusText;
-    group.appendChild(title);
-
-    if (node.resolved && node.href) {
-      group.classList.add("is-interactive");
-      group.setAttribute("tabindex", "0");
-      group.setAttribute("role", "link");
-      group.setAttribute("aria-label", node.label + ", " + node.statusText);
-      group.addEventListener("click", function () { window.location.href = node.href; });
-      group.addEventListener("keydown", function (event) {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          window.location.href = node.href;
-        }
-      });
-    }
-
-    group.addEventListener("mouseenter", function () { if (focus) focus.activate(node.id); if (inspector) inspector.show(node); });
-    group.addEventListener("mouseleave", function () { if (focus) focus.clear(); if (inspector) inspector.rest(); });
-    group.addEventListener("focus", function () { if (focus) focus.activate(node.id); if (inspector) inspector.show(node); });
-    group.addEventListener("blur", function () { if (focus) focus.clear(); if (inspector) inspector.rest(); });
-
-    return group;
-  }
-
   function renderDependencyLegend(container, legend, hasImplicit) {
     var legendEl = container.querySelector("[data-dependency-graph-legend]");
     if (!legendEl) return;
@@ -1432,100 +1336,176 @@
     }
   }
 
+  var depGraphDagreRegistered = false;
+
+  function ensureDepGraphDagre() {
+    if (depGraphDagreRegistered) return true;
+    if (!window.cytoscape || !window.cytoscapeDagre) return false;
+    try {
+      window.cytoscape.use(window.cytoscapeDagre);
+    } catch (error) {
+      // use() throws if the extension is already registered; treat that as success.
+    }
+    depGraphDagreRegistered = true;
+    return true;
+  }
+
+  // Cytoscape stylesheet mirroring the legend palette: node fill/border per status + Kusto kind
+  // (dashed for soft-deleted/unknown/external), focal nodes get a thicker border, implicit
+  // (undeclared) edges are dashed amber, and ".faded" dims everything outside a hovered node's
+  // neighborhood. Kept in JS because Cytoscape styles its canvas from this array, not from CSS.
+  function depGraphStylesheet() {
+    var STATUS_COLORS = {
+      healthy: ["#dafbe1", "#1a7f37"],
+      running: ["#ddf4ff", "#0969da"],
+      dependencyblocked: ["#fff8c5", "#9a6700"],
+      paused: ["#fff8c5", "#9a6700"],
+      failed: ["#ffebe9", "#cf222e"],
+      completed: ["#f6f8fa", "#8c959f"],
+      softdeleted: ["#f6f8fa", "#cf222e"],
+      unknown: ["#f6f8fa", "#8c959f"],
+      kustofunction: ["#fbefff", "#8250df"],
+      kustomaterializedview: ["#e8f6f8", "#1b7c83"],
+      kustotable: ["#eef1f4", "#57606a"],
+      kustoexternal: ["#f6f8fa", "#8c959f"]
+    };
+    var DASHED = { softdeleted: true, unknown: true, kustoexternal: true };
+    var QUIETER = { kustofunction: true, kustomaterializedview: true, kustotable: true, kustoexternal: true };
+
+    var style = [
+      {
+        selector: "node",
+        style: {
+          "shape": "round-rectangle",
+          "background-color": "#fff",
+          "border-color": "#d0d7de",
+          "border-width": 1.5,
+          "label": "data(label)",
+          "color": "#1f2328",
+          "font-size": 13,
+          "font-weight": 600,
+          "text-wrap": "wrap",
+          "text-max-width": "176px",
+          "text-valign": "center",
+          "text-halign": "center",
+          "width": "label",
+          "height": "label",
+          "padding": "10px"
+        }
+      },
+      {
+        selector: "edge",
+        style: {
+          "width": 1.5,
+          "line-color": "#afb8c1",
+          "target-arrow-color": "#afb8c1",
+          "target-arrow-shape": "triangle",
+          "arrow-scale": 0.9,
+          "curve-style": "bezier"
+        }
+      },
+      {
+        selector: "edge.is-implicit",
+        style: { "line-color": "#9a6700", "target-arrow-color": "#9a6700", "line-style": "dashed" }
+      },
+      { selector: "node.is-focal", style: { "border-width": 3 } },
+      { selector: ".faded", style: { "opacity": 0.2 } }
+    ];
+
+    Object.keys(STATUS_COLORS).forEach(function (key) {
+      var pair = STATUS_COLORS[key];
+      var nodeStyle = { "background-color": pair[0], "border-color": pair[1] };
+      if (DASHED[key]) nodeStyle["border-style"] = "dashed";
+      if (QUIETER[key]) nodeStyle["font-weight"] = 500;
+      style.push({ selector: "node.status-" + key, style: nodeStyle });
+    });
+
+    return style;
+  }
+
   function drawDependencyGraph(container, data) {
     var viewport = container.querySelector("[data-dependency-graph-viewport]");
     if (!viewport || !data || !data.nodes || !data.nodes.length) return;
+    if (!window.cytoscape) return;
 
-    while (viewport.firstChild) viewport.removeChild(viewport.firstChild);
+    var nodeIds = {};
+    data.nodes.forEach(function (node) { nodeIds[node.id] = true; });
 
-    var nodesById = {};
-    data.nodes.forEach(function (node) { nodesById[node.id] = node; });
-
-    var svg = svgElement("svg", {
-      class: "dependency-graph-svg",
-      viewBox: "0 0 " + data.width + " " + data.height,
-      width: data.width,
-      height: data.height,
-      role: "img",
-      "aria-label": "Job dependency graph"
-    });
-
-    var defs = svgElement("defs", {});
-    defs.appendChild(dependencyArrowMarker("dep-graph-arrow", "dependency-graph-arrow"));
-    defs.appendChild(dependencyArrowMarker("dep-graph-arrow-implicit", "dependency-graph-arrow is-implicit"));
-    svg.appendChild(defs);
-
-    var edgeLayer = svgElement("g", { class: "dependency-graph-edges" });
-    // Adjacency maps drive hover focus mode: which edge elements touch a node, and its neighbors.
-    var edgesByNode = {};
-    var neighborsByNode = {};
-    function track(map, key, value) {
-      if (!map[key]) map[key] = [];
-      map[key].push(value);
-    }
-    data.edges.forEach(function (edge) {
-      var from = nodesById[edge.from];
-      var to = nodesById[edge.to];
-      if (!from || !to) return;
-      var path = svgElement("path", {
-        class: "dependency-graph-edge" + (edge.implicit ? " is-implicit" : ""),
-        d: dependencyEdgePath(from, to),
-        "marker-end": edge.implicit ? "url(#dep-graph-arrow-implicit)" : "url(#dep-graph-arrow)",
-        "data-from": edge.from,
-        "data-to": edge.to
-      });
-      edgeLayer.appendChild(path);
-      track(edgesByNode, edge.from, path);
-      track(edgesByNode, edge.to, path);
-      track(neighborsByNode, edge.from, edge.to);
-      track(neighborsByNode, edge.to, edge.from);
-    });
-    svg.appendChild(edgeLayer);
-
-    var nodeElsById = {};
-    var nodeLayer = svgElement("g", { class: "dependency-graph-nodes" });
-    var inspector = createDepGraphInspector(container, data.nodes);
-    var focus = {
-      activate: function (id) {
-        svg.classList.add("is-focus-active");
-        var node = nodeElsById[id];
-        if (node) node.classList.add("is-highlight");
-        (edgesByNode[id] || []).forEach(function (edge) { edge.classList.add("is-highlight"); });
-        (neighborsByNode[id] || []).forEach(function (neighborId) {
-          var neighbor = nodeElsById[neighborId];
-          if (neighbor) neighbor.classList.add("is-highlight");
-        });
-      },
-      clear: function () {
-        svg.classList.remove("is-focus-active");
-        svg.querySelectorAll(".is-highlight").forEach(function (el) { el.classList.remove("is-highlight"); });
-      }
-    };
+    var elements = [];
     data.nodes.forEach(function (node) {
-      var el = buildDependencyNode(node, focus, inspector);
-      nodeElsById[node.id] = el;
-      nodeLayer.appendChild(el);
+      elements.push({
+        data: {
+          id: node.id,
+          label: node.label,
+          statusKey: node.statusKey,
+          statusText: node.statusText,
+          kind: node.kind,
+          counts: node.counts,
+          href: node.href,
+          resolved: node.resolved,
+          focal: node.focal
+        },
+        classes: "status-" + node.statusKey +
+          " kind-" + (node.kind ? node.kind.toLowerCase() : "job") +
+          (node.focal ? " is-focal" : "")
+      });
     });
-    svg.appendChild(nodeLayer);
+    var edgeSeq = 0;
+    (data.edges || []).forEach(function (edge) {
+      if (!nodeIds[edge.from] || !nodeIds[edge.to]) return;
+      elements.push({
+        data: { id: "e" + (edgeSeq++), source: edge.from, target: edge.to },
+        classes: edge.implicit ? "is-implicit" : ""
+      });
+    });
 
-    viewport.appendChild(svg);
+    if (container.__depGraphCy) {
+      container.__depGraphCy.destroy();
+      container.__depGraphCy = null;
+    }
+
+    var useDagre = ensureDepGraphDagre();
+    var cy = window.cytoscape({
+      container: viewport,
+      elements: elements,
+      style: depGraphStylesheet(),
+      minZoom: 0.1,
+      maxZoom: 2.5,
+      wheelSensitivity: 0.2,
+      boxSelectionEnabled: false,
+      autounselectify: true
+    });
+    container.__depGraphCy = cy;
+
+    var inspector = createDepGraphInspector(container, data.nodes);
+
+    // Hover focus: dim everything outside the hovered node's neighborhood, and drive the panel.
+    cy.on("mouseover", "node", function (evt) {
+      var node = evt.target;
+      cy.elements().difference(node.closedNeighborhood()).addClass("faded");
+      if (inspector) inspector.show(node.data());
+      viewport.style.cursor = node.data("href") ? "pointer" : "default";
+    });
+    cy.on("mouseout", "node", function () {
+      cy.elements().removeClass("faded");
+      if (inspector) inspector.rest();
+      viewport.style.cursor = "default";
+    });
+    // Single tap inspects/pans; double-tap (or the panel's "Open job details" link) navigates.
+    cy.on("dbltap", "node", function (evt) {
+      var href = evt.target.data("href");
+      if (href) window.location.href = href;
+    });
+
+    var layout = cy.layout(useDagre
+      ? { name: "dagre", rankDir: "TB", nodeSep: 36, rankSep: 56, edgeSep: 10, padding: 24 }
+      : { name: "breadthfirst", directed: true, padding: 24 });
+    layout.one("layoutstop", function () { cy.fit(undefined, 24); });
+    layout.run();
+
     container.classList.add("is-rendered");
     renderDependencyLegend(container, data.legend, (data.edges || []).some(function (edge) { return edge.implicit; }));
-    inspector.rest();
-  }
-
-  function dependencyArrowMarker(id, pathClass) {
-    var marker = svgElement("marker", {
-      id: id,
-      viewBox: "0 0 10 10",
-      refX: "9",
-      refY: "5",
-      markerWidth: "7",
-      markerHeight: "7",
-      orient: "auto-start-reverse"
-    });
-    marker.appendChild(svgElement("path", { class: pathClass, d: "M0 0 L10 5 L0 10 z" }));
-    return marker;
+    if (inspector) inspector.rest();
   }
 
   function renderDependencyGraph(container) {
@@ -1585,9 +1565,27 @@
     });
   }
 
+  function wireDepGraphZoom(figure) {
+    function cy() { return figure.__depGraphCy; }
+    function zoomBy(factor) {
+      var c = cy();
+      if (!c) return;
+      c.zoom({ level: c.zoom() * factor, renderedPosition: { x: c.width() / 2, y: c.height() / 2 } });
+    }
+    function bind(selector, handler) {
+      var el = figure.querySelector(selector);
+      if (el) el.addEventListener("click", handler);
+    }
+    bind("[data-dependency-graph-zoom-in]", function () { zoomBy(1.2); });
+    bind("[data-dependency-graph-zoom-out]", function () { zoomBy(1 / 1.2); });
+    bind("[data-dependency-graph-fit]", function () { var c = cy(); if (c) c.fit(undefined, 24); });
+    bind("[data-dependency-graph-reset]", function () { var c = cy(); if (c) { c.zoom(1); c.center(); } });
+  }
+
   function initDependencyGraphs() {
     document.querySelectorAll("[data-dependency-graph]").forEach(function (figure) {
       renderDependencyGraph(figure);
+      wireDepGraphZoom(figure);
       var button = figure.querySelector("[data-dependency-graph-resolve]");
       var statusEl = figure.querySelector("[data-dependency-graph-status]");
       if (button) {

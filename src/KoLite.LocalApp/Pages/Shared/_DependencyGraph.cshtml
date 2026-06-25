@@ -26,6 +26,12 @@ else
                 }
             </div>
             <div class="dependency-graph-actions">
+                <span class="dependency-graph-zoom" role="group" aria-label="Graph zoom">
+                    <button type="button" class="btn small" data-dependency-graph-zoom-out aria-label="Zoom out">&minus;</button>
+                    <button type="button" class="btn small" data-dependency-graph-zoom-in aria-label="Zoom in">+</button>
+                    <button type="button" class="btn small" data-dependency-graph-fit>Fit</button>
+                    <button type="button" class="btn small" data-dependency-graph-reset aria-label="Reset zoom to 100%">1:1</button>
+                </span>
                 <button type="button" class="btn small" data-dependency-graph-resolve>@UiIcons.IconText("graph", "Resolve Kusto lineage")</button>
                 <span class="dependency-graph-status muted" data-dependency-graph-status role="status" aria-live="polite"></span>
             </div>

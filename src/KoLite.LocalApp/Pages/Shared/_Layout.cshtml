@@ -25,6 +25,8 @@
         @RenderBody()
     </main>
     <script src="~/lib/chartjs/chart.umd.min.js" asp-append-version="true"></script>
+    <script src="~/lib/cytoscape/cytoscape.min.js" asp-append-version="true"></script>
+    <script src="~/lib/cytoscape/cytoscape-dagre.js" asp-append-version="true"></script>
     <script src="~/js/site.js" asp-append-version="true"></script>
     @await RenderSectionAsync("Scripts", required: false)
 </body>

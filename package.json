@@ -5,11 +5,14 @@
   "description": "Local-first KO Lite dashboard assets.",
   "scripts": {
     "copy:chartjs": "node ./scripts/copy-chartjs.mjs",
-    "postinstall": "npm run copy:chartjs"
+    "copy:cytoscape": "node ./scripts/copy-cytoscape.mjs",
+    "postinstall": "npm run copy:chartjs && npm run copy:cytoscape"
   },
   "license": "UNLICENSED",
   "type": "commonjs",
   "dependencies": {
-    "chart.js": "^4.5.1"
+    "chart.js": "^4.5.1",
+    "cytoscape": "^3.34.0",
+    "cytoscape-dagre": "^4.0.0"
   }
 }
