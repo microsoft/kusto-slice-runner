@@ -1,9 +1,9 @@
 ---
 name: ko-lite-job-manager
-description: "Use when the user wants an agent to read KO Lite jobs, inspect read-only operational diagnostics (slice states, leases, throughput, catalog history, logs, audit), or create/update job schedules directly in a running KO Lite app (instead of clicking through the dashboard). Drives the KO Lite localhost JSON API; it only reads state or upserts schedules - it never enables/disables, deletes, runs Kusto, reruns, or repairs. Requires the KO Lite app to be running locally."
+description: "Use when the user wants an agent to read KO Lite jobs, inspect read-only operational diagnostics (slice states, leases, throughput, catalog history, logs, audit), or create/update job schedules directly in a running KO Lite app (instead of clicking through the dashboard). Drives the KO Lite localhost JSON API; it reads state and upserts schedules - including pausing or resuming a job via the schedule's isPaused field - but it never soft- or hard-deletes jobs, runs Kusto, reruns, or repairs. Requires the KO Lite app to be running locally."
 metadata:
   author: Azure Core Team
-  version: "1.1.0"
+  version: "1.2.0"
 ---
 
 # KO Lite job manager
@@ -26,6 +26,9 @@ It **will**:
 
 - Read jobs: list summaries, fetch one job's canonical schedule, export all jobs.
 - Create new jobs and update existing job schedules via upsert import.
+- Pause or resume a job by importing its schedule with `isPaused: true` (pause)
+  or `isPaused: false` (resume); a paused job stays in the catalog but does not
+  schedule or claim queued retries.
 - Read **operational diagnostics** (read-only): per-job slice states and leases,
   attempts, events, logs, queue, catalog-version history with diffs, throughput,
   and dependency readiness; and cross-job worker-pool state, in-flight/expired
@@ -34,8 +37,12 @@ It **will**:
 
 It **will not** (these stay manual / dashboard-only on purpose):
 
-- Enable/disable (pause/resume) jobs.
-- Soft-delete, restore, or hard-delete jobs.
+- Soft-delete, restore, or hard-delete jobs. The API exposes **no** delete
+  surface, by design - deleting a job stays a dashboard action.
+- Disable a job's `isEnabled` lifecycle. Pausing is supported (via `isPaused`
+  above), but there is no `isEnabled` schedule field, so enable/disable stays
+  dashboard-only. Note an import **re-activates** an enabled job, so import with
+  `isPaused: true` to pause it rather than run it.
 - Execute Kusto, run reruns, run cleanup, or run repair. (Reading the rerun/repair
   **history** via diagnostics is fine; *triggering* a rerun/repair is not.)
 - Touch the SQLite file directly. All reads and writes go through the API.
@@ -66,8 +73,9 @@ The API is **loopback-only** and intended for same-machine use.
 
 **Execution awareness:** creating or updating an *enabled, unpaused* job means the
 running scheduler may start scheduling and executing it - exactly like a dashboard
-import. If the user wants to stage a schedule without running it, author the job
-with `"isPaused": true`.
+import. To pause (or stage) a job, import it with `"isPaused": true`; import it
+again with `"isPaused": false` to resume. An import always re-activates an
+`isEnabled` job, so use `isPaused` - not enable/disable - to control whether it runs.
 
 ## Discovering the endpoint
 
@@ -224,10 +232,12 @@ unreachable it tells you to start it.
 
 ## Hard constraints
 
-- **Schedules only for writes.** The only write is schedule upsert via Import.
-  Never call any enable/disable, delete, Kusto, rerun, cleanup, or repair surface,
-  and never edit the SQLite file directly. Reading diagnostics (including
-  rerun/repair/audit **history**) is fine; *triggering* those actions is not.
+- **Schedules only for writes.** The only write is schedule upsert via Import -
+  which includes pausing/resuming through the `isPaused` field. Never soft- or
+  hard-delete a job (the API has no delete surface), and never call any Kusto,
+  rerun, cleanup, or repair surface, or edit the SQLite file directly. Reading
+  diagnostics (including rerun/repair/audit **history**) is fine; *triggering*
+  those actions is not.
 - **Validate before writing.** Always validate the JSON locally before POSTing
   (the Import action does this by default).
 - **Respect the identity model.** Never change the permanent `id`. `queryWindowSize`
@@ -240,7 +250,9 @@ unreachable it tells you to start it.
 ## Stop and ask conditions
 
 - The KO Lite app is not reachable and the user has not provided a `-BaseUrl`.
-- The requested action is outside scope (enable/disable, delete, Kusto, rerun).
+- The requested action is outside scope (soft/hard delete, disabling a job's
+  `isEnabled` lifecycle, Kusto, rerun, repair). Pausing or resuming via `isPaused`
+  is in scope.
 - An update would change the permanent `id`, or change `queryWindowSize`/`startFrom`
   on a started job.
 - `activityId` collides with an existing job. A **rename** (same `id`, new
