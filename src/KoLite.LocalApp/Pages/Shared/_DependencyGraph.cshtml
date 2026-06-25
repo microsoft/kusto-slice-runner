@@ -30,7 +30,10 @@ else
                 <span class="dependency-graph-status muted" data-dependency-graph-status role="status" aria-live="polite"></span>
             </div>
         </div>
-        <div class="dependency-graph-viewport" data-dependency-graph-viewport></div>
+        <div class="dependency-graph-body">
+            <div class="dependency-graph-viewport" data-dependency-graph-viewport></div>
+            <aside class="dependency-graph-inspector" data-dependency-graph-inspector aria-label="Selected node details"></aside>
+        </div>
         <div class="dependency-graph-fallback" data-dependency-graph-fallback>
             <p class="muted">Dependency graph (text view):</p>
             <ul class="plain-list">

@@ -133,6 +133,7 @@ namespace KoLite.LocalApp.Tests
 
             Assert.Contains("data-dependency-graph", html);
             Assert.Contains("data-dependency-graph-data", html);
+            Assert.Contains("data-dependency-graph-inspector", html);
             Assert.Contains("page.upstream", html);
             Assert.Contains("page.downstream", html);
             Assert.Contains($"/jobs/{JobId("page.downstream")}", html);

@@ -1214,31 +1214,55 @@
     });
   }
 
-  var depGraphTooltip;
   var DEP_GRAPH_SVG_NS = "http://www.w3.org/2000/svg";
 
-  function ensureDepGraphTooltip() {
-    if (depGraphTooltip) return depGraphTooltip;
-    depGraphTooltip = document.createElement("div");
-    depGraphTooltip.className = "slice-history-tooltip dependency-graph-tooltip";
-    depGraphTooltip.setAttribute("role", "tooltip");
-    document.body.appendChild(depGraphTooltip);
-    return depGraphTooltip;
+  function friendlyDepGraphKind(kind) {
+    switch (kind) {
+      case "Job": return "Job";
+      case "KustoFunction": return "Function";
+      case "KustoMaterializedView": return "Materialized view";
+      case "KustoTable": return "Table";
+      case "KustoExternal": return "External entity";
+      default: return "Entity";
+    }
   }
 
-  function showDepGraphTooltip(node, target) {
-    var tooltip = ensureDepGraphTooltip();
-    tooltip.textContent = "";
+  function inspectorCountRow(label, value, isTotal) {
+    var row = tooltipRow(label, value);
+    if (isTotal) row.classList.add("is-total");
+    return row;
+  }
+
+  // Renders the docked details-panel content for a node: title, kind, status dot + text,
+  // slice counts (jobs only), and an open-job link when available.
+  function buildDepGraphInspector(panel, node) {
+    panel.textContent = "";
 
     var title = document.createElement("div");
-    title.className = "tooltip-title";
+    title.className = "dependency-graph-inspector-title";
     title.textContent = node.label;
-    tooltip.appendChild(title);
+    panel.appendChild(title);
 
-    tooltip.appendChild(tooltipRow("Status", node.statusText));
+    var kind = document.createElement("div");
+    kind.className = "dependency-graph-inspector-kind";
+    kind.textContent = friendlyDepGraphKind(node.kind);
+    panel.appendChild(kind);
+
+    var meta = document.createElement("div");
+    meta.className = "dependency-graph-inspector-meta";
+    var swatch = document.createElement("span");
+    swatch.className = "dependency-graph-swatch status-" + node.statusKey;
+    swatch.setAttribute("aria-hidden", "true");
+    meta.appendChild(swatch);
+    var statusText = document.createElement("span");
+    statusText.textContent = node.statusText;
+    meta.appendChild(statusText);
+    panel.appendChild(meta);
 
     if (node.counts) {
       var counts = node.counts;
+      var countsEl = document.createElement("div");
+      countsEl.className = "dependency-graph-inspector-counts";
       [
         ["Completed", counts.completed],
         ["Running", counts.running],
@@ -1248,19 +1272,44 @@
         ["Blocked", counts.dependencyBlocked],
         ["Missing", counts.missing]
       ].forEach(function (row) {
-        if (row[1] > 0) tooltip.appendChild(tooltipRow(row[0], String(row[1])));
+        if (row[1] > 0) countsEl.appendChild(inspectorCountRow(row[0], String(row[1]), false));
       });
-      tooltip.appendChild(tooltipRow("Total", String(counts.total)));
+      countsEl.appendChild(inspectorCountRow("Total", String(counts.total), true));
+      panel.appendChild(countsEl);
     }
 
-    tooltip.style.left = "0";
-    tooltip.style.top = "0";
-    positionTooltip(target, tooltip);
-    tooltip.classList.add("visible");
+    if (node.resolved && node.href) {
+      var link = document.createElement("a");
+      link.className = "dependency-graph-inspector-link";
+      link.href = node.href;
+      link.textContent = "Open job details";
+      panel.appendChild(link);
+    }
   }
 
-  function hideDepGraphTooltip() {
-    if (depGraphTooltip) depGraphTooltip.classList.remove("visible");
+  function buildDepGraphInspectorPlaceholder(panel) {
+    panel.textContent = "";
+    var hint = document.createElement("p");
+    hint.className = "dependency-graph-inspector-placeholder";
+    hint.textContent = "Hover or focus a node to see its status and slice counts.";
+    panel.appendChild(hint);
+  }
+
+  // Controller for the docked details panel: show(node) on hover/focus, rest() returns to the
+  // single focal node (or a hint). No-ops safely when the panel element is absent.
+  function createDepGraphInspector(container, nodes) {
+    var panel = container.querySelector("[data-dependency-graph-inspector]");
+    var focalNodes = (nodes || []).filter(function (node) { return node.focal; });
+    var restNode = focalNodes.length === 1 ? focalNodes[0] : null;
+    function rest() {
+      if (!panel) return;
+      if (restNode) buildDepGraphInspector(panel, restNode);
+      else buildDepGraphInspectorPlaceholder(panel);
+    }
+    return {
+      show: function (node) { if (panel && node) buildDepGraphInspector(panel, node); },
+      rest: rest
+    };
   }
 
   function truncateLabel(text, max) {
@@ -1285,7 +1334,7 @@
     return "M" + x1 + " " + y1 + " C " + x1 + " " + midY + " " + x2 + " " + midY + " " + x2 + " " + y2;
   }
 
-  function buildDependencyNode(node, focus) {
+  function buildDependencyNode(node, focus, inspector) {
     var group = svgElement("g", {
       class: "dependency-graph-node status-" + node.statusKey +
         " node-kind-" + (node.kind ? node.kind.toLowerCase() : "job") +
@@ -1349,10 +1398,10 @@
       });
     }
 
-    group.addEventListener("mouseenter", function () { showDepGraphTooltip(node, group); if (focus) focus.activate(node.id); });
-    group.addEventListener("mouseleave", function () { hideDepGraphTooltip(); if (focus) focus.clear(); });
-    group.addEventListener("focus", function () { showDepGraphTooltip(node, group); if (focus) focus.activate(node.id); });
-    group.addEventListener("blur", function () { hideDepGraphTooltip(); if (focus) focus.clear(); });
+    group.addEventListener("mouseenter", function () { if (focus) focus.activate(node.id); if (inspector) inspector.show(node); });
+    group.addEventListener("mouseleave", function () { if (focus) focus.clear(); if (inspector) inspector.rest(); });
+    group.addEventListener("focus", function () { if (focus) focus.activate(node.id); if (inspector) inspector.show(node); });
+    group.addEventListener("blur", function () { if (focus) focus.clear(); if (inspector) inspector.rest(); });
 
     return group;
   }
@@ -1435,6 +1484,7 @@
 
     var nodeElsById = {};
     var nodeLayer = svgElement("g", { class: "dependency-graph-nodes" });
+    var inspector = createDepGraphInspector(container, data.nodes);
     var focus = {
       activate: function (id) {
         svg.classList.add("is-focus-active");
@@ -1452,7 +1502,7 @@
       }
     };
     data.nodes.forEach(function (node) {
-      var el = buildDependencyNode(node, focus);
+      var el = buildDependencyNode(node, focus, inspector);
       nodeElsById[node.id] = el;
       nodeLayer.appendChild(el);
     });
@@ -1461,6 +1511,7 @@
     viewport.appendChild(svg);
     container.classList.add("is-rendered");
     renderDependencyLegend(container, data.legend, (data.edges || []).some(function (edge) { return edge.implicit; }));
+    inspector.rest();
   }
 
   function dependencyArrowMarker(id, pathClass) {
