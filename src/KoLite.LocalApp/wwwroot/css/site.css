@@ -991,7 +991,9 @@ h3 { font-size: 16px; margin-bottom: 10px; }
 .dependency-graph-fallback { margin-top: 12px; }
 .dependency-graph-fallback li { display: flex; align-items: center; gap: 8px; }
 .dependency-graph.is-rendered .dependency-graph-fallback { display: none; }
+.dependency-graph-tooltip { max-width: 360px; }
 .dependency-graph-tooltip .tooltip-row { grid-template-columns: 96px minmax(0, 1fr); }
+.dependency-graph-tooltip .tooltip-title { overflow-wrap: anywhere; }
 
 /* Dependency graph: Kusto consumer enrichment */
 .dependency-graph-toolbar {

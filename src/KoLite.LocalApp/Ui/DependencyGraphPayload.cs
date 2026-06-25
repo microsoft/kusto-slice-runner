@@ -18,6 +18,7 @@ namespace KoLite.LocalApp.Ui
                 {
                     id = node.Id,
                     label = node.Label,
+                    lines = node.Lines,
                     status = node.Status,
                     statusKey = node.Status.ToLowerInvariant(),
                     statusText = node.StatusText,

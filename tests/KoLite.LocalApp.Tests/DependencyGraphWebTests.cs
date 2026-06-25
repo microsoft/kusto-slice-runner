@@ -236,7 +236,12 @@ namespace KoLite.LocalApp.Tests
             response.EnsureSuccessStatusCode();
             var payload = await response.Content.ReadFromJsonAsync<JsonElement>();
             var nodes = payload.GetProperty("nodes").EnumerateArray().ToList();
-            Assert.Contains(nodes, n => n.GetProperty("label").GetString() == "cluster('other').database('fleet').MetricsPerNode" && n.GetProperty("kind").GetString() == "KustoExternal");
+            var remote = Assert.Single(nodes, n => n.GetProperty("kind").GetString() == "KustoExternal");
+            Assert.Equal("cluster('other').database('fleet').MetricsPerNode", remote.GetProperty("label").GetString());
+            // The long reference is wrapped into multiple lines that reconstruct the label exactly.
+            var lines = remote.GetProperty("lines").EnumerateArray().Select(l => l.GetString()).ToArray();
+            Assert.True(lines.Length > 1);
+            Assert.Equal("cluster('other').database('fleet').MetricsPerNode", string.Concat(lines));
         }
 
         [Fact]

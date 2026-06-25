@@ -1302,20 +1302,29 @@
       ry: "10"
     }));
 
+    var LABEL_LINE_H = 16;
+    var STATUS_LINE_H = 14;
+    var lines = (node.lines && node.lines.length) ? node.lines : [node.label];
     var hasStatusLine = node.statusText && node.statusText !== node.label;
-    var label = svgElement("text", {
-      class: "dependency-graph-node-label",
-      x: node.w / 2,
-      y: hasStatusLine ? node.h / 2 - 3 : node.h / 2 + 4
+    var contentHeight = lines.length * LABEL_LINE_H + (hasStatusLine ? STATUS_LINE_H : 0);
+    var blockTop = (node.h - contentHeight) / 2;
+
+    var label = svgElement("text", { class: "dependency-graph-node-label" });
+    lines.forEach(function (line, index) {
+      var tspan = svgElement("tspan", {
+        x: node.w / 2,
+        y: blockTop + (index * LABEL_LINE_H) + (LABEL_LINE_H / 2)
+      });
+      tspan.textContent = line;
+      label.appendChild(tspan);
     });
-    label.textContent = truncateLabel(node.label, 30);
     group.appendChild(label);
 
     if (hasStatusLine) {
       var status = svgElement("text", {
         class: "dependency-graph-node-status",
         x: node.w / 2,
-        y: node.h / 2 + 15
+        y: blockTop + (lines.length * LABEL_LINE_H) + (STATUS_LINE_H / 2)
       });
       status.textContent = node.statusText;
       group.appendChild(status);
