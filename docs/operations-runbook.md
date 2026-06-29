@@ -65,6 +65,11 @@ dotnet run --project .\src\KoLite.LocalApp\KoLite.LocalApp.csproj -- --Connectio
 | `KoLite:UpdateCheck:Interval` | `01:00:00` | How often to poll GitHub. Must be greater than zero. |
 | `KoLite:UpdateCheck:Repository` | `microsoft/kusto-slice-runner` | `owner/repo` to compare against. |
 | `KoLite:UpdateCheck:Branch` | `main` | Branch whose HEAD is compared to the running build. |
+| `KoLite:Retention:Enabled` | `true` | Periodically prunes old operational telemetry so the local database stops growing without bound. Set `false` to disable (the database then grows unbounded). |
+| `KoLite:Retention:WindowDays` | `30` | Operational telemetry older than this is eligible for pruning. Must be greater than zero. The slice window-history is never pruned. |
+| `KoLite:Retention:Interval` | `06:00:00` | How often the retention pass runs. Must be greater than zero. |
+| `KoLite:Retention:InitialDelay` | `00:02:00` | Delay after startup before the first retention pass. |
+| `KoLite:Retention:BatchSize` | `2000` | Rows deleted per batch; each batch commits separately to keep write locks short on the live database. |
 
 Compatibility aliases `KoLite:Scheduler:WorkerConcurrency` and `KoLite:Scheduler:MaxWorkerIterations` are still accepted by the worker-pool options.
 
@@ -97,6 +102,68 @@ A status badge on the right of the top bar shows one of:
 Failures are non-fatal and never affect scheduling or Kusto execution. Full detail
 (status, reason, built/remote SHA, commits-behind, last-checked time, and any error) is
 also exposed under `updateCheck` in `/status/health`.
+
+## Database growth and retention
+
+The local SQLite database is the durable source of truth for the catalog, queue, slice
+window-history, operational logs, and rerun/repair records. Left unmanaged it would grow without
+bound, because every scheduled slice appends operational telemetry (logs, queue rows, attempts,
+state events). A retention background service keeps that growth in check.
+
+### What is pruned vs. preserved
+
+On each pass (every `KoLite:Retention:Interval`, after an initial `KoLite:Retention:InitialDelay`),
+KO Lite deletes **non-authoritative operational telemetry** older than `KoLite:Retention:WindowDays`:
+
+- `operational_logs` — routine scheduler/worker log rows.
+- `work_queue` — only **terminal** rows (`Completed`/`DeadLettered`); `Queued`/`Leased` rows are
+  never pruned, so claimable and in-flight work is untouched.
+- `slice_attempts` — per-attempt detail for finished slices (in-progress `Started` attempts are kept).
+- `scheduled_slices` — the scheduling ledger.
+- `ingestion_throttle_observations` — throttle samples.
+
+It **never** touches the authoritative window-history or catalog state: `current_slice_state`,
+`slice_state_events`, `job_definitions`, lifecycle/audit rows, and `rerun_*`/`repair_*` records are
+always preserved.
+
+### Impact on functionality
+
+Because the scheduler, rerun, dependency readiness, and the started-job field guard all read the
+preserved `current_slice_state`/`slice_state_events`, pruning telemetry does **not** affect any
+functional capability:
+
+- **Rerunning old slices still works.** Rerun eligibility reads `current_slice_state`, and the rerun
+  reset rebuilds the slice's rows; only the captured pre-rerun snapshot is thinner for a slice whose
+  telemetry has aged out.
+- **Scheduler idempotency is intact.** A completed slice is never re-enqueued, because the scheduler
+  decides from `current_slice_state`, not from queue or scheduled-slice rows.
+- **The colored window-history view is unchanged.**
+
+What you lose for data older than the window is **historical operational detail**: old log lines,
+per-attempt rows on the slice-detail page, and chart depth. To keep the dashboard charts whole
+(their maximum range is 30 days), the chart- and advisor-backing tables (`slice_attempts`,
+`ingestion_throttle_observations`) are never pruned more aggressively than 30 days, even if a shorter
+`WindowDays` is configured.
+
+The latest retention outcome (enabled, window, interval, last-run time, and rows deleted) is exposed
+under `retention` in `/status/health`.
+
+### Reclaiming file space (manual VACUUM)
+
+Retention bounds growth, but SQLite does not return freed pages to the operating system on its own:
+deleted pages are reused for future growth, so the file size plateaus rather than dropping. To
+physically reclaim space after a large backlog has been pruned, stop the app and run a one-off
+VACUUM:
+
+```powershell
+.\scripts\Invoke-KoLiteVacuum.ps1 -DryRun     # report the in-use database path and current size
+.\scripts\Stop-KoLiteApp.ps1                  # VACUUM needs exclusive access
+.\scripts\Invoke-KoLiteVacuum.ps1             # rewrite the database and report reclaimed space
+```
+
+VACUUM rewrites the whole database and needs free disk for a temporary copy. The script refuses to
+run while the app is responding (pass `-Force` to override, not recommended) and never creates or
+deletes a database file.
 
 ## Job catalog import and export
 

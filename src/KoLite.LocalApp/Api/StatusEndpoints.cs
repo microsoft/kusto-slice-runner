@@ -6,6 +6,7 @@ using KoLite.Local.Sqlite.Catalog;
 using KoLite.Local.Sqlite.Connections;
 using KoLite.Local.Sqlite.Observability;
 using KoLite.Local.Sqlite.Queue;
+using KoLite.LocalApp.Retention;
 using KoLite.LocalApp.Updates;
 
 namespace KoLite.LocalApp.Api
@@ -33,6 +34,8 @@ namespace KoLite.LocalApp.Api
                 LocalShutdownDrainCoordinator shutdownDrain,
                 UpdateCheckRuntimeState updateCheckState,
                 LocalUpdateCheckOptions updateCheckOptions,
+                RetentionRuntimeState retentionState,
+                LocalRetentionOptions retentionOptions,
                 IClock clock) =>
             {
                 using var connection = connections.OpenConnection();
@@ -43,6 +46,7 @@ namespace KoLite.LocalApp.Api
                 var queueStatus = observability.GetQueueStatus(localWorkerOptions.QueueName, nowUtc);
                 var claimableBacklog = queue.CountClaimable(localWorkerOptions.QueueName, nowUtc, localWorkerOptions.EnforceJobParallelism, localWorkerOptions.EffectiveOrphanReclaimGrace);
                 var updateSnapshot = updateCheckState.GetSnapshot();
+                var retentionSnapshot = retentionState.GetSnapshot();
                 return Results.Json(new
                 {
                     status = "Healthy",
@@ -74,6 +78,20 @@ namespace KoLite.LocalApp.Api
                         commitsAhead = updateSnapshot.CommitsAhead,
                         lastCheckedUtc = updateSnapshot.LastCheckedUtc,
                         error = updateSnapshot.ErrorMessage
+                    },
+                    retention = new
+                    {
+                        enabled = retentionOptions.Enabled,
+                        windowDays = retentionOptions.Window.TotalDays,
+                        interval = retentionOptions.Interval.ToString(),
+                        lastRunUtc = retentionSnapshot.LastRunUtc,
+                        lastRunDeleted = retentionSnapshot.TotalDeleted,
+                        logsDeleted = retentionSnapshot.LogsDeleted,
+                        attemptsDeleted = retentionSnapshot.AttemptsDeleted,
+                        scheduledSlicesDeleted = retentionSnapshot.ScheduledSlicesDeleted,
+                        ingestionThrottlesDeleted = retentionSnapshot.IngestionThrottlesDeleted,
+                        queueRowsDeleted = retentionSnapshot.QueueRowsDeleted,
+                        error = retentionSnapshot.LastError
                     },
                     shutdown = shutdownDrain.GetSnapshot()
                 });

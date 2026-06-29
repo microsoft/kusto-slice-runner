@@ -14,9 +14,11 @@ using KoLite.Local.Sqlite.Orchestration;
 using KoLite.Local.Sqlite.Queue;
 using KoLite.Local.Sqlite.State;
 using KoLite.Local.Sqlite.Throttling;
+using KoLite.LocalApp.Retention;
 using KoLite.LocalApp.Ui;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
@@ -157,6 +159,37 @@ namespace KoLite.LocalApp.Tests
             var scheduler = healthJson.RootElement.GetProperty("scheduler");
 
             Assert.True(scheduler.GetProperty("logEveryPass").GetBoolean());
+        }
+
+        [Fact]
+        public async Task Health_reports_retention_configuration_and_last_run()
+        {
+            var snapshot = new RetentionSnapshot(
+                Enabled: true,
+                LastRunUtc: DateTimeOffset.Parse("2026-06-20T00:00:00Z"),
+                LogsDeleted: 5,
+                AttemptsDeleted: 4,
+                ScheduledSlicesDeleted: 3,
+                IngestionThrottlesDeleted: 2,
+                QueueRowsDeleted: 1,
+                TotalDeleted: 15,
+                LastError: null);
+            using var runFactory = CreateFactory(enableScheduler: false, configureServices: services =>
+            {
+                services.RemoveAll<RetentionRuntimeState>();
+                services.AddSingleton(new RetentionRuntimeState(snapshot));
+            });
+            using var client = runFactory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+
+            var health = await client.GetStringAsync("/status/health");
+            using var healthJson = JsonDocument.Parse(health);
+            var retention = healthJson.RootElement.GetProperty("retention");
+
+            Assert.True(retention.GetProperty("enabled").GetBoolean());
+            Assert.Equal(30, retention.GetProperty("windowDays").GetDouble());
+            Assert.Equal(15, retention.GetProperty("lastRunDeleted").GetInt32());
+            Assert.Equal(1, retention.GetProperty("queueRowsDeleted").GetInt32());
+            Assert.Equal(DateTimeOffset.Parse("2026-06-20T00:00:00Z"), retention.GetProperty("lastRunUtc").GetDateTimeOffset());
         }
 
         [Fact]

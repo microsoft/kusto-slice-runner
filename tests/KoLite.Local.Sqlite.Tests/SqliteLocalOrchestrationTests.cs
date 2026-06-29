@@ -145,6 +145,36 @@ namespace KoLite.Local.Sqlite.Tests
         }
 
         [Fact]
+        public void Scheduler_does_not_reenqueue_completed_slice_after_telemetry_is_pruned()
+        {
+            var localClock = new ManualClock(At(5));
+            catalog.Create(Schedule("job.retention-idempotent", maxParallelism: 10));
+            var scheduler = Scheduler(maxSlicesPerTick: 10, localClock);
+            scheduler.Tick();
+            var claimed = queue.Claim("default", "worker-ret", TimeSpan.FromMinutes(5), localClock.UtcNow);
+            Assert.NotNull(claimed);
+            var lease = state.AcquireLease("lease-ret", JobId("job.retention-idempotent"), At(0), At(5), "worker-ret", TimeSpan.FromMinutes(5), localClock.UtcNow);
+            Assert.NotNull(lease);
+            Assert.True(state.CompleteLease("complete-ret", JobId("job.retention-idempotent"), At(0), At(5), "worker-ret", lease.LeaseToken!, localClock.UtcNow));
+            Assert.True(queue.Complete(claimed.QueueItemId, "worker-ret"));
+
+            // Prune the slice's operational telemetry (terminal queue row, scheduled-slice rows,
+            // attempts, logs) exactly as the retention service would once the slice ages out.
+            var cutoff = DateTimeOffset.UtcNow.AddDays(1);
+            var pruned = observability.CleanupOldReadModels(cutoff, cutoff, batchSize: 500);
+            Assert.True(pruned.QueueRowsDeleted >= 1);
+            Assert.Empty(queue.List(JobId("job.retention-idempotent")));
+
+            var later = scheduler.Tick();
+
+            // The authoritative current_slice_state row is preserved, so the completed slice stays
+            // idempotent: it is never re-enqueued or re-executed even with its telemetry deleted.
+            Assert.Equal(0, later.Enqueued);
+            Assert.Equal(DurableSliceStatus.Completed, state.Get(JobId("job.retention-idempotent"), At(0), At(5)).Status);
+            Assert.Empty(queue.List(JobId("job.retention-idempotent")));
+        }
+
+        [Fact]
         public void Scheduler_does_not_enqueue_running_leased_slice_again()
         {
             var localClock = new ManualClock(At(5));

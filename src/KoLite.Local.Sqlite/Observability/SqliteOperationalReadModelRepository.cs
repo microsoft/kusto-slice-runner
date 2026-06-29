@@ -9,7 +9,10 @@ namespace KoLite.Local.Sqlite.Observability
     public sealed record RecentSliceEvent(string EventId, string JobId, DateTimeOffset SliceStartUtc, DateTimeOffset SliceEndUtc, string EventType, int? Attempt, string? Reason, string? Actor, DateTimeOffset RecordedAtUtc);
     public sealed record QueueStatusSummary(string QueueName, int QueuedCount, int LeasedCount, int CompletedCount, int DeadLetteredCount, int ExpiredLeaseCount);
     public sealed record SliceStatusReadout(string JobId, DateTimeOffset SliceStartUtc, DateTimeOffset SliceEndUtc, string Status, int Attempt, int? SuccessfulAttempt, string? LatestAttemptStatus, DateTimeOffset? LastAttemptUpdatedAtUtc, DateTimeOffset UpdatedAtUtc);
-    public sealed record RetentionCleanupResult(string RetentionRunId, int LogsDeleted, int AttemptsDeleted, int ScheduledSlicesDeleted, int IngestionThrottlesDeleted);
+    public sealed record RetentionCleanupResult(string RetentionRunId, int LogsDeleted, int AttemptsDeleted, int ScheduledSlicesDeleted, int IngestionThrottlesDeleted, int QueueRowsDeleted)
+    {
+        public int TotalDeleted => LogsDeleted + AttemptsDeleted + ScheduledSlicesDeleted + IngestionThrottlesDeleted + QueueRowsDeleted;
+    }
     public sealed record SliceThroughputSample(int SucceededCount, DateTimeOffset? FirstCompletedUtc, DateTimeOffset? LastCompletedUtc);
     public sealed record SliceAttemptRow(string AttemptId, string JobId, DateTimeOffset SliceStartUtc, DateTimeOffset SliceEndUtc, int Attempt, string Status, string? WorkerId, DateTimeOffset? StartedAtUtc, DateTimeOffset? CompletedAtUtc, string? ErrorCode, string? ErrorMessage);
     public sealed record OperationalLogRow(string LogId, string? JobId, DateTimeOffset? SliceStartUtc, DateTimeOffset? SliceEndUtc, string Level, string Message, string? Category, string? Exception, DateTimeOffset RecordedAtUtc);
@@ -284,24 +287,53 @@ namespace KoLite.Local.Sqlite.Observability
                 SqliteStorage.ReadNullableUtc(r, "last_completed"));
         }
 
-        public RetentionCleanupResult CleanupOldReadModels(DateTimeOffset cutoffUtc, int batchSize = 500)
+        // Prunes non-authoritative operational telemetry older than the cutoffs. The authoritative
+        // window-history (current_slice_state, slice_state_events) and every catalog/lifecycle/
+        // audit/rerun/repair row are never touched, so scheduler idempotency, rerun eligibility,
+        // dependency readiness, and the started-job field guard are unaffected. Only terminal
+        // work_queue rows (Completed/DeadLettered) are pruned; Queued/Leased rows stay claimable.
+        // Chart- and advisor-backing tables (slice_attempts, ingestion_throttle_observations) use
+        // the older protected cutoff so the dashboard's selectable chart range never thins. Each
+        // table drains in batches with per-batch commits to keep write locks short on the live
+        // database; one retention_runs row summarizes the pass.
+        public RetentionCleanupResult CleanupOldReadModels(DateTimeOffset cutoffUtc, DateTimeOffset chartProtectedCutoffUtc, int batchSize = 500)
         {
-            var id = Guid.NewGuid().ToString("N"); using var c = connectionFactory.OpenConnection(); using var tx = c.BeginTransaction();
-            Delete(c, tx, "operational_logs", "recorded_at_utc < $cutoff", cutoffUtc, batchSize, out var logs);
-            Delete(c, tx, "slice_attempts", "COALESCE(completed_at_utc, started_at_utc) < $cutoff AND status <> 'Started'", cutoffUtc, batchSize, out var attempts);
-            Delete(c, tx, "scheduled_slices", "scheduled_at_utc < $cutoff", cutoffUtc, batchSize, out var scheduled);
-            Delete(c, tx, "ingestion_throttle_observations", "observed_at_utc < $cutoff", cutoffUtc, batchSize, out var throttles);
-            using (var cmd = SqliteStorage.Command(c, tx, "INSERT INTO retention_runs (retention_run_id,policy_name,status,cutoff_utc,rows_scanned,rows_deleted,started_at_utc,completed_at_utc,details_json) VALUES ($id,'read-model-retention','Completed',$cutoff,$scanned,$deleted,$now,$now,$details);"))
-            { cmd.Add("$id", id); cmd.Add("$cutoff", SqliteStorage.Utc(cutoffUtc)); cmd.Add("$scanned", logs + attempts + scheduled + throttles); cmd.Add("$deleted", logs + attempts + scheduled + throttles); cmd.Add("$now", SqliteStorage.Utc(DateTimeOffset.UtcNow)); cmd.Add("$details", $"{{\"logsDeleted\":{logs},\"attemptsDeleted\":{attempts},\"scheduledSlicesDeleted\":{scheduled},\"ingestionThrottlesDeleted\":{throttles}}}"); cmd.ExecuteNonQuery(); }
-            tx.Commit();
+            if (batchSize < 1) batchSize = 1;
+            var id = Guid.NewGuid().ToString("N"); using var c = connectionFactory.OpenConnection();
+            var logs = Drain(c, "operational_logs", "recorded_at_utc < $cutoff", cutoffUtc, batchSize);
+            var attempts = Drain(c, "slice_attempts", "COALESCE(completed_at_utc, started_at_utc) < $cutoff AND status <> 'Started'", chartProtectedCutoffUtc, batchSize);
+            var scheduled = Drain(c, "scheduled_slices", "scheduled_at_utc < $cutoff", cutoffUtc, batchSize);
+            var throttles = Drain(c, "ingestion_throttle_observations", "observed_at_utc < $cutoff", chartProtectedCutoffUtc, batchSize);
+            var queueRows = Drain(c, "work_queue", "state IN ('Completed','DeadLettered') AND updated_at_utc < $cutoff", cutoffUtc, batchSize);
+            var deleted = logs + attempts + scheduled + throttles + queueRows;
+            using (var cmd = SqliteStorage.Command(c, null, "INSERT INTO retention_runs (retention_run_id,policy_name,status,cutoff_utc,rows_scanned,rows_deleted,started_at_utc,completed_at_utc,details_json) VALUES ($id,'read-model-retention','Completed',$cutoff,$scanned,$deleted,$now,$now,$details);"))
+            { cmd.Add("$id", id); cmd.Add("$cutoff", SqliteStorage.Utc(cutoffUtc)); cmd.Add("$scanned", deleted); cmd.Add("$deleted", deleted); cmd.Add("$now", SqliteStorage.Utc(DateTimeOffset.UtcNow)); cmd.Add("$details", $"{{\"logsDeleted\":{logs},\"attemptsDeleted\":{attempts},\"scheduledSlicesDeleted\":{scheduled},\"ingestionThrottlesDeleted\":{throttles},\"queueRowsDeleted\":{queueRows}}}"); cmd.ExecuteNonQuery(); }
             using (var checkpoint = SqliteStorage.Command(c, null, "PRAGMA wal_checkpoint(PASSIVE);")) checkpoint.ExecuteNonQuery();
-            return new RetentionCleanupResult(id, logs, attempts, scheduled, throttles);
+            return new RetentionCleanupResult(id, logs, attempts, scheduled, throttles, queueRows);
         }
 
-        private static void Delete(SqliteConnection c, SqliteTransaction tx, string table, string where, DateTimeOffset cutoff, int batchSize, out int rows)
+        // Deletes eligible rows in batches, committing each batch so a long backlog never holds a
+        // single long write lock on the live database. Stops once a batch clears fewer than the
+        // batch size (the eligible set is drained); the iteration cap is a defensive bound.
+        private static int Drain(SqliteConnection c, string table, string where, DateTimeOffset cutoff, int batchSize)
         {
-            using var cmd = SqliteStorage.Command(c, tx, $"DELETE FROM {table} WHERE rowid IN (SELECT rowid FROM {table} WHERE {where} LIMIT $take);");
-            cmd.Add("$cutoff", SqliteStorage.Utc(cutoff)); cmd.Add("$take", batchSize); rows = cmd.ExecuteNonQuery();
+            var total = 0;
+            for (var iteration = 0; iteration < 1_000_000; iteration++)
+            {
+                int deleted;
+                using (var tx = c.BeginTransaction())
+                {
+                    using var cmd = SqliteStorage.Command(c, tx, $"DELETE FROM {table} WHERE rowid IN (SELECT rowid FROM {table} WHERE {where} LIMIT $take);");
+                    cmd.Add("$cutoff", SqliteStorage.Utc(cutoff)); cmd.Add("$take", batchSize);
+                    deleted = cmd.ExecuteNonQuery();
+                    tx.Commit();
+                }
+
+                total += deleted;
+                if (deleted < batchSize) break;
+            }
+
+            return total;
         }
     }
 }

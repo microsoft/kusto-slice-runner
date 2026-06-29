@@ -85,7 +85,8 @@ namespace KoLite.Local.Sqlite.Tests
             readModels.RecordAttempt("old-attempt", JobId("job.obs"), At(0), At(5), 1, "Succeeded", "worker", At(0), At(1));
             readModels.RecordLog("Information", "old log", "test", JobId("job.obs"), At(0), At(5));
 
-            var result = readModels.CleanupOldReadModels(DateTimeOffset.UtcNow.AddDays(1), batchSize: 100);
+            var cutoff = DateTimeOffset.UtcNow.AddDays(1);
+            var result = readModels.CleanupOldReadModels(cutoff, cutoff, batchSize: 100);
 
             Assert.True(result.LogsDeleted >= 1);
             Assert.True(result.AttemptsDeleted >= 1);
@@ -95,6 +96,54 @@ namespace KoLite.Local.Sqlite.Tests
             Assert.Equal(1, Count("work_queue"));
             Assert.Equal(1, Count("job_definition_events"));
             Assert.Equal(1, Count("retention_runs"));
+        }
+
+        [Fact]
+        public void Retention_prunes_terminal_queue_rows_but_preserves_active_and_leased()
+        {
+            // Leased row (claimed, not completed) — must survive retention.
+            state.Append("leased-state", JobId("job.obs"), At(5), At(10), DurableSliceStatus.Queued, expectedVersion: 0);
+            queue.Enqueue(JobId("job.obs"), At(5), At(10), "leased-key", At(0));
+            queue.Claim("default", "worker", TimeSpan.FromMinutes(5), At(0));
+
+            // Completed row — terminal and old, must be pruned.
+            state.Append("done-state", JobId("job.obs"), At(10), At(15), DurableSliceStatus.Queued, expectedVersion: 0);
+            queue.Enqueue(JobId("job.obs"), At(10), At(15), "done-key", At(0));
+            var claimedDone = queue.Claim("default", "worker", TimeSpan.FromMinutes(5), At(0));
+            Assert.True(queue.Complete(claimedDone!.QueueItemId, "worker"));
+
+            // Queued row (never claimed) — must survive retention.
+            state.Append("queued-state", JobId("job.obs"), At(0), At(5), DurableSliceStatus.Queued, expectedVersion: 0);
+            queue.Enqueue(JobId("job.obs"), At(0), At(5), "queued-key", At(0));
+
+            var cutoff = DateTimeOffset.UtcNow.AddDays(1);
+            var result = readModels.CleanupOldReadModels(cutoff, cutoff, batchSize: 100);
+
+            Assert.Equal(1, result.QueueRowsDeleted);
+            Assert.Equal(2, Count("work_queue"));
+            Assert.Equal(0, CountWhere("work_queue", "state IN ('Completed','DeadLettered')"));
+            Assert.Equal(1, CountWhere("work_queue", "state = 'Leased'"));
+            Assert.Equal(1, CountWhere("work_queue", "state = 'Queued'"));
+            // Authoritative window-history is never touched.
+            Assert.Equal(3, Count("current_slice_state"));
+        }
+
+        [Fact]
+        public void Retention_protects_chart_backing_attempts_below_max_chart_range()
+        {
+            state.Append("recent-state", JobId("job.obs"), At(0), At(5), DurableSliceStatus.Completed, expectedVersion: 0);
+            readModels.RecordAttempt("recent", JobId("job.obs"), At(0), At(5), 1, "Succeeded", "worker", DateTimeOffset.UtcNow.AddDays(-2), DateTimeOffset.UtcNow.AddDays(-1));
+
+            // Standard cutoff (now) would delete the attempt, but the older protected cutoff (60d ago)
+            // keeps chart-backing data within the dashboard's max selectable range.
+            var protectedResult = readModels.CleanupOldReadModels(DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddDays(-60), batchSize: 100);
+            Assert.Equal(0, protectedResult.AttemptsDeleted);
+            Assert.Equal(1, Count("slice_attempts"));
+
+            // Without the clamp (both cutoffs at now), the same attempt is pruned.
+            var unclampedResult = readModels.CleanupOldReadModels(DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, batchSize: 100);
+            Assert.Equal(1, unclampedResult.AttemptsDeleted);
+            Assert.Equal(0, Count("slice_attempts"));
         }
 
         [Fact]
@@ -134,6 +183,11 @@ namespace KoLite.Local.Sqlite.Tests
         private int Count(string table)
         {
             using var c = factory.OpenConnection(); using var cmd = c.CreateCommand(); cmd.CommandText = $"SELECT COUNT(*) FROM {table};"; return Convert.ToInt32(cmd.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        private int CountWhere(string table, string predicate)
+        {
+            using var c = factory.OpenConnection(); using var cmd = c.CreateCommand(); cmd.CommandText = $"SELECT COUNT(*) FROM {table} WHERE {predicate};"; return Convert.ToInt32(cmd.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture);
         }
 
         private static DateTimeOffset At(int minutes) => new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero).AddMinutes(minutes);

@@ -14,6 +14,7 @@ using KoLite.Local.Sqlite.Repair;
 using KoLite.Local.Sqlite.Rerun;
 using KoLite.Local.Sqlite.State;
 using KoLite.Local.Sqlite.Throttling;
+using KoLite.LocalApp.Retention;
 using KoLite.LocalApp.Ui;
 using KoLite.LocalApp.Updates;
 using Microsoft.Extensions.Configuration;
@@ -29,6 +30,7 @@ namespace KoLite.LocalApp
             AddReadModels(services);
             AddExecution(services, configuration);
             AddWorkerHost(services);
+            AddRetention(services);
             AddUpdates(services);
             return services;
         }
@@ -97,6 +99,14 @@ namespace KoLite.LocalApp
             services.AddSingleton<LocalWorkerPoolRuntimeState>();
             services.AddHostedService<LocalBackgroundSchedulerService>();
             services.AddHostedService<LocalBackgroundWorkerService>();
+        }
+
+        private static void AddRetention(IServiceCollection services)
+        {
+            services.AddSingleton(sp => LocalRetentionOptions.From(sp.GetRequiredService<IConfiguration>()));
+            services.AddSingleton(sp => new RetentionRuntimeState(
+                RetentionSnapshot.Initial(sp.GetRequiredService<LocalRetentionOptions>().Enabled)));
+            services.AddHostedService<LocalRetentionBackgroundService>();
         }
 
         private static void AddUpdates(IServiceCollection services)
