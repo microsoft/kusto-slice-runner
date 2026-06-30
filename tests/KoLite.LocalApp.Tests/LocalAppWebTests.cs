@@ -1829,6 +1829,53 @@ namespace KoLite.LocalApp.Tests
             Assert.DoesNotContain("legend-color stalled", html, StringComparison.Ordinal);
         }
 
+        [Fact]
+        public async Task Activity_page_renders_running_now_totals_and_throughput_chart()
+        {
+            var jobId = JobId("activity.web");
+            var catalog = new SqliteJobCatalogRepository(sqlite);
+            var state = new SqliteSliceStateRepository(sqlite);
+            var readModels = new SqliteOperationalReadModelRepository(sqlite);
+            catalog.Create(Schedule("activity.web", "ActivityFunction", isPaused: false));
+
+            var now = DateTimeOffset.UtcNow;
+            state.Append("activity-a", jobId, At(0), At(5), DurableSliceStatus.Completed, expectedVersion: 0);
+            state.Append("activity-b", jobId, At(5), At(10), DurableSliceStatus.Completed, expectedVersion: 0);
+            state.Append("activity-c", jobId, At(10), At(15), DurableSliceStatus.Failed, expectedVersion: 0, reason: "boom");
+            state.Append("activity-d", jobId, At(15), At(20), DurableSliceStatus.DeadLettered, expectedVersion: 0, reason: "dead");
+            state.Append("activity-e", jobId, At(20), At(25), DurableSliceStatus.Running, expectedVersion: 0);
+            state.Append("activity-f", jobId, At(25), At(30), DurableSliceStatus.Queued, expectedVersion: 0);
+            readModels.RecordAttempt("activity-a-att", jobId, At(0), At(5), 1, "Succeeded", "worker", now.AddMinutes(-6), now.AddMinutes(-5));
+            readModels.RecordAttempt("activity-b-att", jobId, At(5), At(10), 1, "Succeeded", "worker", now.AddMinutes(-11), now.AddMinutes(-10));
+            readModels.RecordAttempt("activity-c-att", jobId, At(10), At(15), 1, "Failed", "worker", now.AddMinutes(-16), now.AddMinutes(-15));
+            readModels.RecordAttempt("activity-d-att", jobId, At(15), At(20), 1, "DeadLettered", "worker", now.AddMinutes(-21), now.AddMinutes(-20));
+
+            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+
+            using var response = await client.GetAsync("/activity");
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            var page = await response.Content.ReadAsStringAsync();
+
+            // Nav link is rendered on every page.
+            Assert.Contains("href=\"/activity\"", page);
+            // Running-now section surfaces the one Running slice and the queued count.
+            Assert.Contains("Running now", page);
+            Assert.Contains("activity.web", page);
+            Assert.Contains("slice(s) executing", page);
+            Assert.Contains("slice(s) waiting to be claimed", page);
+            // Processed totals: succeeded = 2 completed, failed = 1 Failed + 1 DeadLettered.
+            Assert.Contains("Slices processed", page);
+            Assert.Contains("Last day", page);
+            Assert.Contains("Last 7 days", page);
+            Assert.Contains("Last 30 days", page);
+            Assert.Contains("All time", page);
+            Assert.Contains("2 succeeded", page);
+            Assert.Contains("2 failed", page);
+            // Throughput chart hook + payload are present once there is data.
+            Assert.Contains("Processed over time", page);
+            Assert.Contains("data-chartjs-activity=\"slices-processed-chart\"", page);
+        }
+
         private void SeedOperationalData()
         {
             var catalog = new SqliteJobCatalogRepository(sqlite);

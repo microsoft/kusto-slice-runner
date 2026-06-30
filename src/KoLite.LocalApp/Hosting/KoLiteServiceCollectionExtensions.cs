@@ -63,6 +63,7 @@ namespace KoLite.LocalApp
             services.AddScoped<JobDetailsPageQuery>();
             services.AddScoped<JobChartQuery>();
             services.AddScoped<ThrottleSeverityQuery>();
+            services.AddScoped<ActivityQuery>();
             services.AddScoped<LifecycleReadModel>();
             services.AddScoped<OperationalDetailsReadModel>();
         }
