@@ -58,9 +58,11 @@ namespace KoLite.Local.Core.Scheduling
     {
         public required CatchUpStatus Status { get; init; }
 
-        // Eligible-but-incomplete slices and the equivalent data-time backlog. Slices currently
-        // blocked on an upstream dependency are excluded from these (the job cannot work them off
-        // on its own) and reported separately in BacklogBlockedSlices.
+        // Eligible-but-incomplete slices and the equivalent data-time backlog. Two kinds of eligible
+        // slices are excluded because the job will not work them off on its own: slices currently
+        // blocked on an upstream dependency (reported separately in BacklogBlockedSlices), and
+        // terminal dead-lettered slices (treated as done -- they never run again without an operator
+        // rerun/repair, so counting them would falsely report the job as "catching up").
         public int BacklogSlices { get; init; }
         public TimeSpan BacklogDataTime { get; init; }
 
@@ -148,6 +150,7 @@ namespace KoLite.Local.Core.Scheduling
             int completedSliceCount,
             CatchUpThroughputSample throughput,
             int dependencyBlockedSliceCount = 0,
+            int deadLetteredSliceCount = 0,
             DateTimeOffset? lastDefinitionChangeUtc = null,
             CatchUpOptions? options = null)
         {
@@ -203,12 +206,16 @@ namespace KoLite.Local.Core.Scheduling
             }
 
             // Backlog is eligible work this job can actually do now: total eligible slices minus
-            // those already completed and minus those blocked on an upstream dependency. Excluding
-            // dependency-blocked slices keeps a job that is merely waiting on upstream (for its most
-            // recent slices) from being reported as "catching up".
+            // those already completed, minus those blocked on an upstream dependency, minus terminal
+            // dead-lettered slices. Excluding dependency-blocked slices keeps a job that is merely
+            // waiting on upstream (for its most recent slices) from being reported as "catching up".
+            // Dead-lettered slices are terminal -- they will not run again without an operator
+            // rerun/repair -- so they are treated as done; counting them would leave a job that has
+            // finished everything it will do on its own permanently reported as "catching up".
             var blockedSlices = Math.Max(0, dependencyBlockedSliceCount);
+            var deadLetteredSlices = Math.Max(0, deadLetteredSliceCount);
             var eligibleTotal = (eligibleEndUtc - startFromUtc).Ticks / queryWindow.Ticks;
-            var backlogSlices = (int)Math.Max(0, Math.Min(int.MaxValue, eligibleTotal - completedSliceCount - blockedSlices));
+            var backlogSlices = (int)Math.Max(0, Math.Min(int.MaxValue, eligibleTotal - completedSliceCount - deadLetteredSlices - blockedSlices));
             var backlogDataTime = TimeSpan.FromTicks(queryWindow.Ticks * backlogSlices);
 
             var baseProjection = new CatchUpProjection

@@ -147,6 +147,68 @@ namespace KoLite.Local.Core.Tests
         }
 
         [Fact]
+        public void Dead_lettered_slices_are_treated_as_done_and_excluded_from_backlog()
+        {
+            // 5 eligible 1h slices: 2 completed and 3 dead-lettered == every eligible slice. The
+            // dead-lettered slices are terminal (they never run again without an operator rerun), so
+            // they count as done, the backlog is 0, and the job is caught up with nothing to show.
+            var projection = CatchUpEstimator.Estimate(
+                Utc("2026-01-01T05:00:00Z"),
+                Job(window: TimeSpan.FromHours(1), delay: TimeSpan.Zero),
+                isEnabled: true,
+                completedFrontierUtc: Utc("2026-01-01T02:00:00Z"),
+                completedSliceCount: 2,
+                Sample(count: 11, first: "2026-01-01T04:00:00Z", last: "2026-01-01T04:40:00Z"),
+                deadLetteredSliceCount: 3);
+
+            Assert.Equal(CatchUpStatus.CaughtUp, projection.Status);
+            Assert.False(projection.ShouldDisplay);
+            Assert.Equal(0, projection.BacklogSlices);
+        }
+
+        [Fact]
+        public void Large_backlog_still_displays_after_excluding_dead_lettered_slices()
+        {
+            // 240 eligible 1h slices, 200 complete => raw backlog 40; 5 are dead-lettered (terminal),
+            // so the actionable backlog is 35h. R = 5 => 35 / (5 - 1) = 8.75h to catch up.
+            var projection = CatchUpEstimator.Estimate(
+                Utc("2026-01-11T00:00:00Z"),
+                Job(window: TimeSpan.FromHours(1), delay: TimeSpan.Zero),
+                isEnabled: true,
+                completedFrontierUtc: Utc("2026-01-09T08:00:00Z"),
+                completedSliceCount: 200,
+                Sample(count: 11, first: "2026-01-10T20:00:00Z", last: "2026-01-10T22:00:00Z"),
+                deadLetteredSliceCount: 5);
+
+            Assert.Equal(CatchUpStatus.CatchingUp, projection.Status);
+            Assert.True(projection.ShouldDisplay);
+            Assert.Equal(35, projection.BacklogSlices);
+            Assert.Equal(TimeSpan.FromHours(35), projection.BacklogDataTime);
+            Assert.Equal(TimeSpan.FromHours(8.75), projection.ProjectedCatchUp);
+            Assert.Equal(Utc("2026-01-11T08:45:00Z"), projection.EtaUtc);
+        }
+
+        [Fact]
+        public void Dead_lettered_and_dependency_blocked_slices_are_both_excluded_from_backlog()
+        {
+            // 240 eligible 1h slices, 200 complete; 3 dead-lettered (done) and 2 dependency-blocked are
+            // all excluded, leaving an actionable backlog of 35h. The blocked count is still reported.
+            var projection = CatchUpEstimator.Estimate(
+                Utc("2026-01-11T00:00:00Z"),
+                Job(window: TimeSpan.FromHours(1), delay: TimeSpan.Zero),
+                isEnabled: true,
+                completedFrontierUtc: Utc("2026-01-09T08:00:00Z"),
+                completedSliceCount: 200,
+                Sample(count: 11, first: "2026-01-10T20:00:00Z", last: "2026-01-10T22:00:00Z"),
+                dependencyBlockedSliceCount: 2,
+                deadLetteredSliceCount: 3);
+
+            Assert.Equal(CatchUpStatus.CatchingUp, projection.Status);
+            Assert.Equal(35, projection.BacklogSlices);
+            Assert.Equal(2, projection.BacklogBlockedSlices);
+        }
+
+        [Fact]
         public void Too_few_completions_yields_insufficient_data()
         {
             var projection = CatchUpEstimator.Estimate(

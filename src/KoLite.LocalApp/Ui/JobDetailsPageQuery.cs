@@ -150,6 +150,11 @@ namespace KoLite.LocalApp.Ui
             // slices) is not reported as catching up.
             var dependencyBlocked = statuses.Count(s => string.Equals(s.Status, "DependencyBlocked", StringComparison.Ordinal));
 
+            // Terminal dead-lettered slices are treated as done: they will not run again without an
+            // operator rerun/repair, so counting them would keep a job that has finished everything it
+            // will do on its own permanently reported as catching up.
+            var deadLettered = statuses.Count(s => string.Equals(s.Status, "DeadLettered", StringComparison.Ordinal));
+
             var lastDefinitionChange = catalogHistory
                 .Where(h => h.IsInitialDefinition || h.HasScheduleChanges)
                 .Select(h => (DateTimeOffset?)h.RecordedAtUtc)
@@ -160,7 +165,7 @@ namespace KoLite.LocalApp.Ui
             var throughput = readModels.GetRecentSucceededThroughput(job.JobId, sinceUtc);
             var sample = new CatchUpThroughputSample(throughput.SucceededCount, throughput.FirstCompletedUtc, throughput.LastCompletedUtc);
 
-            return CatchUpEstimator.Estimate(now, definition, job.IsEnabled, completedFrontier, completed.Count, sample, dependencyBlocked, lastDefinitionChange, options);
+            return CatchUpEstimator.Estimate(now, definition, job.IsEnabled, completedFrontier, completed.Count, sample, dependencyBlocked, deadLettered, lastDefinitionChange, options);
         }
 
         public SliceDetailsPageData? GetSlice(string jobId, DateTimeOffset sliceStartUtc, DateTimeOffset sliceEndUtc)

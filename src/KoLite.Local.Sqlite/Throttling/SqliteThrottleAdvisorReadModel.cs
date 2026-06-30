@@ -246,12 +246,13 @@ namespace KoLite.Local.Sqlite.Throttling
             var completed = statuses.Where(s => string.Equals(s.Status, "Completed", StringComparison.Ordinal)).ToList();
             DateTimeOffset? completedFrontier = completed.Count == 0 ? null : completed.Max(s => s.SliceEndUtc);
             var dependencyBlocked = statuses.Count(s => string.Equals(s.Status, "DependencyBlocked", StringComparison.Ordinal));
+            var deadLettered = statuses.Count(s => string.Equals(s.Status, "DeadLettered", StringComparison.Ordinal));
 
             var catchUpOptions = CatchUpOptions.Default;
             var throughput = readModels.GetRecentSucceededThroughput(job.JobId, nowUtc - catchUpOptions.MaxThroughputLookback);
             var sample = new CatchUpThroughputSample(throughput.SucceededCount, throughput.FirstCompletedUtc, throughput.LastCompletedUtc);
 
-            var projection = CatchUpEstimator.Estimate(nowUtc, job.Definition, job.IsEnabled, completedFrontier, completed.Count, sample, dependencyBlocked, lastDefinitionChangeUtc: null, catchUpOptions);
+            var projection = CatchUpEstimator.Estimate(nowUtc, job.Definition, job.IsEnabled, completedFrontier, completed.Count, sample, dependencyBlocked, deadLettered, lastDefinitionChangeUtc: null, catchUpOptions);
             var isBackfilling = projection.BacklogSlices > catchUpOptions.MinBacklogSlices && projection.BacklogDataTime > TimeSpan.Zero;
             return (projection.BacklogSlices, projection.BacklogDataTime, isBackfilling);
         }
