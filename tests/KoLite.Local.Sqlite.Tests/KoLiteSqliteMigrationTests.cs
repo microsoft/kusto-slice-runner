@@ -249,16 +249,28 @@ namespace KoLite.Local.Sqlite.Tests
         }
 
         [Fact]
-        public void FactoryAppliesWalModeAndBusyTimeout()
+        public void MigratorEstablishesWalAndFactoryAppliesConnectionPragmas()
         {
             var factory = CreateFactory(busyTimeoutMilliseconds: 7_500);
 
-            using var connection = factory.OpenConnection();
+            // WAL is a persistent database property established once by the migrator, not re-applied on
+            // every open. Before migration a fresh connection is in the default journal mode, but the
+            // connection-scoped pragmas (busy_timeout, foreign_keys, synchronous) are applied per open.
+            using (var beforeMigration = factory.OpenConnection())
+            {
+                Assert.Equal("delete", QueryString(beforeMigration, "PRAGMA journal_mode;"));
+                Assert.Equal(7_500, QueryInt(beforeMigration, "PRAGMA busy_timeout;"));
+                Assert.Equal(1, QueryInt(beforeMigration, "PRAGMA foreign_keys;"));
+                Assert.Equal(1, QueryInt(beforeMigration, "PRAGMA synchronous;"));
+            }
 
-            Assert.Equal("wal", QueryString(connection, "PRAGMA journal_mode;"));
-            Assert.Equal(7_500, QueryInt(connection, "PRAGMA busy_timeout;"));
-            Assert.Equal(1, QueryInt(connection, "PRAGMA foreign_keys;"));
-            Assert.Equal(1, QueryInt(connection, "PRAGMA synchronous;"));
+            new KoLiteSqliteMigrator(factory).Migrate();
+
+            using var afterMigration = factory.OpenConnection();
+            Assert.Equal("wal", QueryString(afterMigration, "PRAGMA journal_mode;"));
+            Assert.Equal(7_500, QueryInt(afterMigration, "PRAGMA busy_timeout;"));
+            Assert.Equal(1, QueryInt(afterMigration, "PRAGMA foreign_keys;"));
+            Assert.Equal(1, QueryInt(afterMigration, "PRAGMA synchronous;"));
         }
 
         [Fact]

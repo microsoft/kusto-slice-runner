@@ -97,7 +97,13 @@ namespace KoLite.Local.Sqlite.Lifecycle
 
             var purgeRunId = Guid.NewGuid().ToString("N");
             using var c = connectionFactory.OpenConnection();
-            using var tx = c.BeginTransaction();
+
+            // BEGIN IMMEDIATE: the purge is a write-heavy operation, so acquire the single WAL writer
+            // up front rather than starting deferred (a read that later upgrades to a write). The
+            // deferred read-then-upgrade pattern can lose the upgrade race to a concurrent worker write
+            // and raise SQLITE_BUSY mid-purge; taking the writer immediately makes the purge atomic
+            // against other writers from the first statement.
+            using var tx = c.BeginTransaction(deferred: false);
             EnsureHardDeletePreconditions(c, tx, jobId);
             InsertPurgeRun(c, tx, purgeRunId, jobId, actor, reason, "Running");
             var repairBatchIds = ReadRepairBatchIds(c, tx, jobId);

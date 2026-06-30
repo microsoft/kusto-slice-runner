@@ -14,6 +14,10 @@ namespace KoLite.Local.Sqlite.Connections
 
         public string DatabasePath { get; }
 
-        public int BusyTimeoutMilliseconds { get; init; } = 5_000;
+        // Generous default so a writer waits out a longer single-writer operation (for example a
+        // hard-delete batch, or any pass that briefly holds the WAL writer) instead of failing with
+        // SQLITE_BUSY. WAL allows one writer at a time; this is how long another writer's BEGIN
+        // IMMEDIATE retries before giving up. Override via KoLite:Sqlite:BusyTimeoutMilliseconds.
+        public int BusyTimeoutMilliseconds { get; init; } = 15_000;
     }
 }

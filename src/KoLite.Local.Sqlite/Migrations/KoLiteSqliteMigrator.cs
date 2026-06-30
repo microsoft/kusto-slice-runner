@@ -40,6 +40,13 @@ namespace KoLite.Local.Sqlite.Migrations
         public void Migrate(SqliteConnection connection)
         {
             ArgumentNullException.ThrowIfNull(connection);
+
+            // Establish WAL exactly once, at startup, before any hosted service opens a pooled
+            // connection. WAL is a persistent database-header property, so per-connection ApplyPragmas
+            // no longer sets it (doing so took a write lock on every open, including read-only paths).
+            // WAL must run outside a transaction, so it is set here before any ledger work begins.
+            ExecuteNonQuery(connection, null, "PRAGMA journal_mode = WAL;");
+
             EnsureLedger(connection);
             CollapseLegacyLedger(connection);
 
