@@ -48,14 +48,15 @@ namespace KoLite.LocalApp.Tests
             using var scope = factory.Services.CreateScope();
             var sink = scope.ServiceProvider.GetRequiredService<ILocalWorkerProgressSink>();
             var progress = new LocalWorkerProgressEvent(
-                "job.console",
+                "ccaa54932f874b3c8c15faf7e52bcc70",
                 "queue-item-1",
                 At(10),
                 At(15),
                 2,
                 "console-worker",
                 LocalWorkerProgressStatus.Started,
-                At(20));
+                At(20),
+                DisplayName: "Daily Console Export");
 
             sink.RecordStarted(progress);
             sink.RecordFinished(progress with
@@ -67,22 +68,32 @@ namespace KoLite.LocalApp.Tests
                 DeadLettered = true
             });
 
+            // The printed message identifies the job by its display name, never the opaque GUID,
+            // and never leaks the queue item id. The GUID is retained only as a structured scope
+            // property so diagnostics/structured sinks can still correlate by durable id.
             Assert.Contains(provider.Entries, entry =>
                 entry.Level == LogLevel.Information
                 && entry.Message.Contains("Job slice started", StringComparison.Ordinal)
-                && HasValue(entry, "JobId", "job.console")
+                && entry.Message.Contains("Daily Console Export", StringComparison.Ordinal)
+                && !entry.Message.Contains("ccaa54932f874b3c8c15faf7e52bcc70", StringComparison.Ordinal)
+                && HasValue(entry, "JobDisplayName", "Daily Console Export")
                 && HasValue(entry, "SliceStartUtc", At(10))
                 && HasValue(entry, "SliceEndUtc", At(15))
                 && HasValue(entry, "Attempt", 2)
+                && !entry.Values.ContainsKey("JobId")
                 && !entry.Message.Contains("queue-item-1", StringComparison.Ordinal)
-                && !entry.Values.ContainsKey("QueueItemId"));
+                && !entry.Values.ContainsKey("QueueItemId")
+                && HasScopeValue(entry, "JobId", "ccaa54932f874b3c8c15faf7e52bcc70"));
             Assert.Contains(provider.Entries, entry =>
                 entry.Level == LogLevel.Error
                 && entry.Message.Contains("Kusto command failed", StringComparison.Ordinal)
-                && HasValue(entry, "JobId", "job.console")
+                && entry.Message.Contains("Daily Console Export", StringComparison.Ordinal)
+                && !entry.Message.Contains("ccaa54932f874b3c8c15faf7e52bcc70", StringComparison.Ordinal)
+                && HasValue(entry, "JobDisplayName", "Daily Console Export")
                 && HasValue(entry, "CompletionStatus", LocalWorkerProgressStatus.DeadLettered)
                 && HasValue(entry, "ErrorCode", "KustoServiceException")
-                && HasValue(entry, "ErrorMessage", "Kusto command failed"));
+                && HasValue(entry, "ErrorMessage", "Kusto command failed")
+                && HasScopeValue(entry, "JobId", "ccaa54932f874b3c8c15faf7e52bcc70"));
         }
 
         public void Dispose()
@@ -95,7 +106,10 @@ namespace KoLite.LocalApp.Tests
         private static bool HasValue(LogEntry entry, string key, object expected) =>
             entry.Values.TryGetValue(key, out var actual) && Equals(actual, expected);
 
-        private sealed record LogEntry(LogLevel Level, string Message, IReadOnlyDictionary<string, object?> Values);
+        private static bool HasScopeValue(LogEntry entry, string key, object expected) =>
+            entry.Scopes.TryGetValue(key, out var actual) && Equals(actual, expected);
+
+        private sealed record LogEntry(LogLevel Level, string Message, IReadOnlyDictionary<string, object?> Values, IReadOnlyDictionary<string, object?> Scopes);
 
         private sealed class RecordingLoggerProvider : ILoggerProvider
         {
@@ -117,13 +131,19 @@ namespace KoLite.LocalApp.Tests
         private sealed class RecordingLogger : ILogger
         {
             private readonly RecordingLoggerProvider provider;
+            private readonly List<object?> activeScopes = [];
 
             public RecordingLogger(RecordingLoggerProvider provider)
             {
                 this.provider = provider;
             }
 
-            public IDisposable? BeginScope<TState>(TState state) where TState : notnull => NullScope.Instance;
+            public IDisposable? BeginScope<TState>(TState state) where TState : notnull
+            {
+                activeScopes.Add(state);
+                return new ScopeTracker(activeScopes, state);
+            }
+
             public bool IsEnabled(LogLevel logLevel) => true;
 
             public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
@@ -131,14 +151,31 @@ namespace KoLite.LocalApp.Tests
                 var values = state is IEnumerable<KeyValuePair<string, object?>> pairs
                     ? pairs.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal)
                     : new Dictionary<string, object?>(StringComparer.Ordinal);
-                provider.Add(new LogEntry(logLevel, formatter(state, exception), values));
+                var scopes = new Dictionary<string, object?>(StringComparer.Ordinal);
+                foreach (var scope in activeScopes)
+                {
+                    if (scope is IEnumerable<KeyValuePair<string, object?>> scopePairs)
+                    {
+                        foreach (var pair in scopePairs) scopes[pair.Key] = pair.Value;
+                    }
+                }
+
+                provider.Add(new LogEntry(logLevel, formatter(state, exception), values, scopes));
             }
         }
 
-        private sealed class NullScope : IDisposable
+        private sealed class ScopeTracker : IDisposable
         {
-            public static NullScope Instance { get; } = new();
-            public void Dispose() { }
+            private readonly List<object?> scopes;
+            private readonly object? state;
+
+            public ScopeTracker(List<object?> scopes, object? state)
+            {
+                this.scopes = scopes;
+                this.state = state;
+            }
+
+            public void Dispose() => scopes.Remove(state);
         }
     }
 }

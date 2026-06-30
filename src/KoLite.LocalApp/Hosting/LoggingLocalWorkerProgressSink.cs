@@ -19,53 +19,59 @@ namespace KoLite.LocalApp
 
         public void RecordStarted(LocalWorkerProgressEvent progress)
         {
-            logger.LogInformation(
-                "Job slice started for job {JobId}: slice {SliceStartUtc:O} to {SliceEndUtc:O}, attempt {Attempt}.",
-                progress.JobId,
-                progress.SliceStartUtc,
-                progress.SliceEndUtc,
-                progress.Attempt);
+            using (BeginJobScope(progress))
+            {
+                logger.LogInformation(
+                    "Job slice started for job {JobDisplayName}: slice {SliceStartUtc:O} to {SliceEndUtc:O}, attempt {Attempt}.",
+                    JobLabel(progress),
+                    progress.SliceStartUtc,
+                    progress.SliceEndUtc,
+                    progress.Attempt);
+            }
         }
 
         public void RecordFinished(LocalWorkerProgressEvent progress)
         {
             TryRecordIngestionThrottle(progress);
 
-            if (progress.Status == LocalWorkerProgressStatus.Succeeded)
+            using (BeginJobScope(progress))
             {
-                logger.LogInformation(
-                    "Job slice finished for job {JobId}: slice {SliceStartUtc:O} to {SliceEndUtc:O}, attempt {Attempt}, status {CompletionStatus}.",
-                    progress.JobId,
-                    progress.SliceStartUtc,
-                    progress.SliceEndUtc,
-                    progress.Attempt,
-                    progress.Status);
-                return;
-            }
+                if (progress.Status == LocalWorkerProgressStatus.Succeeded)
+                {
+                    logger.LogInformation(
+                        "Job slice finished for job {JobDisplayName}: slice {SliceStartUtc:O} to {SliceEndUtc:O}, attempt {Attempt}, status {CompletionStatus}.",
+                        JobLabel(progress),
+                        progress.SliceStartUtc,
+                        progress.SliceEndUtc,
+                        progress.Attempt,
+                        progress.Status);
+                    return;
+                }
 
-            if (progress.Status == LocalWorkerProgressStatus.DeadLettered)
-            {
-                logger.LogError(
-                    "Job slice finished for job {JobId}: slice {SliceStartUtc:O} to {SliceEndUtc:O}, attempt {Attempt}, status {CompletionStatus}, error {ErrorCode}: {ErrorMessage}.",
-                    progress.JobId,
+                if (progress.Status == LocalWorkerProgressStatus.DeadLettered)
+                {
+                    logger.LogError(
+                        "Job slice finished for job {JobDisplayName}: slice {SliceStartUtc:O} to {SliceEndUtc:O}, attempt {Attempt}, status {CompletionStatus}, error {ErrorCode}: {ErrorMessage}.",
+                        JobLabel(progress),
+                        progress.SliceStartUtc,
+                        progress.SliceEndUtc,
+                        progress.Attempt,
+                        progress.Status,
+                        progress.ErrorCode,
+                        progress.ErrorMessage);
+                    return;
+                }
+
+                logger.LogWarning(
+                    "Job slice finished for job {JobDisplayName}: slice {SliceStartUtc:O} to {SliceEndUtc:O}, attempt {Attempt}, status {CompletionStatus}, error {ErrorCode}: {ErrorMessage}.",
+                    JobLabel(progress),
                     progress.SliceStartUtc,
                     progress.SliceEndUtc,
                     progress.Attempt,
                     progress.Status,
                     progress.ErrorCode,
                     progress.ErrorMessage);
-                return;
             }
-
-            logger.LogWarning(
-                "Job slice finished for job {JobId}: slice {SliceStartUtc:O} to {SliceEndUtc:O}, attempt {Attempt}, status {CompletionStatus}, error {ErrorCode}: {ErrorMessage}.",
-                progress.JobId,
-                progress.SliceStartUtc,
-                progress.SliceEndUtc,
-                progress.Attempt,
-                progress.Status,
-                progress.ErrorCode,
-                progress.ErrorMessage);
         }
 
         // Records an observation when a slice attempt failed specifically because of Kusto
@@ -80,8 +86,22 @@ namespace KoLite.LocalApp
             }
             catch (Exception ex)
             {
-                logger.LogWarning(ex, "Failed to record ingestion throttle observation for job {JobId}.", progress.JobId);
+                using (BeginJobScope(progress))
+                {
+                    logger.LogWarning(ex, "Failed to record ingestion throttle observation for job {JobDisplayName}.", JobLabel(progress));
+                }
             }
         }
+
+        // The human-facing label rendered into the console message. Falls back to the opaque
+        // JobId when no display name was resolved, so output degrades gracefully instead of blank.
+        private static string JobLabel(LocalWorkerProgressEvent progress) =>
+            string.IsNullOrWhiteSpace(progress.DisplayName) ? progress.JobId : progress.DisplayName!;
+
+        // Attaches the durable JobId (GUID) as a structured logging scope property. The default
+        // console formatter omits scopes (IncludeScopes is off), so the GUID stays out of the
+        // printed text while remaining available to structured sinks and diagnostics.
+        private IDisposable? BeginJobScope(LocalWorkerProgressEvent progress) =>
+            logger.BeginScope(new Dictionary<string, object?> { ["JobId"] = progress.JobId });
     }
 }
