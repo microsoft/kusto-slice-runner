@@ -194,6 +194,8 @@ namespace KoLite.Local.Sqlite.Tests
                 "ix_ingestion_throttle_cluster_observed",
                 "ix_ingestion_throttle_job",
                 "ix_ingestion_throttle_terminal",
+                "ix_current_slice_state_last_event",
+                "ix_repair_slices_enqueued_queue_item",
             };
 
             foreach (var index in expectedIndexes)

@@ -20,6 +20,7 @@ namespace KoLite.Local.Sqlite.Migrations
             new(BaselineVersion, BaselineName, BaselineSchemaSql),
             new(2, "ingestion-throttle-observations", IngestionThrottleObservationsSql),
             new(3, "ingestion-throttle-terminal", IngestionThrottleTerminalSql),
+            new(4, "foreign-key-delete-indexes", ForeignKeyDeleteIndexesSql),
         ];
 
         private readonly IKoLiteSqliteConnectionFactory connectionFactory;
@@ -496,6 +497,20 @@ namespace KoLite.Local.Sqlite.Migrations
             ALTER TABLE ingestion_throttle_observations ADD COLUMN terminal INTEGER NOT NULL DEFAULT 0;
 
             CREATE INDEX IF NOT EXISTS ix_ingestion_throttle_terminal ON ingestion_throttle_observations(terminal, observed_at_utc);
+            """;
+
+        // Version 4 (additive): index the two foreign-key columns whose ON DELETE action is otherwise
+        // unindexed, so a hard delete does not degrade to O(rows^2). The FK
+        // current_slice_state.last_event_id -> slice_state_events(event_id) ON DELETE SET NULL forced a
+        // full scan of current_slice_state for every slice_state_events row deleted during a purge
+        // (e.g. 12k events x 99k states ~= 1.2 billion row scans), which hung the hard-delete request,
+        // held the single WAL writer, and starved the worker (SQLITE_BUSY "database is locked"). The
+        // repair_slices.enqueued_queue_item_id -> work_queue(queue_item_id) ON DELETE SET NULL FK has
+        // the same latent problem on the work_queue delete. These indexes turn each FK enforcement
+        // lookup into an index seek. Pure indexes (no data change); replays idempotently.
+        private const string ForeignKeyDeleteIndexesSql = """
+            CREATE INDEX IF NOT EXISTS ix_current_slice_state_last_event ON current_slice_state(last_event_id);
+            CREATE INDEX IF NOT EXISTS ix_repair_slices_enqueued_queue_item ON repair_slices(enqueued_queue_item_id);
             """;
     }
 }
