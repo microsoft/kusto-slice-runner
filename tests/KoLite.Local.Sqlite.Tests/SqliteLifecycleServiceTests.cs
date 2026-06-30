@@ -80,32 +80,55 @@ namespace KoLite.Local.Sqlite.Tests
         }
 
         [Fact]
-        public void Hard_delete_fails_when_disabled_job_has_active_work_or_running_slices()
+        public void Hard_delete_succeeds_for_a_disabled_job_with_inert_queued_or_expired_lease_work()
         {
-            var queued = catalog.Create(Schedule("job.active.queued"));
-            state.Append("queued-active", JobId("job.active.queued"), At(0), At(5), DurableSliceStatus.Queued, expectedVersion: 0);
-            queue.Enqueue(JobId("job.active.queued"), At(0), At(5), "active-queued", At(0));
-            Service().SoftDelete(JobId("job.active.queued"), queued.CatalogVersion, "tester", "disable");
+            // The reported case: a slice failed and was re-queued (Queued) just before the job was
+            // disabled. The retry is inert -- a disabled job is never worked -- so it must not block the
+            // purge forever. (Before the fix this threw "active work item(s) are queued or leased".)
+            var queued = catalog.Create(Schedule("job.inert.queued"));
+            state.Append("queued-inert", JobId("job.inert.queued"), At(0), At(5), DurableSliceStatus.Queued, expectedVersion: 0);
+            queue.Enqueue(JobId("job.inert.queued"), At(0), At(5), "inert-queued", At(0));
+            Service().SoftDelete(JobId("job.inert.queued"), queued.CatalogVersion, "tester", "disable");
 
-            Assert.Throws<InvalidOperationException>(() => Service().HardDelete(JobId("job.active.queued"), $"DELETE {JobId("job.active.queued")}", "tester", "purge"));
-            Assert.NotNull(catalog.Get(JobId("job.active.queued")));
+            var result = Service().HardDelete(JobId("job.inert.queued"), $"DELETE {JobId("job.inert.queued")}", "tester", "purge");
+            Assert.Equal(1, result.DeletedJobs);
+            Assert.Null(catalog.Get(JobId("job.inert.queued")));
+            Assert.Empty(queue.List(JobId("job.inert.queued")));
 
-            var leased = catalog.Create(Schedule("job.active.leased"));
-            state.Append("leased-active", JobId("job.active.leased"), At(0), At(5), DurableSliceStatus.Queued, expectedVersion: 0);
-            queue.Enqueue(JobId("job.active.leased"), At(0), At(5), "active-leased", At(0));
-            var item = queue.Claim("default", "lease-test-worker", TimeSpan.FromMinutes(5), At(1));
-            Assert.NotNull(item);
-            Service().SoftDelete(JobId("job.active.leased"), leased.CatalogVersion, "tester", "disable");
+            // An expired (abandoned/crashed) lease is also inert for a disabled job: the synthetic claim
+            // time is far in the past, so the lease is long expired relative to now.
+            var expired = catalog.Create(Schedule("job.inert.expired"));
+            state.Append("expired-lease", JobId("job.inert.expired"), At(0), At(5), DurableSliceStatus.Queued, expectedVersion: 0);
+            queue.Enqueue(JobId("job.inert.expired"), At(0), At(5), "inert-expired", At(0));
+            var stale = queue.Claim("default", "stale-worker", TimeSpan.FromMinutes(5), At(1));
+            Assert.NotNull(stale);
+            Service().SoftDelete(JobId("job.inert.expired"), expired.CatalogVersion, "tester", "disable");
 
-            Assert.Throws<InvalidOperationException>(() => Service().HardDelete(JobId("job.active.leased"), $"DELETE {JobId("job.active.leased")}", "tester", "purge"));
-            Assert.NotNull(catalog.Get(JobId("job.active.leased")));
+            Assert.Equal(1, Service().HardDelete(JobId("job.inert.expired"), $"DELETE {JobId("job.inert.expired")}", "tester", "purge").DeletedJobs);
+            Assert.Null(catalog.Get(JobId("job.inert.expired")));
+        }
 
-            var running = catalog.Create(Schedule("job.active.running"));
-            state.Append("running", JobId("job.active.running"), At(0), At(5), DurableSliceStatus.Running, expectedVersion: 0);
-            Service().SoftDelete(JobId("job.active.running"), running.CatalogVersion, "tester", "disable");
+        [Fact]
+        public void Hard_delete_is_blocked_only_while_a_live_lease_or_running_slice_is_active()
+        {
+            // A work item held by a worker whose lease is still live (claimed "now") blocks the purge.
+            var leased = catalog.Create(Schedule("job.live.leased"));
+            state.Append("live-leased", JobId("job.live.leased"), At(0), At(5), DurableSliceStatus.Queued, expectedVersion: 0);
+            queue.Enqueue(JobId("job.live.leased"), At(0), At(5), "live-leased", DateTimeOffset.UtcNow.AddMinutes(-1));
+            var liveItem = queue.Claim("default", "live-worker", TimeSpan.FromMinutes(30), DateTimeOffset.UtcNow);
+            Assert.NotNull(liveItem);
+            Service().SoftDelete(JobId("job.live.leased"), leased.CatalogVersion, "tester", "disable");
 
-            Assert.Throws<InvalidOperationException>(() => Service().HardDelete(JobId("job.active.running"), $"DELETE {JobId("job.active.running")}", "tester", "purge"));
-            Assert.NotNull(catalog.Get(JobId("job.active.running")));
+            Assert.Throws<InvalidOperationException>(() => Service().HardDelete(JobId("job.live.leased"), $"DELETE {JobId("job.live.leased")}", "tester", "purge"));
+            Assert.NotNull(catalog.Get(JobId("job.live.leased")));
+
+            // A slice a worker is actively running (live lease) also blocks.
+            var running = catalog.Create(Schedule("job.live.running"));
+            state.AcquireLease("run-op", JobId("job.live.running"), At(0), At(5), "run-worker", TimeSpan.FromMinutes(30), DateTimeOffset.UtcNow);
+            Service().SoftDelete(JobId("job.live.running"), running.CatalogVersion, "tester", "disable");
+
+            Assert.Throws<InvalidOperationException>(() => Service().HardDelete(JobId("job.live.running"), $"DELETE {JobId("job.live.running")}", "tester", "purge"));
+            Assert.NotNull(catalog.Get(JobId("job.live.running")));
         }
 
         public void Dispose()

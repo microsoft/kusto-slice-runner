@@ -164,16 +164,26 @@ namespace KoLite.Local.Sqlite.Lifecycle
                 }
             }
 
-            var activeWork = Count(c, tx, "work_queue", "job_id=$job AND state IN ('Queued','Leased')", jobId);
-            if (activeWork > 0)
+            // The job is confirmed disabled above, so neither the scheduler nor a worker will claim any
+            // NEW work for it. Only block on work a worker is *actively executing right now* -- a lease
+            // that has not yet expired. Inert Queued retries and expired/abandoned leases will never be
+            // processed for a disabled job and are removed by this purge, so they must not block it
+            // forever (which previously left a disabled job with a single leftover Queued retry, or a
+            // crashed worker's expired lease, permanently un-deletable). The purge runs in one BEGIN
+            // IMMEDIATE transaction and a worker's lease completion is guarded -- it no-ops if the slice
+            // is already gone -- so purging is safe even if a lease finishes around it.
+            var nowUtc = SqliteStorage.Utc(DateTimeOffset.UtcNow);
+
+            var liveLeased = CountActive(c, tx, "work_queue", "job_id=$job AND state='Leased' AND locked_until_utc IS NOT NULL AND locked_until_utc > $now", jobId, nowUtc);
+            if (liveLeased > 0)
             {
-                throw new InvalidOperationException($"Hard-delete cannot purge job '{jobId}' while {activeWork} active work item(s) are queued or leased.");
+                throw new InvalidOperationException($"Hard-delete cannot purge job '{jobId}' while {liveLeased} work item(s) are leased by an active worker. Wait for the lease to finish or expire, then retry.");
             }
 
-            var runningSlices = Count(c, tx, "current_slice_state", "job_id=$job AND state='Running'", jobId);
+            var runningSlices = CountActive(c, tx, "current_slice_state", "job_id=$job AND state='Running' AND lease_expires_at_utc IS NOT NULL AND lease_expires_at_utc > $now", jobId, nowUtc);
             if (runningSlices > 0)
             {
-                throw new InvalidOperationException($"Hard-delete cannot purge job '{jobId}' while {runningSlices} slice(s) are running.");
+                throw new InvalidOperationException($"Hard-delete cannot purge job '{jobId}' while {runningSlices} slice(s) are running on an active worker. Wait for the lease to finish or expire, then retry.");
             }
         }
 
@@ -254,10 +264,11 @@ namespace KoLite.Local.Sqlite.Lifecycle
             return cmd.ExecuteNonQuery();
         }
 
-        private static int Count(Microsoft.Data.Sqlite.SqliteConnection c, Microsoft.Data.Sqlite.SqliteTransaction tx, string table, string predicate, string jobId)
+        private static int CountActive(Microsoft.Data.Sqlite.SqliteConnection c, Microsoft.Data.Sqlite.SqliteTransaction tx, string table, string predicate, string jobId, string nowUtc)
         {
             using var cmd = SqliteStorage.Command(c, tx, $"SELECT COUNT(*) FROM {table} WHERE {predicate};");
             cmd.Add("$job", jobId);
+            cmd.Add("$now", nowUtc);
             return Convert.ToInt32(cmd.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture);
         }
 
