@@ -1,0 +1,35 @@
+@using System.Text.Json
+@model SlicesProcessedChart
+
+@{
+    const string chartId = "slices-processed-chart";
+    var payload = new
+    {
+        rangeStartUtc = AppFormatting.Iso(Model.RangeStartUtc),
+        rangeEndUtc = AppFormatting.Iso(Model.RangeEndUtc),
+        bucketMs = (long)Model.BucketSize.TotalMilliseconds,
+        points = Model.Points.Select(point => new
+        {
+            x = point.BucketStartUtc.ToUnixTimeMilliseconds(),
+            succeeded = point.SucceededCount,
+            failed = point.FailedCount,
+            total = point.TotalCount,
+            bucket = AppFormatting.Iso(point.BucketStartUtc),
+            label = point.BucketLabel
+        })
+    };
+}
+
+@if (!Model.HasData)
+{
+    <p class="empty">No slices were processed in the selected period.</p>
+}
+else
+{
+    <figure class="success-chart" data-chartjs-activity="@chartId">
+        <div class="success-chart-canvas-wrap">
+            <canvas id="@chartId" class="success-chart-canvas" aria-label="Slices processed over time" role="img"></canvas>
+        </div>
+        <script type="application/json" id="@chartId-data" class="success-chart-payload">@Html.Raw(JsonSerializer.Serialize(payload))</script>
+    </figure>
+}

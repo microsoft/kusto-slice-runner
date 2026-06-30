@@ -395,6 +395,128 @@
     });
   }
 
+  function buildSlicesProcessedChart(canvas, payload) {
+    if (!window.Chart || !canvas || !payload || !payload.points) return null;
+
+    var rangeStart = Date.parse(payload.rangeStartUtc);
+    var rangeEnd = Date.parse(payload.rangeEndUtc);
+    var rangeMs = Math.max(0, rangeEnd - rangeStart);
+
+    function seriesData(key) {
+      return payload.points.map(function (point) {
+        return {
+          x: point.x,
+          y: point[key],
+          succeeded: point.succeeded,
+          failed: point.failed,
+          total: point.total,
+          bucket: point.bucket,
+          label: point.label
+        };
+      });
+    }
+
+    function lineDataset(label, key, color) {
+      return {
+        label: label,
+        data: seriesData(key),
+        borderColor: color,
+        backgroundColor: color,
+        borderWidth: 2,
+        pointBorderColor: "#fff",
+        pointBorderWidth: 1.25,
+        pointHitRadius: 10,
+        pointHoverRadius: 10,
+        pointRadius: function (context) {
+          var raw = context.raw || {};
+          return raw.y !== null && typeof raw.y !== "undefined" && raw.y !== 0 ? 5 : 0;
+        },
+        tension: 0,
+        spanGaps: false
+      };
+    }
+
+    var datasets = [
+      lineDataset("Succeeded", "succeeded", "#1a7f37"),
+      lineDataset("Failed / dead-lettered", "failed", "#cf222e")
+    ];
+
+    return new Chart(canvas, {
+      type: "line",
+      data: { datasets: datasets },
+      options: {
+        animation: false,
+        maintainAspectRatio: false,
+        normalized: true,
+        parsing: false,
+        interaction: { intersect: false, mode: "index" },
+        plugins: {
+          legend: {
+            display: true,
+            position: "bottom",
+            labels: { boxWidth: 28, color: "#24292f", font: { size: 12 }, usePointStyle: true }
+          },
+          tooltip: {
+            callbacks: {
+              title: function (items) {
+                var raw = items.length ? items[0].raw : null;
+                return raw ? raw.bucket : "";
+              },
+              label: function (context) {
+                var raw = context.raw || {};
+                return context.dataset.label + ": " + (raw.y || 0) + " slice(s)";
+              },
+              footer: function (items) {
+                var raw = items.length ? items[0].raw : null;
+                return raw ? "Total: " + (raw.total || 0) : "";
+              }
+            }
+          }
+        },
+        scales: {
+          x: {
+            type: "linear",
+            min: rangeStart,
+            max: rangeEnd,
+            grid: { color: "rgba(208, 215, 222, 0.55)" },
+            ticks: {
+              color: "#57606a",
+              maxRotation: 0,
+              callback: function (value) { return formatUtcTick(value, rangeMs); }
+            }
+          },
+          y: {
+            beginAtZero: true,
+            grid: { color: "rgba(208, 215, 222, 0.75)" },
+            ticks: { color: "#57606a", precision: 0 },
+            title: { display: true, text: "Slices processed", color: "#57606a" }
+          }
+        }
+      }
+    });
+  }
+
+  function initSlicesProcessedCharts() {
+    document.querySelectorAll("[data-chartjs-activity]").forEach(function (container) {
+      var chartId = container.getAttribute("data-chartjs-activity");
+      var canvas = document.getElementById(chartId);
+      var payloadNode = document.getElementById(chartId + "-data");
+      if (!canvas || !payloadNode) return;
+
+      try {
+        var payload = JSON.parse(payloadNode.textContent || "{}");
+        buildSlicesProcessedChart(canvas, payload);
+      } catch (error) {
+        container.classList.add("chart-error");
+        var message = document.createElement("p");
+        message.className = "empty";
+        message.textContent = "Chart data could not be rendered.";
+        container.prepend(message);
+        throw error;
+      }
+    });
+  }
+
   function buildJobDetailChart(canvas, payload) {
     if (!window.Chart || !canvas || !payload || !payload.series || payload.series.length === 0) return null;
 
@@ -1599,6 +1721,7 @@
   window.initBulkSelect = initBulkSelect;
   initSuccessRateCharts();
   initThrottleSeverityCharts();
+  initSlicesProcessedCharts();
   initJobDetailCharts();
   initJobDetailTabs();
   initDashboardJobFilter();

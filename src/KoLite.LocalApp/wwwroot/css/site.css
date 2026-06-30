@@ -512,6 +512,30 @@ h3 { font-size: 16px; margin-bottom: 10px; }
 }
 .stat-label { display: block; color: var(--muted); font-size: 12px; }
 
+.activity-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.activity-metric-value {
+  display: block;
+  font-size: 30px;
+  font-weight: 700;
+  line-height: 1.1;
+  margin: 2px 0;
+}
+.activity-total-value {
+  display: block;
+  font-size: 24px;
+  font-weight: 700;
+  margin: 2px 0 8px;
+}
+.activity-total-split { display: flex; flex-wrap: wrap; gap: 6px; }
+@media (max-width: 720px) {
+  .activity-metrics { grid-template-columns: 1fr; }
+}
+
 .form-card label { display: block; font-weight: 600; margin-bottom: 10px; }
 .form-card input, .form-card textarea {
   width: 100%;

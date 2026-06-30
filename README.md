@@ -24,6 +24,7 @@ If you're familiar with [scheduled Kusto jobs](https://learn.microsoft.com/kusto
 - Schedules due time slices from enabled jobs into a local SQLite queue.
 - Executes live Kusto `.set-or-append` commands for each claimed slice.
 - Tracks queue state, slice history, attempts, logs, failures, and success-rate charts.
+- Shows an **Activity** page (`/activity`) with how many slices are running right now and how many have been processed over time — a throughput chart plus succeeded vs. failed/dead-lettered totals for the last day, 7 days, 30 days, and all time.
 - Bounds local database growth: a retention service prunes old operational telemetry (logs, terminal queue rows, old attempts) on a schedule while preserving the full slice window-history, so reruns and scheduling stay intact.
 - Detects Kusto ingestion-capacity throttling (429), shows how bad it is (the % of attempts throttled, with a trend chart), highlights slices lost to throttling, and recommends per-job `maxParallelism` reductions that never starve a job below the parallelism it needs to keep up (and only trim a backfilling job to what still clears its backlog in time); operators apply them explicitly.
 - Plans historical reruns and local state repair while leaving destructive Kusto cleanup to the operator.

@@ -1,0 +1,134 @@
+@page "/activity"
+@using KoLite.LocalApp.Ui
+@model KoLite.LocalApp.Pages.Activity.IndexModel
+@{
+    ViewData["Title"] = "Activity";
+    var ci = System.Globalization.CultureInfo.InvariantCulture;
+    var data = Model.Data;
+    var running = data.RunningNow;
+
+    var totalsCards = new (string Label, ProcessedTotals Totals)[]
+    {
+        ("Last day", data.LastDay),
+        ("Last 7 days", data.Last7Days),
+        ("Last 30 days", data.Last30Days),
+        ("All time", data.AllTime),
+    };
+}
+
+<div class="page-heading">
+    <div>
+        <h1>Activity</h1>
+        <p class="muted">How much work is flowing through KO Lite. A job runs many <strong>slices</strong> (time windows); these counts are slices, not jobs.</p>
+    </div>
+    <div class="button-row">
+        <a class="btn" href="/activity?range=@Model.Range">Refresh</a>
+    </div>
+</div>
+
+<section class="card section-block">
+    <div class="card-header"><h2>Running now</h2></div>
+    <div class="activity-metrics">
+        <div class="stat-card">
+            <span class="stat-label">Running</span>
+            <span class="activity-metric-value">@running.RunningCount.ToString("N0", ci)</span>
+            <span class="muted">slice(s) executing</span>
+        </div>
+        <div class="stat-card">
+            <span class="stat-label">Queued</span>
+            <span class="activity-metric-value">@running.QueuedCount.ToString("N0", ci)</span>
+            <span class="muted">slice(s) waiting to be claimed</span>
+        </div>
+    </div>
+    @if (running.RunningSlices.Count == 0)
+    {
+        <p class="empty">No slices are executing right now.</p>
+    }
+    else
+    {
+        <div class="table-wrap">
+            <table class="ko-table">
+                <thead>
+                    <tr>
+                        <th>Job</th>
+                        <th>Slice</th>
+                        <th>Attempt</th>
+                        <th>Worker</th>
+                        <th>Lease</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var slice in running.RunningSlices)
+                    {
+                        <tr>
+                            <td><a href="/jobs/@Uri.EscapeDataString(slice.JobId)">@slice.ActivityId</a></td>
+                            <td>
+                                <a href="/jobs/@Uri.EscapeDataString(slice.JobId)/slices?start=@Uri.EscapeDataString(AppFormatting.Iso(slice.SliceStartUtc))&amp;end=@Uri.EscapeDataString(AppFormatting.Iso(slice.SliceEndUtc))">
+                                    @AppFormatting.Local(slice.SliceStartUtc) &ndash; @AppFormatting.Local(slice.SliceEndUtc)
+                                </a>
+                            </td>
+                            <td>@slice.Attempt</td>
+                            <td>@(slice.LeaseOwner ?? "—")</td>
+                            <td>
+                                @if (slice.LeaseExpired)
+                                {
+                                    <span class="badge badge-warning">Lease expired</span>
+                                }
+                                else if (slice.LeaseExpiresAtUtc is { } expires)
+                                {
+                                    <text>@AppFormatting.Local(expires)</text>
+                                }
+                                else
+                                {
+                                    <text>—</text>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+        @if (running.RunningCount > running.RunningSlices.Count)
+        {
+            <p class="muted">Showing @running.RunningSlices.Count of @running.RunningCount.ToString("N0", ci) running slice(s).</p>
+        }
+    }
+</section>
+
+<section class="card section-block">
+    <div class="card-header">
+        <div>
+            <h2>Slices processed</h2>
+            <p class="muted chart-help">Succeeded vs. failed/dead-lettered. The last day/7 days/30 days windows count attempt completions; all time reflects each slice's current outcome.</p>
+        </div>
+    </div>
+    <div class="summary-grid">
+        @foreach (var (label, totals) in totalsCards)
+        {
+            <div class="stat-card">
+                <span class="stat-label">@label</span>
+                <span class="activity-total-value">@totals.Total.ToString("N0", ci)</span>
+                <div class="activity-total-split">
+                    <span class="badge badge-success">@totals.Succeeded.ToString("N0", ci) succeeded</span>
+                    <span class="badge @(totals.Failed > 0 ? "badge-danger" : "badge-neutral")">@totals.Failed.ToString("N0", ci) failed</span>
+                </div>
+            </div>
+        }
+    </div>
+</section>
+
+<section class="card section-block">
+    <div class="card-header">
+        <div>
+            <h2>Processed over time</h2>
+            <p class="muted chart-help">Slice attempt completions per interval, succeeded vs. failed/dead-lettered.</p>
+        </div>
+        <div class="range-picker">
+            @foreach (var range in Model.RangeLinks)
+            {
+                <a class="btn small @(range.Key == Model.Range ? "primary" : null)" href="/activity?range=@range.Key">@range.Label</a>
+            }
+        </div>
+    </div>
+    <partial name="_SlicesProcessedChart" model="data.Chart" />
+</section>
