@@ -61,6 +61,12 @@ The database path is resolved at runtime, so it cannot be read reliably from `ap
 5. Preserve behavior-safe defaults. Do not make local runs more dangerous by enabling live work unexpectedly, widening destructive operations, or weakening explicit confirmations.
 6. Prefer small, coherent changes that wire all affected surfaces: domain model, persistence, UI, scripts, tests, and docs where relevant.
 
+### Version control and branches
+
+- Commit on the current branch (normally `main`) by default. Do **not** create a git branch or worktree, or open a pull request, unless the user explicitly requests one. When they do request a branch or worktree, follow the name and location they specify.
+- When asked to "commit" or "commit and push" without a branch, stage the current task's changes, commit on the current branch, and push it — do not spin up a branch or PR on your own initiative.
+- Before staging, review the diff of each changed file. The shared working tree can already hold unrelated in-progress changes from another session, so a blanket `git add` may bundle work that is not yours into the commit; stage only the files (or hunks) belonging to the current task.
+
 ## Common task guidance
 
 ### Scheduler, queue, and worker debugging
