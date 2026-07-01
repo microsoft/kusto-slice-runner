@@ -16,11 +16,18 @@ authoring skill `ko-lite-schedule-json` does not upload.
 
 ## Scope and safety
 
-- **Schedules only.** The API can read jobs and create/update schedules. It
-  exposes **no** enable/disable, soft/hard delete, Kusto execution, rerun,
+- **Schedules, plus soft-delete / restore.** The API can read jobs, create/update
+  schedules, and **soft-delete or restore** a job. Soft-delete is reversible (it
+  flips `is_enabled` off and records a lifecycle event; no rows are purged). It
+  exposes **no** hard-delete, generic enable/disable, Kusto execution, rerun,
   cleanup, or repair surface. (The separate, read-only
   `POST /api/dependency-graph/kusto-consumers` endpoint issues a read-only Kusto
   metadata query for the dependency graph — see the operations runbook.)
+- **Guarded delete.** Soft-delete and restore require the job's current
+  `expectedVersion` (optimistic concurrency; a mismatch is a `409`). Soft-delete is
+  **blocked by default** when active downstream jobs depend on the target and
+  returns `409` listing them; pass `"force": true` to override (mirrors the
+  dashboard's "Soft delete anyway" confirm).
 - **Validated path.** Every write goes through the same
   `SqliteJobCatalogRepository.Import` path the dashboard import uses, so strict
   schedule parsing, started-job mutation policy (immutable permanent `id`;
@@ -47,6 +54,8 @@ Base URL defaults to `http://127.0.0.1:5057`.
 | GET | `/api/jobs/{jobId}` | `{ "job": { ...summary }, "schedule": { ...canonical import-compatible object, including its `id` } }`. `{jobId}` is the permanent GUID. `404` with `{ "error" }` when the job does not exist. |
 | GET | `/api/jobs/export` | Import-compatible JSON **array** of every non-soft-deleted job (same payload as the dashboard **Export all**). |
 | POST | `/api/jobs/import` | Body is schedule JSON (single object **or** array). Returns `{ "created", "updated", "total", "items": [ { "jobId", "action", "catalogVersion" } ] }`. `400` with `{ "error" }` on JSON, validation, or mutation-policy failure. |
+| POST | `/api/jobs/{jobId}/soft-delete` | Soft-delete (hide) a job — reversible. `{jobId}` is the permanent GUID. Body `{ "expectedVersion": <current catalogVersion, required>, "reason"?, "force"? }`. Returns `{ "job": { ...summary, "isSoftDeleted": true } }`. Errors: `400` (missing/invalid body or absent `expectedVersion`), `404` (unknown job), `409` (version conflict), or `409` `{ "error", "dependents": [ { "jobId", "activityId" } ] }` when active downstream jobs depend on it and `force` is not `true`. |
+| POST | `/api/jobs/{jobId}/restore` | Restore (un-hide) a soft-deleted job. `{jobId}` is the permanent GUID. Body `{ "expectedVersion": <required>, "reason"? }`. Returns `{ "job": { ...summary, "isEnabled": true } }`. Errors: `400`/`404`/`409` as above (no dependents check). |
 
 The database path is also reported as `databasePath` by `GET /status/health`,
 which an agent can read to confirm which instance it is talking to. The
@@ -70,6 +79,19 @@ Invoke-RestMethod http://127.0.0.1:5057/api/jobs/Demo.SkillTest |
 # Create or update from a file (single object or array).
 Invoke-RestMethod -Method Post -Uri http://127.0.0.1:5057/api/jobs/import `
     -ContentType 'application/json' -InFile .\my-job.json
+
+# Soft-delete a job (reversible). Read its current catalogVersion first.
+$job = Invoke-RestMethod http://127.0.0.1:5057/api/jobs/Demo.SkillTest
+Invoke-RestMethod -Method Post `
+    -Uri "http://127.0.0.1:5057/api/jobs/$($job.job.jobId)/soft-delete" `
+    -ContentType 'application/json' `
+    -Body (@{ expectedVersion = $job.job.catalogVersion } | ConvertTo-Json)
+
+# ...then restore it (use the catalogVersion returned by the soft-delete).
+Invoke-RestMethod -Method Post `
+    -Uri "http://127.0.0.1:5057/api/jobs/$($job.job.jobId)/restore" `
+    -ContentType 'application/json' `
+    -Body (@{ expectedVersion = <version> } | ConvertTo-Json)
 ```
 
 Prefer the skill helper, which validates the schedule JSON locally before
@@ -80,6 +102,8 @@ $skill = '.\.github\skills\ko-lite-job-manager\scripts\Invoke-KoLiteJobApi.ps1'
 & $skill -Action Health
 & $skill -Action Get-Jobs
 & $skill -Action Import -Path .\my-job.json
+& $skill -Action Soft-Delete -JobId <jobId> -ExpectedVersion <catalogVersion>
+& $skill -Action Restore     -JobId <jobId> -ExpectedVersion <catalogVersion>
 ```
 
 ## Read-only diagnostics

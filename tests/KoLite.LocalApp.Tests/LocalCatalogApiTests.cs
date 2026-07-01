@@ -189,8 +189,127 @@ namespace KoLite.LocalApp.Tests
             Assert.False(LocalApiGuard.IsLoopback(IPAddress.Parse("192.168.1.10")));
         }
 
+        [Fact]
+        public async Task Post_soft_delete_hides_job_and_returns_updated_summary()
+        {
+            var catalog = new SqliteJobCatalogRepository(sqlite);
+            var created = catalog.Create(Schedule("job.sd", "SoftDeleteFunction", isPaused: false));
+            using var client = factory.CreateClient();
+
+            using var response = await PostLifecycle(client, JobId("job.sd"), "soft-delete", new { expectedVersion = created.CatalogVersion });
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+            using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            var job = body.RootElement.GetProperty("job");
+            Assert.True(job.GetProperty("isSoftDeleted").GetBoolean());
+            Assert.False(job.GetProperty("isEnabled").GetBoolean());
+            Assert.Equal(created.CatalogVersion + 1, job.GetProperty("catalogVersion").GetInt64());
+
+            // A soft-deleted job is excluded from the import-compatible export.
+            using var export = JsonDocument.Parse(await client.GetStringAsync("/api/jobs/export"));
+            Assert.Empty(export.RootElement.EnumerateArray());
+        }
+
+        [Fact]
+        public async Task Post_soft_delete_blocks_on_active_dependents_then_succeeds_with_force()
+        {
+            var catalog = new SqliteJobCatalogRepository(sqlite);
+            var upstream = catalog.Create(Schedule("dep.upstream", "UpstreamFunction", isPaused: false));
+            catalog.Create(Schedule("dep.downstream", "DownstreamFunction", isPaused: false, dependsOnIds: [JobId("dep.upstream")]));
+            using var client = factory.CreateClient();
+
+            // Blocked by default: an active downstream depends on the target.
+            using var blocked = await PostLifecycle(client, JobId("dep.upstream"), "soft-delete", new { expectedVersion = upstream.CatalogVersion });
+            Assert.Equal(HttpStatusCode.Conflict, blocked.StatusCode);
+            using var blockedBody = JsonDocument.Parse(await blocked.Content.ReadAsStringAsync());
+            var dependents = blockedBody.RootElement.GetProperty("dependents").EnumerateArray()
+                .Select(dependent => dependent.GetProperty("activityId").GetString())
+                .ToArray();
+            Assert.Contains("dep.downstream", dependents);
+            Assert.True(catalog.Get(JobId("dep.upstream"))!.IsEnabled);
+
+            // force: true overrides the block (the same version, since the blocked attempt did not mutate).
+            using var forced = await PostLifecycle(client, JobId("dep.upstream"), "soft-delete", new { expectedVersion = upstream.CatalogVersion, force = true });
+            Assert.Equal(HttpStatusCode.OK, forced.StatusCode);
+            using var forcedBody = JsonDocument.Parse(await forced.Content.ReadAsStringAsync());
+            Assert.True(forcedBody.RootElement.GetProperty("job").GetProperty("isSoftDeleted").GetBoolean());
+        }
+
+        [Fact]
+        public async Task Post_soft_delete_returns_409_on_version_conflict()
+        {
+            new SqliteJobCatalogRepository(sqlite).Create(Schedule("job.stale", "StaleFunction", isPaused: false));
+            using var client = factory.CreateClient();
+
+            using var response = await PostLifecycle(client, JobId("job.stale"), "soft-delete", new { expectedVersion = 999L });
+            Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+            using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            Assert.Contains("version conflict", body.RootElement.GetProperty("error").GetString());
+            Assert.True(new SqliteJobCatalogRepository(sqlite).Get(JobId("job.stale"))!.IsEnabled);
+        }
+
+        [Fact]
+        public async Task Post_soft_delete_returns_404_for_missing_job_and_400_for_invalid_body()
+        {
+            new SqliteJobCatalogRepository(sqlite).Create(Schedule("job.present", "PresentFunction", isPaused: false));
+            using var client = factory.CreateClient();
+
+            using var missing = await PostLifecycle(client, "does-not-exist", "soft-delete", new { expectedVersion = 1L });
+            Assert.Equal(HttpStatusCode.NotFound, missing.StatusCode);
+
+            using var empty = await client.PostAsync($"/api/jobs/{JobId("job.present")}/soft-delete", new StringContent(string.Empty, Encoding.UTF8, "application/json"));
+            Assert.Equal(HttpStatusCode.BadRequest, empty.StatusCode);
+
+            using var noVersion = await PostLifecycle(client, JobId("job.present"), "soft-delete", new { reason = "no version" });
+            Assert.Equal(HttpStatusCode.BadRequest, noVersion.StatusCode);
+            using var noVersionBody = JsonDocument.Parse(await noVersion.Content.ReadAsStringAsync());
+            Assert.Contains("expectedVersion", noVersionBody.RootElement.GetProperty("error").GetString());
+
+            // None of the rejected calls mutated the job.
+            Assert.True(new SqliteJobCatalogRepository(sqlite).Get(JobId("job.present"))!.IsEnabled);
+        }
+
+        [Fact]
+        public async Task Post_restore_reactivates_a_soft_deleted_job()
+        {
+            var catalog = new SqliteJobCatalogRepository(sqlite);
+            var created = catalog.Create(Schedule("job.restore", "RestoreFunction", isPaused: false));
+            var soft = new SqliteJobLifecycleService(sqlite, catalog).SoftDelete(JobId("job.restore"), created.CatalogVersion, "seed", "seed");
+            using var client = factory.CreateClient();
+
+            using var response = await PostLifecycle(client, JobId("job.restore"), "restore", new { expectedVersion = soft.CatalogVersion });
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            var job = body.RootElement.GetProperty("job");
+            Assert.True(job.GetProperty("isEnabled").GetBoolean());
+            Assert.False(job.GetProperty("isSoftDeleted").GetBoolean());
+
+            // It reappears in the export once restored.
+            using var export = JsonDocument.Parse(await client.GetStringAsync("/api/jobs/export"));
+            var ids = export.RootElement.EnumerateArray().Select(item => item.GetProperty("activityId").GetString()).ToArray();
+            Assert.Contains("job.restore", ids);
+        }
+
+        [Fact]
+        public async Task Post_restore_returns_409_on_version_conflict_and_404_for_missing_job()
+        {
+            var catalog = new SqliteJobCatalogRepository(sqlite);
+            var created = catalog.Create(Schedule("job.restore.conflict", "RestoreConflictFunction", isPaused: false));
+            new SqliteJobLifecycleService(sqlite, catalog).SoftDelete(JobId("job.restore.conflict"), created.CatalogVersion, "seed", "seed");
+            using var client = factory.CreateClient();
+
+            using var conflict = await PostLifecycle(client, JobId("job.restore.conflict"), "restore", new { expectedVersion = 999L });
+            Assert.Equal(HttpStatusCode.Conflict, conflict.StatusCode);
+
+            using var missing = await PostLifecycle(client, "does-not-exist", "restore", new { expectedVersion = 1L });
+            Assert.Equal(HttpStatusCode.NotFound, missing.StatusCode);
+        }
+
         private static Task<HttpResponseMessage> PostImport(HttpClient client, string json) =>
             client.PostAsync("/api/jobs/import", new StringContent(json, Encoding.UTF8, "application/json"));
+
+        private static Task<HttpResponseMessage> PostLifecycle(HttpClient client, string jobId, string action, object body) =>
+            client.PostAsync($"/api/jobs/{jobId}/{action}", new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json"));
 
         private static DateTimeOffset At(int minutes) => new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero).AddMinutes(minutes);
 
@@ -215,10 +334,13 @@ namespace KoLite.LocalApp.Tests
             return new Guid(bytes).ToString("N");
         }
 
-        private static string Schedule(string activityId, string functionName, bool isPaused, IReadOnlyList<string>? tags = null)
+        private static string Schedule(string activityId, string functionName, bool isPaused, IReadOnlyList<string>? tags = null, IReadOnlyList<string>? dependsOnIds = null)
         {
             var tagsLine = tags is { Count: > 0 }
                 ? $"  \"tags\": {JsonSerializer.Serialize(tags)},\n"
+                : string.Empty;
+            var dependsOnLine = dependsOnIds is { Count: > 0 }
+                ? "  \"dependsOn\": [" + string.Join(",", dependsOnIds.Select(id => $"{{ \"id\": \"{id}\" }}")) + "],\n"
                 : string.Empty;
             return
                 "{\n" +
@@ -232,6 +354,7 @@ namespace KoLite.LocalApp.Tests
                 "  \"queryTimeout\": \"00:01:00\",\n" +
                 $"  \"isPaused\": {(isPaused ? "true" : "false")},\n" +
                 "  \"startFrom\": \"2026-01-01T00:00:00Z\",\n" +
+                dependsOnLine +
                 tagsLine +
                 "  \"target\": { \"clusterUri\": \"https://kolite-example.invalid\", \"database\": \"DemoDb\" }\n" +
                 "}";

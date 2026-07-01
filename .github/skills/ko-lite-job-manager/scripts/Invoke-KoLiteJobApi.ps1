@@ -6,11 +6,13 @@
 
 .DESCRIPTION
     Thin, rigorous wrapper around the KO Lite local management API
-    (see docs\local-api.md). Every write goes through POST /api/jobs/import, which
-    is the same validated, additive/update-only catalog path the dashboard import
-    uses. This script intentionally exposes no enable/disable, delete, Kusto,
-    rerun, or repair surface - it only reads state (schedules and read-only
-    operational diagnostics) and upserts schedules.
+    (see docs\local-api.md). Schedule writes go through POST /api/jobs/import, the
+    same validated, additive/update-only catalog path the dashboard import uses. It
+    can also soft-delete and restore a job (POST /api/jobs/{id}/soft-delete and
+    /restore), each requiring the job's current -ExpectedVersion. This script
+    intentionally exposes no hard-delete, enable/disable, Kusto, rerun, or repair
+    surface - it reads state (schedules and read-only operational diagnostics) and
+    upserts / soft-deletes / restores schedules.
 
     Before importing, the body is validated locally with the sibling
     ko-lite-schedule-json validator unless -SkipValidation is supplied.
@@ -22,6 +24,8 @@
     Get-Job    GET  /api/jobs/{id}   - one job summary plus its canonical schedule.
     Export     GET  /api/jobs/export - import-compatible array of all active jobs.
     Import     POST /api/jobs/import - create/update schedules (single object or array).
+    Soft-Delete POST /api/jobs/{id}/soft-delete - hide a job (reversible); needs -ExpectedVersion.
+    Restore     POST /api/jobs/{id}/restore     - un-hide a soft-deleted job; needs -ExpectedVersion.
 
     Read-only diagnostics (no mutation; pass filters via -Query):
     Per-job (require -JobId): Get-JobStatus, Get-Slices, Get-Attempts, Get-Events,
@@ -52,6 +56,18 @@
 .PARAMETER Path
     Path to a schedule JSON file for Import (alternative to -Json).
 
+.PARAMETER ExpectedVersion
+    The job's current catalogVersion. Required by Soft-Delete and Restore for
+    optimistic concurrency; read it first with Get-Job (the 'catalogVersion' field).
+    A mismatch returns HTTP 409.
+
+.PARAMETER Reason
+    Optional audit reason recorded with a Soft-Delete or Restore.
+
+.PARAMETER Force
+    Soft-Delete only: proceed even when active downstream jobs depend on the target.
+    Without it, Soft-Delete returns HTTP 409 listing the blocking dependents.
+
 .PARAMETER SkipValidation
     Skip the local schedule-JSON validation step before Import. Not recommended.
 
@@ -72,12 +88,18 @@
 
 .EXAMPLE
     .\Invoke-KoLiteJobApi.ps1 -Action Get-Slices -JobId $id -Query @{ state = 'Running' }
+
+.EXAMPLE
+    .\Invoke-KoLiteJobApi.ps1 -Action Soft-Delete -JobId $id -ExpectedVersion 3
+
+.EXAMPLE
+    .\Invoke-KoLiteJobApi.ps1 -Action Restore -JobId $id -ExpectedVersion 4
 #>
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true, Position = 0)]
     [ValidateSet(
-        'Health', 'Get-Jobs', 'Get-Job', 'Export', 'Import',
+        'Health', 'Get-Jobs', 'Get-Job', 'Export', 'Import', 'Soft-Delete', 'Restore',
         'Get-JobStatus', 'Get-Slices', 'Get-Attempts', 'Get-Events', 'Get-JobLogs',
         'Get-JobQueue', 'Get-History', 'Get-JobThroughput', 'Get-Dependencies',
         'Get-WorkerPool', 'Get-RunningSlices', 'Get-Throughput', 'Get-Queue',
@@ -93,6 +115,12 @@ param(
     [string] $Json,
 
     [string] $Path,
+
+    [long] $ExpectedVersion,
+
+    [string] $Reason,
+
+    [switch] $Force,
 
     [switch] $SkipValidation
 )
@@ -247,6 +275,39 @@ switch ($Action) {
 
         $result = Invoke-KoLiteApi -Method 'POST' -RelativeUri '/api/jobs/import' -Body $body
         Write-Host "Imported: $($result.created) created, $($result.updated) updated, $($result.total) total. No jobs were deleted."
+        return $result
+    }
+    'Soft-Delete' {
+        if ([string]::IsNullOrWhiteSpace($JobId)) {
+            throw 'Soft-Delete requires -JobId (the permanent GUID).'
+        }
+        if (-not $PSBoundParameters.ContainsKey('ExpectedVersion')) {
+            throw "Soft-Delete requires -ExpectedVersion (the job's current catalogVersion; read it with Get-Job)."
+        }
+
+        $payload = @{ expectedVersion = $ExpectedVersion }
+        if (-not [string]::IsNullOrWhiteSpace($Reason)) { $payload['reason'] = $Reason }
+        if ($Force) { $payload['force'] = $true }
+
+        $encoded = [uri]::EscapeDataString($JobId)
+        $result = Invoke-KoLiteApi -Method 'POST' -RelativeUri "/api/jobs/$encoded/soft-delete" -Body ($payload | ConvertTo-Json -Compress)
+        Write-Host "Soft-deleted job '$JobId' (catalogVersion now $($result.job.catalogVersion)). Reversible with -Action Restore."
+        return $result
+    }
+    'Restore' {
+        if ([string]::IsNullOrWhiteSpace($JobId)) {
+            throw 'Restore requires -JobId (the permanent GUID).'
+        }
+        if (-not $PSBoundParameters.ContainsKey('ExpectedVersion')) {
+            throw "Restore requires -ExpectedVersion (the job's current catalogVersion; read it with Get-Job)."
+        }
+
+        $payload = @{ expectedVersion = $ExpectedVersion }
+        if (-not [string]::IsNullOrWhiteSpace($Reason)) { $payload['reason'] = $Reason }
+
+        $encoded = [uri]::EscapeDataString($JobId)
+        $result = Invoke-KoLiteApi -Method 'POST' -RelativeUri "/api/jobs/$encoded/restore" -Body ($payload | ConvertTo-Json -Compress)
+        Write-Host "Restored job '$JobId' (catalogVersion now $($result.job.catalogVersion))."
         return $result
     }
     default {

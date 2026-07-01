@@ -1,9 +1,9 @@
 ---
 name: ko-lite-job-manager
-description: "Use when the user wants an agent to read KO Lite jobs, inspect read-only operational diagnostics (slice states, leases, throughput, catalog history, logs, audit), or create/update job schedules directly in a running KO Lite app (instead of clicking through the dashboard). Drives the KO Lite localhost JSON API; it reads state and upserts schedules - including pausing or resuming a job via the schedule's isPaused field - but it never soft- or hard-deletes jobs, runs Kusto, reruns, or repairs. Requires the KO Lite app to be running locally."
+description: "Use when the user wants an agent to read KO Lite jobs, inspect read-only operational diagnostics (slice states, leases, throughput, catalog history, logs, audit), or create/update job schedules directly in a running KO Lite app (instead of clicking through the dashboard). Drives the KO Lite localhost JSON API; it reads state, upserts schedules - including pausing or resuming a job via the schedule's isPaused field - and can soft-delete or restore a job (reversible); it never hard-deletes jobs, runs Kusto, reruns, or repairs. Requires the KO Lite app to be running locally."
 metadata:
   author: Azure Core Team
-  version: "1.2.0"
+  version: "1.3.0"
 ---
 
 # KO Lite job manager
@@ -29,6 +29,11 @@ It **will**:
 - Pause or resume a job by importing its schedule with `isPaused: true` (pause)
   or `isPaused: false` (resume); a paused job stays in the catalog but does not
   schedule or claim queued retries.
+- Soft-delete a job (reversible) and restore it, via
+  `POST /api/jobs/{id}/soft-delete` and `POST /api/jobs/{id}/restore`. Both require
+  the job's current `expectedVersion`. Soft-delete hides the job (flips `is_enabled`
+  off + records a lifecycle event; purges nothing) and is **blocked** when active
+  downstream jobs depend on the target unless you pass `force: true`.
 - Read **operational diagnostics** (read-only): per-job slice states and leases,
   attempts, events, logs, queue, catalog-version history with diffs, throughput,
   and dependency readiness; and cross-job worker-pool state, in-flight/expired
@@ -37,12 +42,13 @@ It **will**:
 
 It **will not** (these stay manual / dashboard-only on purpose):
 
-- Soft-delete, restore, or hard-delete jobs. The API exposes **no** delete
-  surface, by design - deleting a job stays a dashboard action.
-- Disable a job's `isEnabled` lifecycle. Pausing is supported (via `isPaused`
-  above), but there is no `isEnabled` schedule field, so enable/disable stays
-  dashboard-only. Note an import **re-activates** an enabled job, so import with
-  `isPaused: true` to pause it rather than run it.
+- **Hard-delete** (permanently purge) a job. Hard-delete stays a dashboard action;
+  the API exposes no hard-delete surface. (Soft-delete and restore *are* supported —
+  see above.)
+- Toggle a job's `isEnabled` lifecycle directly. Pausing is supported (via `isPaused`
+  above) and soft-delete/restore flip `is_enabled` with lifecycle semantics, but
+  there is no generic enable/disable schedule field, and an import **re-activates** an
+  enabled job — so use `isPaused: true` to pause a schedule rather than run it.
 - Execute Kusto, run reruns, run cleanup, or run repair. (Reading the rerun/repair
   **history** via diagnostics is fine; *triggering* a rerun/repair is not.)
 - Touch the SQLite file directly. All reads and writes go through the API.
@@ -62,6 +68,14 @@ transaction. Import is **additive and update-only**: an item matches an existing
 job by `id` when present (this is how a **rename** is applied — same `id`, new
 `activityId`), else by `activityId`; new ones are created (a supplied `id` is
 preserved, else minted); omitted jobs are never deleted.
+
+**Soft-delete and restore** go to `POST /api/jobs/{id}/soft-delete` and
+`POST /api/jobs/{id}/restore`, which call the same `SqliteJobLifecycleService` the
+dashboard uses. Both require the job's current `expectedVersion` (optimistic
+concurrency; a mismatch is a `409`). Soft-delete is reversible — it flips
+`is_enabled` off and records a lifecycle event, purging nothing — and is **blocked by
+default** when active downstream jobs depend on the target (a `409` listing them);
+pass `force: true` to override. Hard-delete is not exposed.
 
 The **diagnostics** endpoints are strictly **read-only**: they perform no writes,
 no Kusto, and no scheduler/rerun/repair mutation — they only surface existing
@@ -99,6 +113,8 @@ again with `"isPaused": false` to resume. An import always re-activates an
 | GET | `/api/jobs/{jobId}` | One summary plus `schedule` (the canonical, import-compatible schedule object, including its `id`). `{jobId}` is the permanent GUID. 404 if missing. |
 | GET | `/api/jobs/export` | Import-compatible JSON array of all non-soft-deleted jobs. |
 | POST | `/api/jobs/import` | Body is schedule JSON (single object or array). Returns `{ created, updated, total, items[] }`. 400 with `{ error }` on validation/mutation failure. |
+| POST | `/api/jobs/{jobId}/soft-delete` | Soft-delete (hide) a job — reversible. `{jobId}` is the permanent GUID. Body `{ expectedVersion (required), reason?, force? }`. Returns `{ job }`. 400/404/409; 409 `{ error, dependents[] }` when active dependents block it and `force` is not set. |
+| POST | `/api/jobs/{jobId}/restore` | Restore a soft-deleted job. Body `{ expectedVersion (required), reason? }`. Returns `{ job }`. 400/404/409 (no dependents check). |
 
 ## Read-only diagnostics
 
@@ -205,6 +221,12 @@ $skill = '.\.github\skills\ko-lite-job-manager\scripts\Invoke-KoLiteJobApi.ps1'
 # Create or update from a file (validated locally first)
 & $skill -Action Import -Path .\my-job.json
 
+# Soft-delete a job (reversible), then restore it. Read its current version first.
+$job = & $skill -Action Get-Job -JobId 'CopilotUsage.GhcpReportingUserDaily'
+& $skill -Action Soft-Delete -JobId $job.job.jobId -ExpectedVersion $job.job.catalogVersion
+# ...and restore it later (use the catalogVersion returned by the soft-delete).
+& $skill -Action Restore     -JobId $job.job.jobId -ExpectedVersion <version>
+
 # --- Read-only diagnostics (no mutation) ---
 
 # Triage a "job stopped running" report: lease-pinned slices, worker pool, app-vs-job throughput.
@@ -232,12 +254,13 @@ unreachable it tells you to start it.
 
 ## Hard constraints
 
-- **Schedules only for writes.** The only write is schedule upsert via Import -
-  which includes pausing/resuming through the `isPaused` field. Never soft- or
-  hard-delete a job (the API has no delete surface), and never call any Kusto,
-  rerun, cleanup, or repair surface, or edit the SQLite file directly. Reading
-  diagnostics (including rerun/repair/audit **history**) is fine; *triggering*
-  those actions is not.
+- **Writes are schedule upsert plus soft-delete/restore.** Schedule create/update
+  goes through Import (including pause/resume via the `isPaused` field); soft-delete
+  and restore go through their own endpoints and always require `expectedVersion`.
+  Never **hard-delete** a job (no API surface — that stays a dashboard action), and
+  never call any Kusto, rerun, cleanup, or repair surface, or edit the SQLite file
+  directly. Reading diagnostics (including rerun/repair/audit **history**) is fine;
+  *triggering* those actions is not.
 - **Validate before writing.** Always validate the JSON locally before POSTing
   (the Import action does this by default).
 - **Respect the identity model.** Never change the permanent `id`. `queryWindowSize`
@@ -250,9 +273,9 @@ unreachable it tells you to start it.
 ## Stop and ask conditions
 
 - The KO Lite app is not reachable and the user has not provided a `-BaseUrl`.
-- The requested action is outside scope (soft/hard delete, disabling a job's
-  `isEnabled` lifecycle, Kusto, rerun, repair). Pausing or resuming via `isPaused`
-  is in scope.
+- The requested action is outside scope (hard-delete, generic enable/disable of a
+  job's `isEnabled` lifecycle, Kusto, rerun, repair). Pausing/resuming via `isPaused`,
+  and soft-delete/restore, are in scope.
 - An update would change the permanent `id`, or change `queryWindowSize`/`startFrom`
   on a started job.
 - `activityId` collides with an existing job. A **rename** (same `id`, new

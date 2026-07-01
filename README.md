@@ -28,7 +28,7 @@ If you're familiar with [scheduled Kusto jobs](https://learn.microsoft.com/kusto
 - Bounds local database growth: a retention service prunes old operational telemetry (logs, terminal queue rows, old attempts) on a schedule while preserving the full slice window-history, so reruns and scheduling stay intact.
 - Detects Kusto ingestion-capacity throttling (429), shows how bad it is (the % of attempts throttled, with a trend chart), highlights slices lost to throttling, and recommends per-job `maxParallelism` reductions that never starve a job below the parallelism it needs to keep up (and only trim a backfilling job to what still clears its backlog in time); operators apply them explicitly.
 - Plans historical reruns and local state repair while leaving destructive Kusto cleanup to the operator.
-- Exposes a localhost-only JSON API so a same-machine agent can read jobs and create/update schedules through the same validated import path the dashboard uses.
+- Exposes a localhost-only JSON API so a same-machine agent can read jobs, create/update schedules through the same validated import path the dashboard uses, and soft-delete/restore a job.
 - Periodically checks GitHub (via the `gh` CLI) for newer KO Lite commits and shows an update badge in the top bar.
 
 ## Quick start
