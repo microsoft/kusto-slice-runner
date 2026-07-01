@@ -662,6 +662,7 @@
 
   function activateTab(root, selectedTab, focusTab) {
     var tabs = Array.prototype.slice.call(root.querySelectorAll("[role='tab'][href^='#']"));
+    var selectedPanel = null;
     tabs.forEach(function (tab) {
       var selected = tab === selectedTab;
       var id = tabId(tab);
@@ -672,10 +673,16 @@
       if (panel && root.contains(panel)) {
         panel.classList.toggle("active", selected);
         panel.hidden = !selected;
+        if (selected) selectedPanel = panel;
       }
     });
 
     if (focusTab) selectedTab.focus();
+
+    // A dependency graph deferred while its tab was hidden must be rendered now that its panel is
+    // visible: Cytoscape computes degenerate geometry (collapsed nodes, zero-length invisible
+    // edges) when built in a 0x0 display:none container, and a later resize/fit does not recover.
+    if (selectedPanel) renderPendingDependencyGraphs(selectedPanel);
   }
 
   function tabForHash(root, hash) {
@@ -1705,15 +1712,36 @@
     bind("[data-dependency-graph-reset]", function () { var c = cy(); if (c) { c.zoom(1); c.center(); } });
   }
 
+  // Renders a dependency graph only when its container is actually visible. Building Cytoscape in a
+  // hidden (display:none) tab panel yields a 0x0 canvas, which collapses node geometry and makes
+  // every edge a zero-size (invisible) line; a later resize/fit/re-layout does not recover it, so
+  // hidden graphs are marked pending and rendered on first visibility (see activateTab) instead.
+  function renderDependencyGraphIfVisible(figure) {
+    if (!figure || figure.__depGraphCy) return;
+    var viewport = figure.querySelector("[data-dependency-graph-viewport]");
+    if (viewport && viewport.clientWidth > 0 && viewport.clientHeight > 0) {
+      figure.__depGraphPending = false;
+      renderDependencyGraph(figure);
+    } else {
+      figure.__depGraphPending = true;
+    }
+  }
+
+  function renderPendingDependencyGraphs(root) {
+    (root || document).querySelectorAll("[data-dependency-graph]").forEach(function (figure) {
+      if (figure.__depGraphPending && !figure.__depGraphCy) renderDependencyGraphIfVisible(figure);
+    });
+  }
+
   function initDependencyGraphs() {
     document.querySelectorAll("[data-dependency-graph]").forEach(function (figure) {
-      renderDependencyGraph(figure);
       wireDepGraphZoom(figure);
       var button = figure.querySelector("[data-dependency-graph-resolve]");
       var statusEl = figure.querySelector("[data-dependency-graph-status]");
       if (button) {
         button.addEventListener("click", function () { resolveKustoConsumers(figure, button, statusEl); });
       }
+      renderDependencyGraphIfVisible(figure);
     });
   }
 
