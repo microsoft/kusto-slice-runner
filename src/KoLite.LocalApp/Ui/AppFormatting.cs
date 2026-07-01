@@ -100,6 +100,7 @@ namespace KoLite.LocalApp.Ui
             "Failed" => "badge-danger",
             "DeadLettered" => "badge-danger",
             "DependencyBlocked" => "badge-warning",
+            "WaitingOnUpstream" => "badge-success",
             "Running" => "badge-info",
             "Queued" => "badge-info",
             _ => "badge-neutral"

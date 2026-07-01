@@ -65,7 +65,7 @@ namespace KoLite.LocalApp.Ui
     {
         private static readonly IReadOnlyList<string> LegendStatusOrder = new[]
         {
-            "Healthy", "Running", "DependencyBlocked", "Failed", "Paused", "Completed", "SoftDeleted", "Unknown",
+            "Healthy", "WaitingOnUpstream", "Running", "DependencyBlocked", "Failed", "Paused", "Completed", "SoftDeleted", "Unknown",
             "KustoFunction", "KustoMaterializedView", "KustoTable", "KustoExternal"
         };
 

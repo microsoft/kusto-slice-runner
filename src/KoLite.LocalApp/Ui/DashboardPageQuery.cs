@@ -78,7 +78,9 @@ namespace KoLite.LocalApp.Ui
             ? 0
             : Summary.MissingCount + Summary.QueuedCount + Summary.RunningCount + Summary.CompletedCount + Summary.FailedCount + Summary.DeadLetteredCount + Summary.DependencyBlockedCount;
 
-        public int FailedLikeSlices => Summary is null ? 0 : Summary.FailedCount + Summary.DeadLetteredCount + Summary.DependencyBlockedCount;
+        public int FailedSlices => Summary is null ? 0 : Summary.FailedCount + Summary.DeadLetteredCount;
+
+        public int WaitingOnDependencySlices => Summary is null ? 0 : Summary.DependencyBlockedCount;
     }
 
     public sealed record NextSliceTiming(DateTimeOffset? EligibleAtUtc, string Text, string? Detail);
@@ -141,8 +143,10 @@ namespace KoLite.LocalApp.Ui
             var summaries = readModels.GetJobStatusSummaries().ToDictionary(s => s.JobId, StringComparer.Ordinal);
             var queuedAvailability = readModels.GetQueuedAvailabilityByJob();
             var latestSliceEnds = readModels.GetLatestSliceEndsByJob();
-            return catalog.List()
-                .Select(record => BuildJobListItem(record, lifecycleStates, summaries, queuedAvailability, latestSliceEnds, now))
+            var records = catalog.List();
+            var classifier = DependencyStatusClassifier.Build(records, lifecycleStates, summaries, now);
+            return records
+                .Select(record => BuildJobListItem(record, lifecycleStates, summaries, queuedAvailability, latestSliceEnds, now, classifier))
                 .ToList();
         }
 
@@ -181,7 +185,9 @@ namespace KoLite.LocalApp.Ui
             var summaries = readModels.GetJobStatusSummaries().ToDictionary(s => s.JobId, StringComparer.Ordinal);
             var queuedAvailability = readModels.GetQueuedAvailabilityByJob();
             var latestSliceEnds = readModels.GetLatestSliceEndsByJob();
-            return BuildJobListItem(record, lifecycleStates, summaries, queuedAvailability, latestSliceEnds, now);
+            // The whole catalog is needed so upstream health can be classified transitively.
+            var classifier = DependencyStatusClassifier.Build(catalog.List(), lifecycleStates, summaries, now);
+            return BuildJobListItem(record, lifecycleStates, summaries, queuedAvailability, latestSliceEnds, now, classifier);
         }
 
         private static JobListItem BuildJobListItem(
@@ -190,25 +196,14 @@ namespace KoLite.LocalApp.Ui
             IReadOnlyDictionary<string, JobStatusSummary> summaries,
             IReadOnlyDictionary<string, DateTimeOffset> queuedAvailability,
             IReadOnlyDictionary<string, DateTimeOffset> latestSliceEnds,
-            DateTimeOffset now)
+            DateTimeOffset now,
+            DependencyStatusClassifier classifier)
         {
             var definition = record.Definition;
             lifecycleStates.TryGetValue(record.JobId, out var lifecycle);
             summaries.TryGetValue(record.JobId, out var summary);
             var completed = IsCompletedSchedule(definition, summary, now);
-            var status = lifecycle?.IsSoftDeleted == true
-                ? "SoftDeleted"
-                : !record.IsEnabled
-                    ? "Paused"
-                    : summary is { FailedCount: > 0 } or { DeadLetteredCount: > 0 }
-                        ? "Failed"
-                        : summary is { DependencyBlockedCount: > 0 }
-                            ? "DependencyBlocked"
-                            : summary is { QueuedCount: > 0 } or { RunningCount: > 0 }
-                                ? "Running"
-                                : completed
-                                    ? "Completed"
-                                    : "Healthy";
+            var status = classifier.Resolve(record.JobId);
 
             return new JobListItem(
                 record,
@@ -220,12 +215,35 @@ namespace KoLite.LocalApp.Ui
                 {
                     "SoftDeleted" => "Soft deleted",
                     "DependencyBlocked" => "Dependency blocked",
+                    "WaitingOnUpstream" => "Waiting on upstream",
                     _ => status
                 },
                 AppFormatting.BadgeCss(status),
                 GetNextSliceTiming(record, definition, lifecycle, summary, completed, queuedAvailability, latestSliceEnds, now),
                 completed);
         }
+
+        // The base job status ignoring dependency-health reclassification. Active work (Running) now
+        // outranks the dependency-blocked family so a downstream making progress is not painted as
+        // blocked; the blocked family is resolved to a calm or an attention state by the classifier.
+        private static string ComputeBaseStatus(
+            JobCatalogRecord record,
+            JobLifecycleProjection? lifecycle,
+            JobStatusSummary? summary,
+            bool completed)
+            => lifecycle?.IsSoftDeleted == true
+                ? "SoftDeleted"
+                : !record.IsEnabled
+                    ? "Paused"
+                    : summary is { FailedCount: > 0 } or { DeadLetteredCount: > 0 }
+                        ? "Failed"
+                        : summary is { QueuedCount: > 0 } or { RunningCount: > 0 }
+                            ? "Running"
+                            : summary is { DependencyBlockedCount: > 0 }
+                                ? "DependencyBlocked"
+                                : completed
+                                    ? "Completed"
+                                    : "Healthy";
 
         private static IReadOnlyList<JobTagSummary> BuildTagSummaries(IReadOnlyList<JobListItem> jobs, IReadOnlyList<string> selectedTags)
         {
@@ -348,6 +366,158 @@ namespace KoLite.LocalApp.Ui
                 { FailedCount: > 0 } or { DeadLetteredCount: > 0 } => new NextSliceTiming(null, "Attention", detail),
                 _ => new NextSliceTiming(null, "Incomplete", detail)
             };
+        }
+
+        // Classifies each job's dependency-blocked family into a calm "WaitingOnUpstream" (the whole
+        // ancestor chain is healthy and simply behind) or an attention-worthy "DependencyBlocked" (an
+        // ancestor has failed, is paused, is soft-deleted, or is missing). The distinction is fully
+        // transitive: a job is blocked if any ancestor along its DependsOn chain is a stuck source.
+        // Only jobs whose base status is already the blocked family are reclassified.
+        internal sealed class DependencyStatusClassifier
+        {
+            private static readonly string[] StuckBaseStatuses = { "Failed", "Paused", "SoftDeleted" };
+
+            private readonly IReadOnlyDictionary<string, string> baseStatusById;
+            private readonly IReadOnlyDictionary<string, bool> blockedByStuckById;
+
+            private DependencyStatusClassifier(
+                IReadOnlyDictionary<string, string> baseStatusById,
+                IReadOnlyDictionary<string, bool> blockedByStuckById)
+            {
+                this.baseStatusById = baseStatusById;
+                this.blockedByStuckById = blockedByStuckById;
+            }
+
+            public string Resolve(string jobId)
+            {
+                var baseStatus = baseStatusById.TryGetValue(jobId, out var value) ? value : "Healthy";
+                if (baseStatus != "DependencyBlocked")
+                {
+                    return baseStatus;
+                }
+
+                return blockedByStuckById.TryGetValue(jobId, out var stuck) && stuck
+                    ? "DependencyBlocked"
+                    : "WaitingOnUpstream";
+            }
+
+            public static DependencyStatusClassifier Build(
+                IReadOnlyList<JobCatalogRecord> records,
+                IReadOnlyDictionary<string, JobLifecycleProjection> lifecycleStates,
+                IReadOnlyDictionary<string, JobStatusSummary> summaries,
+                DateTimeOffset now)
+            {
+                var jobIdByActivityId = new Dictionary<string, string>(StringComparer.Ordinal);
+                foreach (var record in records)
+                {
+                    jobIdByActivityId[record.ActivityId] = record.JobId;
+                }
+
+                var knownJobIds = new HashSet<string>(records.Select(record => record.JobId), StringComparer.Ordinal);
+                var baseStatusById = new Dictionary<string, string>(StringComparer.Ordinal);
+                var upstreamsById = new Dictionary<string, IReadOnlyList<string?>>(StringComparer.Ordinal);
+                foreach (var record in records)
+                {
+                    var definition = record.Definition;
+                    lifecycleStates.TryGetValue(record.JobId, out var lifecycle);
+                    summaries.TryGetValue(record.JobId, out var summary);
+                    var completed = IsCompletedSchedule(definition, summary, now);
+                    baseStatusById[record.JobId] = ComputeBaseStatus(record, lifecycle, summary, completed);
+
+                    var upstreams = new List<string?>();
+                    foreach (var dependency in definition.DependsOn)
+                    {
+                        // A null entry marks an unresolvable/missing upstream reference.
+                        upstreams.Add(ResolveUpstreamJobId(dependency, knownJobIds, jobIdByActivityId));
+                    }
+
+                    upstreamsById[record.JobId] = upstreams;
+                }
+
+                var blockedByStuck = new Dictionary<string, bool>(StringComparer.Ordinal);
+                var visiting = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var record in records)
+                {
+                    ComputeBlockedByStuck(record.JobId, baseStatusById, upstreamsById, blockedByStuck, visiting);
+                }
+
+                return new DependencyStatusClassifier(baseStatusById, blockedByStuck);
+            }
+
+            private static bool ComputeBlockedByStuck(
+                string jobId,
+                IReadOnlyDictionary<string, string> baseStatusById,
+                IReadOnlyDictionary<string, IReadOnlyList<string?>> upstreamsById,
+                Dictionary<string, bool> memo,
+                HashSet<string> visiting)
+            {
+                if (memo.TryGetValue(jobId, out var cached))
+                {
+                    return cached;
+                }
+
+                // Cycle guard: a malformed dependency cycle must not recurse forever. Treat the
+                // re-entered node as not-yet-stuck so the traversal can unwind without caching a
+                // partial answer.
+                if (!visiting.Add(jobId))
+                {
+                    return false;
+                }
+
+                var hasUpstreams = upstreamsById.TryGetValue(jobId, out var upstreams) && upstreams.Count > 0;
+
+                // A blocked-family job with no declared dependency is an unexplained block: there is no
+                // upstream to vouch that the wait is healthy, so keep it flagged rather than calling it a
+                // calm wait. (In practice a blocked slice always has a declared dependency.)
+                var result = !hasUpstreams
+                    && baseStatusById.TryGetValue(jobId, out var ownBase)
+                    && ownBase == "DependencyBlocked";
+
+                if (hasUpstreams)
+                {
+                    foreach (var upstreamId in upstreams!)
+                    {
+                        if (upstreamId is null)
+                        {
+                            result = true;
+                            break;
+                        }
+
+                        if (IsStuckSource(baseStatusById, upstreamId)
+                            || ComputeBlockedByStuck(upstreamId, baseStatusById, upstreamsById, memo, visiting))
+                        {
+                            result = true;
+                            break;
+                        }
+                    }
+                }
+
+                visiting.Remove(jobId);
+                memo[jobId] = result;
+                return result;
+            }
+
+            private static bool IsStuckSource(IReadOnlyDictionary<string, string> baseStatusById, string jobId)
+                => baseStatusById.TryGetValue(jobId, out var status) && Array.IndexOf(StuckBaseStatuses, status) >= 0;
+
+            private static string? ResolveUpstreamJobId(
+                DependentJob dependency,
+                IReadOnlySet<string> knownJobIds,
+                IReadOnlyDictionary<string, string> jobIdByActivityId)
+            {
+                if (!string.IsNullOrWhiteSpace(dependency.Id))
+                {
+                    return knownJobIds.Contains(dependency.Id) ? dependency.Id : null;
+                }
+
+                if (!string.IsNullOrWhiteSpace(dependency.ActivityId)
+                    && jobIdByActivityId.TryGetValue(dependency.ActivityId, out var resolved))
+                {
+                    return resolved;
+                }
+
+                return null;
+            }
         }
     }
 }

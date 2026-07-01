@@ -506,6 +506,106 @@ namespace KoLite.LocalApp.Tests
         }
 
         [Fact]
+        public void Dashboard_shows_downstream_waiting_on_healthy_upstream_as_calm_green()
+        {
+            var clock = new ManualClock(At(120));
+            var catalog = new SqliteJobCatalogRepository(sqlite);
+            var state = new SqliteSliceStateRepository(sqlite);
+            catalog.Create(Schedule("up.healthy", "UpstreamFunction", isPaused: false));
+            catalog.Create(ScheduleWithDependencies("down.waiting", "DownstreamFunction", "up.healthy"));
+            state.Append("down-blocked", JobId("down.waiting"), At(25), At(30), DurableSliceStatus.DependencyBlocked, expectedVersion: 0, reason: "upstream");
+
+            var down = Assert.Single(CreateDashboardQuery(clock).GetAllJobs(), job => job.Record.JobId == JobId("down.waiting"));
+
+            // A downstream blocked only because a healthy upstream is behind is calm, not a warning.
+            Assert.Equal(("WaitingOnUpstream", "Waiting on upstream", "badge-success"), (down.LifecycleStatus, down.StatusText, down.StatusCss));
+        }
+
+        [Fact]
+        public void Dashboard_shows_downstream_blocked_by_failed_upstream_as_attention_yellow()
+        {
+            var clock = new ManualClock(At(120));
+            var catalog = new SqliteJobCatalogRepository(sqlite);
+            var state = new SqliteSliceStateRepository(sqlite);
+            catalog.Create(Schedule("up.failed", "UpstreamFunction", isPaused: false));
+            catalog.Create(ScheduleWithDependencies("down.blocked", "DownstreamFunction", "up.failed"));
+            state.Append("up-failed", JobId("up.failed"), At(25), At(30), DurableSliceStatus.Failed, expectedVersion: 0, reason: "boom");
+            state.Append("down-blocked", JobId("down.blocked"), At(25), At(30), DurableSliceStatus.DependencyBlocked, expectedVersion: 0, reason: "upstream");
+
+            var down = Assert.Single(CreateDashboardQuery(clock).GetAllJobs(), job => job.Record.JobId == JobId("down.blocked"));
+
+            // The upstream has genuinely failed, so the downstream stays flagged as blocked.
+            Assert.Equal(("DependencyBlocked", "Dependency blocked", "badge-warning"), (down.LifecycleStatus, down.StatusText, down.StatusCss));
+        }
+
+        [Fact]
+        public void Dashboard_propagates_upstream_failure_transitively_through_a_blocked_chain()
+        {
+            var clock = new ManualClock(At(120));
+            var catalog = new SqliteJobCatalogRepository(sqlite);
+            var state = new SqliteSliceStateRepository(sqlite);
+            // C(failed) <- B(blocked) <- A(blocked): both B and A are genuinely blocked.
+            catalog.Create(Schedule("chain.c", "CFunction", isPaused: false));
+            catalog.Create(ScheduleWithDependencies("chain.b", "BFunction", "chain.c"));
+            catalog.Create(ScheduleWithDependencies("chain.a", "AFunction", "chain.b"));
+            state.Append("c-failed", JobId("chain.c"), At(25), At(30), DurableSliceStatus.Failed, expectedVersion: 0, reason: "boom");
+            state.Append("b-blocked", JobId("chain.b"), At(25), At(30), DurableSliceStatus.DependencyBlocked, expectedVersion: 0, reason: "upstream");
+            state.Append("a-blocked", JobId("chain.a"), At(25), At(30), DurableSliceStatus.DependencyBlocked, expectedVersion: 0, reason: "upstream");
+
+            var jobs = CreateDashboardQuery(clock).GetAllJobs();
+            var b = Assert.Single(jobs, job => job.Record.JobId == JobId("chain.b"));
+            var a = Assert.Single(jobs, job => job.Record.JobId == JobId("chain.a"));
+
+            Assert.Equal("DependencyBlocked", b.LifecycleStatus);
+            Assert.Equal("DependencyBlocked", a.LifecycleStatus);
+        }
+
+        [Fact]
+        public void Dashboard_shows_running_work_ahead_of_a_dependency_block()
+        {
+            var clock = new ManualClock(At(120));
+            var catalog = new SqliteJobCatalogRepository(sqlite);
+            var state = new SqliteSliceStateRepository(sqlite);
+            catalog.Create(Schedule("up.healthy2", "UpstreamFunction", isPaused: false));
+            catalog.Create(ScheduleWithDependencies("down.running", "DownstreamFunction", "up.healthy2"));
+            state.Append("down-blocked", JobId("down.running"), At(25), At(30), DurableSliceStatus.DependencyBlocked, expectedVersion: 0, reason: "upstream");
+            state.AcquireLease("down-running", JobId("down.running"), At(30), At(35), "worker", TimeSpan.FromMinutes(5), At(120));
+
+            var down = Assert.Single(CreateDashboardQuery(clock).GetAllJobs(), job => job.Record.JobId == JobId("down.running"));
+
+            // Active work outranks the dependency-blocked family: a progressing job reads as Running.
+            Assert.Equal(("Running", "badge-info"), (down.LifecycleStatus, down.StatusCss));
+        }
+
+        private DashboardPageQuery CreateDashboardQuery(IClock clock) => new(
+            new SqliteJobCatalogRepository(sqlite),
+            new SqliteOperationalReadModelRepository(sqlite),
+            new LifecycleReadModel(new SqliteLifecycleReadModelRepository(sqlite)),
+            new JobChartQuery(sqlite, clock),
+            clock);
+
+        private static string ScheduleWithDependencies(string activityId, string functionName, params string[] upstreamActivityIds)
+        {
+            var deps = string.Join(", ", upstreamActivityIds.Select(up => $$"""{ "id": "{{JobId(up)}}", "activityId": "{{up}}" }"""));
+            return $$"""
+            {
+              "id": "{{JobId(activityId)}}",
+              "activityId": "{{activityId}}",
+              "functionName": "{{functionName}}",
+              "outputTable": "Output",
+              "queryWindowSize": "00:05:00",
+              "delayFromUtcNow": "00:00:00",
+              "maxParallelism": 1,
+              "queryTimeout": "00:01:00",
+              "isPaused": false,
+              "startFrom": "2026-01-01T00:00:00Z",
+              "dependsOn": [ {{deps}} ],
+              "target": { "clusterUri": "https://kolite-example.invalid", "database": "DemoDb" }
+            }
+            """;
+        }
+
+        [Fact]
         public void Dashboard_moves_finite_job_to_completed_after_all_slices_complete()
         {
             var clock = new ManualClock(At(120));

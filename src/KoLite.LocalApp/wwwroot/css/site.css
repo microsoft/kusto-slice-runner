@@ -976,7 +976,9 @@ h3 { font-size: 16px; margin-bottom: 10px; }
 
 /* Status colors mirror the job status badges. */
 .dependency-graph-node.status-healthy .dependency-graph-node-box,
-.dependency-graph-swatch.status-healthy { fill: #dafbe1; background: #dafbe1; stroke: var(--success); border-color: var(--success); }
+.dependency-graph-swatch.status-healthy,
+.dependency-graph-node.status-waitingonupstream .dependency-graph-node-box,
+.dependency-graph-swatch.status-waitingonupstream { fill: #dafbe1; background: #dafbe1; stroke: var(--success); border-color: var(--success); }
 .dependency-graph-node.status-running .dependency-graph-node-box,
 .dependency-graph-swatch.status-running { fill: #ddf4ff; background: #ddf4ff; stroke: var(--info); border-color: var(--info); }
 .dependency-graph-node.status-dependencyblocked .dependency-graph-node-box,

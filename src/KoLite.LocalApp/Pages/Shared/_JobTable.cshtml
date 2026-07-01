@@ -207,11 +207,11 @@
                                     <div>@job.Summary.CompletedCount completed / @job.TotalSlices total</div>
                                     @if (Model.ShowRunningProgressCount)
                                     {
-                                        <div class="muted">@job.Summary.QueuedCount queued, @job.Summary.RunningCount running, @job.FailedLikeSlices failed/blocked</div>
+                                        <div class="muted">@job.Summary.QueuedCount queued, @job.Summary.RunningCount running, @job.FailedSlices failed, @job.WaitingOnDependencySlices waiting</div>
                                     }
                                     else
                                     {
-                                        <div class="muted">@job.Summary.QueuedCount queued, @job.FailedLikeSlices failed/blocked</div>
+                                        <div class="muted">@job.Summary.QueuedCount queued, @job.FailedSlices failed, @job.WaitingOnDependencySlices waiting</div>
                                     }
                                 }
                             </td>
@@ -322,7 +322,8 @@
                     parts.Add(job.Summary.RunningCount + " running");
                 }
 
-                parts.Add(job.FailedLikeSlices + " failed blocked");
+                parts.Add(job.FailedSlices + " failed");
+                parts.Add(job.WaitingOnDependencySlices + " waiting");
             }
         }
 

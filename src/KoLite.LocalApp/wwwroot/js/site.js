@@ -1479,6 +1479,7 @@
   function depGraphStylesheet() {
     var STATUS_COLORS = {
       healthy: ["#dafbe1", "#1a7f37"],
+      waitingonupstream: ["#dafbe1", "#1a7f37"],
       running: ["#ddf4ff", "#0969da"],
       dependencyblocked: ["#fff8c5", "#9a6700"],
       paused: ["#fff8c5", "#9a6700"],
