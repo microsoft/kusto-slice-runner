@@ -89,7 +89,11 @@ namespace KoLite.Local.Sqlite.Lifecycle
 
         public HardDeleteResult HardDelete(string jobId, string confirmation, string actor, string reason)
         {
-            var expected = $"DELETE {jobId}";
+            // The confirmation phrase is the human-readable display name (the activity id shown in
+            // the UI), not the opaque GUID job id, so an operator confirms against the name they see.
+            // The purge below still targets the GUID jobId; only the safety phrase is name-based.
+            var record = catalog.Get(jobId) ?? throw new InvalidOperationException($"Job '{jobId}' does not exist.");
+            var expected = $"DELETE {record.DisplayName}";
             if (!StringComparer.Ordinal.Equals(confirmation, expected))
             {
                 throw new InvalidOperationException($"Hard-delete confirmation must exactly match '{expected}'.");

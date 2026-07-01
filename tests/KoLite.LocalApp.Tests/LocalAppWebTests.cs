@@ -913,6 +913,12 @@ namespace KoLite.LocalApp.Tests
             });
             Assert.Equal(HttpStatusCode.Redirect, softDeleteAgain.StatusCode);
 
+            var hardDeletePage = await client.GetStringAsync($"/catalog/{JobId("job.catalog")}/hard-delete");
+            Assert.Contains("Hard delete job.catalog", hardDeletePage);
+            Assert.Contains("DELETE job.catalog", hardDeletePage);
+            Assert.Contains($"id: {JobId("job.catalog")}", hardDeletePage);
+            Assert.DoesNotContain($"Hard delete {JobId("job.catalog")}", hardDeletePage);
+
             var hardDeleteToken = await ReadFormToken(client, $"/catalog/{JobId("job.catalog")}/hard-delete");
             var blockedHardDelete = await PostForm(client, $"/catalog/{JobId("job.catalog")}/hard-delete", hardDeleteToken, new Dictionary<string, string>
             {
@@ -925,7 +931,7 @@ namespace KoLite.LocalApp.Tests
             hardDeleteToken = await ReadFormToken(client, $"/catalog/{JobId("job.catalog")}/hard-delete");
             var hardDelete = await PostForm(client, $"/catalog/{JobId("job.catalog")}/hard-delete", hardDeleteToken, new Dictionary<string, string>
             {
-                ["confirmation"] = $"DELETE {JobId("job.catalog")}",
+                ["confirmation"] = "DELETE job.catalog",
                 ["reason"] = "test hard delete"
             });
             var hardDeleteBody = await hardDelete.Content.ReadAsStringAsync();

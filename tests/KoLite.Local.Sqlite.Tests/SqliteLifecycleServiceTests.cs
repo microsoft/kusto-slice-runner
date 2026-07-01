@@ -59,12 +59,12 @@ namespace KoLite.Local.Sqlite.Tests
             readModels.RecordLog("Error", "boom", "test", JobId("job.purge"), At(0), At(5));
 
             Assert.Throws<InvalidOperationException>(() => Service().HardDelete(JobId("job.purge"), JobId("job.purge"), "tester", "remove all local state"));
-            Assert.Throws<InvalidOperationException>(() => Service().HardDelete(JobId("job.purge"), $"DELETE {JobId("job.purge")}", "tester", "remove all local state"));
+            Assert.Throws<InvalidOperationException>(() => Service().HardDelete(JobId("job.purge"), $"DELETE {created.DisplayName}", "tester", "remove all local state"));
             var leased = queue.Claim("default", "purge-test-worker", TimeSpan.FromMinutes(5), At(1));
             Assert.NotNull(leased);
             Service().SoftDelete(JobId("job.purge"), created.CatalogVersion, "tester", "disable before purge");
             queue.Complete(leased.QueueItemId, "purge-test-worker");
-            var result = Service().HardDelete(JobId("job.purge"), $"DELETE {JobId("job.purge")}", "tester", "remove all local state");
+            var result = Service().HardDelete(JobId("job.purge"), $"DELETE {created.DisplayName}", "tester", "remove all local state");
 
             Assert.Equal(1, result.DeletedJobs);
             Assert.Null(catalog.Get(JobId("job.purge")));
@@ -90,7 +90,7 @@ namespace KoLite.Local.Sqlite.Tests
             queue.Enqueue(JobId("job.inert.queued"), At(0), At(5), "inert-queued", At(0));
             Service().SoftDelete(JobId("job.inert.queued"), queued.CatalogVersion, "tester", "disable");
 
-            var result = Service().HardDelete(JobId("job.inert.queued"), $"DELETE {JobId("job.inert.queued")}", "tester", "purge");
+            var result = Service().HardDelete(JobId("job.inert.queued"), $"DELETE {queued.DisplayName}", "tester", "purge");
             Assert.Equal(1, result.DeletedJobs);
             Assert.Null(catalog.Get(JobId("job.inert.queued")));
             Assert.Empty(queue.List(JobId("job.inert.queued")));
@@ -104,7 +104,7 @@ namespace KoLite.Local.Sqlite.Tests
             Assert.NotNull(stale);
             Service().SoftDelete(JobId("job.inert.expired"), expired.CatalogVersion, "tester", "disable");
 
-            Assert.Equal(1, Service().HardDelete(JobId("job.inert.expired"), $"DELETE {JobId("job.inert.expired")}", "tester", "purge").DeletedJobs);
+            Assert.Equal(1, Service().HardDelete(JobId("job.inert.expired"), $"DELETE {expired.DisplayName}", "tester", "purge").DeletedJobs);
             Assert.Null(catalog.Get(JobId("job.inert.expired")));
         }
 
@@ -119,7 +119,7 @@ namespace KoLite.Local.Sqlite.Tests
             Assert.NotNull(liveItem);
             Service().SoftDelete(JobId("job.live.leased"), leased.CatalogVersion, "tester", "disable");
 
-            Assert.Throws<InvalidOperationException>(() => Service().HardDelete(JobId("job.live.leased"), $"DELETE {JobId("job.live.leased")}", "tester", "purge"));
+            Assert.Throws<InvalidOperationException>(() => Service().HardDelete(JobId("job.live.leased"), $"DELETE {leased.DisplayName}", "tester", "purge"));
             Assert.NotNull(catalog.Get(JobId("job.live.leased")));
 
             // A slice a worker is actively running (live lease) also blocks.
@@ -127,7 +127,7 @@ namespace KoLite.Local.Sqlite.Tests
             state.AcquireLease("run-op", JobId("job.live.running"), At(0), At(5), "run-worker", TimeSpan.FromMinutes(30), DateTimeOffset.UtcNow);
             Service().SoftDelete(JobId("job.live.running"), running.CatalogVersion, "tester", "disable");
 
-            Assert.Throws<InvalidOperationException>(() => Service().HardDelete(JobId("job.live.running"), $"DELETE {JobId("job.live.running")}", "tester", "purge"));
+            Assert.Throws<InvalidOperationException>(() => Service().HardDelete(JobId("job.live.running"), $"DELETE {running.DisplayName}", "tester", "purge"));
             Assert.NotNull(catalog.Get(JobId("job.live.running")));
         }
 

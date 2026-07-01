@@ -111,7 +111,7 @@ namespace KoLite.LocalApp.Tests
             var restored = lifecycle.Restore(JobId("e2e.lifecycle"), softDeleted.CatalogVersion, "e2e-test", "restore before purge");
             Assert.True(restored.IsEnabled);
             var disabled = lifecycle.SoftDelete(JobId("e2e.lifecycle"), restored.CatalogVersion, "e2e-test", "disable before hard-delete");
-            var purged = lifecycle.HardDelete(JobId("e2e.lifecycle"), $"DELETE {JobId("e2e.lifecycle")}", "e2e-test", "local hard-delete safety path");
+            var purged = lifecycle.HardDelete(JobId("e2e.lifecycle"), $"DELETE {disabled.DisplayName}", "e2e-test", "local hard-delete safety path");
             Assert.False(disabled.IsEnabled);
             Assert.Equal(1, purged.DeletedJobs);
             Assert.Null(catalog.Get(JobId("e2e.lifecycle")));

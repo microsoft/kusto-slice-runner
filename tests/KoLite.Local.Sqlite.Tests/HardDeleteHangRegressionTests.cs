@@ -54,7 +54,7 @@ namespace KoLite.Local.Sqlite.Tests
             using var heldReader = readerCommand.ExecuteReader();
             Assert.True(heldReader.Read());
 
-            var purge = Task.Run(() => lifecycle.HardDelete(victim.JobId, $"DELETE {victim.JobId}", actor: "test", reason: "hang-regression"));
+            var purge = Task.Run(() => lifecycle.HardDelete(victim.JobId, $"DELETE {victim.DisplayName}", actor: "test", reason: "hang-regression"));
 
             // The reader lock is held throughout. Under the shared-cache bug the purge cannot make
             // progress and never completes within the bound; with the fix it finishes in milliseconds.
@@ -123,7 +123,7 @@ namespace KoLite.Local.Sqlite.Tests
                 startGate.Wait();
                 try
                 {
-                    lifecycle.HardDelete(victim.JobId, $"DELETE {victim.JobId}", actor: "test", reason: "hang-regression-load");
+                    lifecycle.HardDelete(victim.JobId, $"DELETE {victim.DisplayName}", actor: "test", reason: "hang-regression-load");
                 }
                 catch (Exception ex)
                 {

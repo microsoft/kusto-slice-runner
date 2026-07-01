@@ -6,7 +6,8 @@
 
 <div class="page-heading">
     <div>
-        <h1>Hard delete @Model.JobId</h1>
+        <h1>Hard delete @Model.DisplayName</h1>
+        <p class="muted mono">id: @Model.JobId</p>
         <p class="muted">This permanently purges the local catalog row, queue rows, slice state, attempts, and repair rows for this job.</p>
     </div>
     <a class="btn" href="/">Back to jobs</a>
@@ -30,9 +31,9 @@ else
         <p>Hard delete is allowed only after the job is disabled or soft-deleted and no active work is queued, leased, or running.</p>
         <form method="post" action="/catalog/@Uri.EscapeDataString(Model.JobId)/hard-delete">
             @Html.AntiForgeryToken()
-            <label>Type <code>DELETE @Model.JobId</code><input name="confirmation" autocomplete="off" /></label>
+            <label>Type <code>DELETE @Model.DisplayName</code><input name="confirmation" autocomplete="off" /></label>
             <label>Reason<textarea name="reason" rows="3">Hard deleted from web UI</textarea></label>
-            <button class="btn danger" type="submit" data-confirm-text="DELETE @Model.JobId">Hard delete permanently</button>
+            <button class="btn danger" type="submit" data-confirm-text="DELETE @Model.DisplayName">Hard delete permanently</button>
         </form>
     </section>
 }

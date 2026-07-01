@@ -78,7 +78,7 @@ namespace KoLite.Local.Sqlite.Tests
             SeedSliceStateEvents(victim.JobId, victimEvents);
 
             var sw = Stopwatch.StartNew();
-            lifecycle.HardDelete(victim.JobId, $"DELETE {victim.JobId}", actor: "test", reason: "fk-index-regression");
+            lifecycle.HardDelete(victim.JobId, $"DELETE {victim.DisplayName}", actor: "test", reason: "fk-index-regression");
             sw.Stop();
 
             Assert.True(

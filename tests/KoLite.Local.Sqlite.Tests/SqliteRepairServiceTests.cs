@@ -133,7 +133,7 @@ namespace KoLite.Local.Sqlite.Tests
             new SqliteJobLifecycleService(factory, catalog).SoftDelete(JobId("job.childless"), created.CatalogVersion, "tester", "disable before purge");
             Assert.True(queue.Complete(originalWork.QueueItemId, "purge-worker"));
 
-            var purge = new SqliteJobLifecycleService(factory, catalog).HardDelete(JobId("job.childless"), $"DELETE {JobId("job.childless")}", "tester", "purge childless repair batch");
+            var purge = new SqliteJobLifecycleService(factory, catalog).HardDelete(JobId("job.childless"), $"DELETE {created.DisplayName}", "tester", "purge childless repair batch");
 
             Assert.Equal(1, purge.DeletedRepairBatches);
             Assert.Equal(0, QueryInt($"SELECT COUNT(*) FROM repair_batches WHERE repair_batch_id=$id OR job_id='{JobId("job.childless")}';", ("$id", first.RepairBatchId)));
