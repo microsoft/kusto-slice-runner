@@ -19,6 +19,8 @@ If port `5057` is busy, add an explicit URL:
 --KoLite:Urls=http://127.0.0.1:5058
 ```
 
+To view the **live** database (`%LOCALAPPDATA%\KoLite\ko-lite.db`) while your app keeps running, start a second UI-only instance with `.\scripts\Start-KoLiteUi.ps1` (defaults to the live database on port 5099). A second instance on the same database is otherwise refused by the single-instance guard; the script bypasses it with `KoLite:AllowMultipleInstances=true` and keeps the scheduler, worker, and retention disabled so the viewer makes no background writes. Startup still migrates whatever database it opens, so pass `-UseCopy` when your branch changes the schema.
+
 ## Live local execution
 
 Before enabling scheduler dispatch:
@@ -41,6 +43,7 @@ dotnet run --project .\src\KoLite.LocalApp\KoLite.LocalApp.csproj -- --Connectio
 | `ConnectionStrings:KoLiteSqlite` | Empty | Preferred explicit local SQLite path. |
 | `KoLite:DatabasePath` | `%LOCALAPPDATA%\KoLite\ko-lite.db` | Fallback database path when no connection string is supplied. |
 | `KoLite:Urls` | `http://127.0.0.1:5057` | Local bind URL. |
+| `KoLite:AllowMultipleInstances` | `false` | Bypasses the single-instance guard so a UI-only viewer can run alongside the live app against the same database. Only for that intentional case: keep `KoLite:Scheduler:Enabled=false` and `KoLite:Retention:Enabled=false`, and note startup still migrates whatever database it opens. See [Safe local review](#safe-local-review). |
 | `KoLite:Scheduler:Enabled` | `true` | Disable for UI-only or safe first-run review. |
 | `KoLite:Scheduler:TickInterval` | `00:00:10` | Scheduler cadence. Must be greater than zero. |
 | `KoLite:Scheduler:LogEveryPass` | `false` | Writes durable scheduler/worker diagnostic rows when enabled. |

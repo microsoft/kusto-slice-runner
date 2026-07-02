@@ -50,6 +50,23 @@ Use the [operations runbook](operations-runbook.md) for live scheduling, configu
 
 The example above uses a `ko-lite-dev.db` sandbox; `ko-lite-review.db` is the runbook's review sandbox. These distinct names are intentional — `ko-lite.db` is only the default path used when no connection string is supplied. To find which database an instance is actually using, run `.\scripts\Get-KoLiteDatabase.ps1` (or read `databasePath` from `/status/health`).
 
+### View the live database while the app is running
+
+To browse the **live** default database (`%LOCALAPPDATA%\KoLite\ko-lite.db`) while your published app keeps running, start a second UI-only instance on a different port:
+
+```powershell
+.\scripts\Start-KoLiteUi.ps1            # live DB on port 5099, scheduler + retention disabled
+```
+
+A second instance on the same database is normally refused by the single-instance guard. `Start-KoLiteUi.ps1` bypasses it with `--KoLite:AllowMultipleInstances=true` while keeping the scheduler, worker, and retention disabled, so the viewer performs no background writes. The manual equivalent is:
+
+```powershell
+$db = "$env:LOCALAPPDATA\KoLite\ko-lite.db"
+dotnet run --project .\src\KoLite.LocalApp\KoLite.LocalApp.csproj -- --ConnectionStrings:KoLiteSqlite="$db" --KoLite:Scheduler:Enabled=false --KoLite:Retention:Enabled=false --KoLite:AllowMultipleInstances=true --KoLite:Kusto:AuthMode=AzureCli --KoLite:Urls=http://127.0.0.1:5099
+```
+
+Startup still runs migrations against the live database, so when your branch changes the schema use `-UseCopy` (or a sandbox `-DatabasePath`) instead. Mutating UI actions also write to the live database.
+
 ## Run from a deployed copy (avoid the build file lock)
 
 `dotnet run` from the repository locks `src\KoLite.LocalApp\bin\...\KoLite.LocalApp.dll`, so a running app makes `dotnet build` / `dotnet test` fail with MSB3026/MSB3027 file-in-use errors. To iterate on changes while an app keeps running, deploy the build to an isolated folder and run it from there:

@@ -8,7 +8,7 @@ Starts 'dotnet run' on src\KoLite.LocalApp\KoLite.LocalApp.csproj in the foregro
 stop) so you can browse the current source build of the dashboard against real data, without
 running any jobs.
 
-It always passes three overrides:
+It always passes these fixed overrides (a later value in -AppArguments still wins):
 
 1. --ConnectionStrings:KoLiteSqlite=<database>  points the instance at the chosen database. By
    default this is the live default database %LOCALAPPDATA%\KoLite\ko-lite.db (resolved the same
@@ -16,7 +16,15 @@ It always passes three overrides:
 2. --KoLite:Scheduler:Enabled=false  disables BOTH the scheduler enqueue loop and the worker
    dispatcher, so no slices are claimed and no Kusto execution / automated writes happen. The
    instance is effectively UI-only.
-3. --KoLite:Urls=http://127.0.0.1:<Port>  binds a non-default loopback port so this instance can
+3. --KoLite:Retention:Enabled=false  disables the retention pruner so this secondary instance
+   never prunes the database the live app already maintains.
+4. --KoLite:AllowMultipleInstances=true  bypasses the single-instance guard so this UI-only
+   instance can run alongside your live app against the SAME database. The guard normally refuses a
+   second instance on one database; with the scheduler, worker, and retention all disabled here the
+   only writes are the brief idempotent startup migration, which is safe next to the live writer
+   under WAL. The secondary instance logs a "guard is disabled; use a distinct database" warning;
+   that is expected here and can be ignored (this is the intentional shared-database viewer case).
+5. --KoLite:Urls=http://127.0.0.1:<Port>  binds a non-default loopback port so this instance can
    coexist with your live app (usually on http://127.0.0.1:5057). The app reads KoLite:Urls in
    UseUrls(...), so --urls / ASPNETCORE_URLS are ignored; this is the supported way to move it.
 
@@ -32,6 +40,9 @@ Safety notes when running against the live database (the default):
   operator actions (enable/disable, soft-delete, pause/resume, edit schedule, rerun ack, repair),
   and they write to whatever database is configured. Navigating/inspecting is safe; clicking those
   is not, when running against the live database.
+- This instance coexists with a running live app on the same database (the single-instance guard is
+  bypassed). Reads and the disabled background services are safe under WAL; the residual risk is the
+  startup migration above, so still prefer -UseCopy when your branch changes the schema.
 
 -UseCopy snapshots the chosen database (plus its -wal / -shm sidecars when present) to a throwaway
 file and runs against that copy, leaving the live database untouched. The copy is best-effort while
@@ -63,6 +74,7 @@ the app.
 
 .EXAMPLE
 .\scripts\Start-KoLiteUi.ps1
+Views the live default database on port 5099 while your live app keeps running on 5057.
 
 .EXAMPLE
 .\scripts\Start-KoLiteUi.ps1 -UseCopy -Port 5099
@@ -154,6 +166,8 @@ $dotnetArgs = @(
     '--',
     "--ConnectionStrings:KoLiteSqlite=$effectiveDatabasePath",
     '--KoLite:Scheduler:Enabled=false',
+    '--KoLite:Retention:Enabled=false',
+    '--KoLite:AllowMultipleInstances=true',
     "--KoLite:Urls=$effectiveUrl"
 )
 if (@($AppArguments).Count -gt 0) {
@@ -171,6 +185,8 @@ if ($UseCopy) {
 }
 Write-Host "Url            : $effectiveUrl"
 Write-Host 'Scheduler      : disabled (no slice claims, no Kusto execution)'
+Write-Host 'Retention      : disabled (does not prune the shared database)'
+Write-Host 'Coexistence    : shared-database guard bypassed (--KoLite:AllowMultipleInstances=true)'
 if ($NoBrowser) {
     Write-Host 'Browser        : not opened (-NoBrowser)'
 } else {
