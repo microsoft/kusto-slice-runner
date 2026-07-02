@@ -17,6 +17,10 @@ else
             <h1>@data.Job.ActivityId</h1>
             <p class="muted">@data.Definition.FunctionName -> @data.Definition.OutputTable</p>
             <p class="muted mono">id: @data.Job.JobId</p>
+            @if (Model.Status is { } status)
+            {
+                <p class="job-status-line"><partial name="_StatusPill" model="status" /></p>
+            }
         </div>
         <partial name="_PausedIndicator" model="data" />
         <div class="button-row">
@@ -60,6 +64,14 @@ else
             }
         </div>
     </div>
+
+    @if (Model.Status is { ShowCompleteness: true, GapCount: > 0 } gapStatus)
+    {
+        <div class="alert warning" role="alert">
+            This job has @gapStatus.GapCount unaddressed dead-lettered slice(s), so its history is incomplete.
+            Rerun or repair them to close the gaps, or set <code>healthPolicy</code> to <code>recent</code> if gaps are acceptable for this job.
+        </div>
+    }
 
     <partial name="_CatchUpSummary" model="data.CatchUp" />
 

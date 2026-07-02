@@ -65,7 +65,7 @@ namespace KoLite.LocalApp.Ui
     {
         private static readonly IReadOnlyList<string> LegendStatusOrder = new[]
         {
-            "Healthy", "WaitingOnUpstream", "Running", "DependencyBlocked", "Failed", "Paused", "Completed", "SoftDeleted", "Unknown",
+            "Attention", "Borderline", "Healthy", "WaitingOnUpstream", "DependencyBlocked", "Paused", "Completed", "SoftDeleted", "Unknown",
             "KustoFunction", "KustoMaterializedView", "KustoTable", "KustoExternal"
         };
 
@@ -111,7 +111,7 @@ namespace KoLite.LocalApp.Ui
             // an unresolved placeholder). Genuinely unknown upstream ids are still surfaced as
             // placeholders below so a dangling dependency stays visible.
             var softDeletedIds = new HashSet<string>(
-                allJobs.Where(job => job.LifecycleStatus == "SoftDeleted").Select(job => job.Record.JobId),
+                allJobs.Where(job => job.PrimaryState == "SoftDeleted").Select(job => job.Record.JobId),
                 StringComparer.Ordinal);
 
             var focal = new HashSet<string>(
@@ -122,7 +122,7 @@ namespace KoLite.LocalApp.Ui
                 return DependencyGraphViewModel.Empty;
             }
 
-            var jobs = allJobs.Where(job => job.LifecycleStatus != "SoftDeleted").ToList();
+            var jobs = allJobs.Where(job => job.PrimaryState != "SoftDeleted").ToList();
             var byId = jobs.ToDictionary(job => job.Record.JobId, StringComparer.Ordinal);
             var byKusto = kustoNodes
                 .GroupBy(node => node.Key, StringComparer.Ordinal)
@@ -241,7 +241,7 @@ namespace KoLite.LocalApp.Ui
             if (byId.TryGetValue(placement.Id, out var job))
             {
                 label = job.Record.ActivityId;
-                status = job.LifecycleStatus;
+                status = job.PrimaryState;
                 statusText = job.StatusText;
                 statusCss = job.StatusCss;
                 kind = "Job";

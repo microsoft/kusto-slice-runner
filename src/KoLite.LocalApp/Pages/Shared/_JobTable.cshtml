@@ -34,8 +34,8 @@
                     {
                         <col class="job-col-select" data-column-key="select" data-default-width="40" data-min-width="40" />
                     }
-                    <col class="job-col-status" data-column-key="status" data-default-width="132" data-min-width="80" />
-                    <col class="job-col-activity" data-column-key="activity" data-default-width="280" data-min-width="160" />
+                    <col class="job-col-status" data-column-key="status" data-default-width="88" data-min-width="72" />
+                    <col class="job-col-activity" data-column-key="activity" data-default-width="324" data-min-width="160" />
                     @if (Model.ShowDefinitionColumns)
                     {
                         <col class="job-col-function" data-column-key="function" data-default-width="240" data-min-width="160" />
@@ -175,7 +175,7 @@
                             <td class="select-cell"><input type="checkbox" class="bulk-select" data-bulk-select value="@job.Record.JobId" data-expected-version="@job.Record.CatalogVersion" aria-label="Select @job.Record.ActivityId" /></td>
                         }
                         <td class="status-cell">
-                            <span class="badge @job.StatusCss">@job.StatusText</span>
+                            <partial name="_StatusPill" model="job" />
                         </td>
                         <td class="activity-cell">
                             <a class="strong text-truncate" title="@job.Record.ActivityId" href="/jobs/@Uri.EscapeDataString(job.Record.JobId)">@job.Record.ActivityId</a>
@@ -291,6 +291,7 @@
         {
             job.Record.ActivityId,
             job.StatusText,
+            job.ShowCompleteness ? AppFormatting.CompletenessLabel(job.GapCount) : null,
             AppFormatting.Duration(job.Definition.QueryWindowSize),
             "Delay " + AppFormatting.Duration(job.Definition.DelayFromUtcNow)
         };

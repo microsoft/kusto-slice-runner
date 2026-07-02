@@ -32,6 +32,12 @@
             <label>Tags<input name="Input.Tags" value="@Model.Input.Tags" placeholder="prod, daily, security" /></label>
             <label>Target cluster URI<input name="Input.ClusterUri" value="@Model.Input.ClusterUri" /></label>
             <label>Target database<input name="Input.Database" value="@Model.Input.Database" /></label>
+            <label>Health policy
+                <select name="Input.HealthPolicy">
+                    <option value="complete" selected="@(string.Equals(Model.Input.HealthPolicy, "recent", StringComparison.OrdinalIgnoreCase) ? null : "selected")">Complete — flag historical gaps</option>
+                    <option value="recent" selected="@(string.Equals(Model.Input.HealthPolicy, "recent", StringComparison.OrdinalIgnoreCase) ? "selected" : null)">Recent — trend only, ignore old gaps</option>
+                </select>
+            </label>
         </div>
         <label class="checkbox-row"><input name="Input.IsPaused" type="checkbox" value="true" @(Model.Input.IsPaused ? "checked" : null) /> Start paused</label>
         <input type="hidden" name="Input.IsPaused" value="false" />

@@ -184,6 +184,26 @@ See [schedule-json.md](schedule-json.md) for the schedule contract.
 
 KO Lite hosts a localhost-only JSON API so a same-machine agent or tool can read jobs and create/update schedules without using the dashboard. It starts and stops with the app. Schedule writes go through the same validated, additive/update-only import path as the dashboard; the API also exposes soft-delete and restore (each requiring the job's current catalogVersion, and soft-delete blocks on active downstream dependents unless forced), but no hard-delete, generic enable/disable, rerun, or repair surface. Reads are `GET /api/jobs`, `GET /api/jobs/{jobId}`, and `GET /api/jobs/export`; writes are `POST /api/jobs/import`, `POST /api/jobs/{jobId}/soft-delete`, and `POST /api/jobs/{jobId}/restore`. The one Kusto-touching route is the on-demand, read-only dependency-graph consumer endpoint (`POST /api/dependency-graph/kusto-consumers`; see [Dependency graph](#dependency-graph)). All `/api` routes are loopback-only. See [local-api.md](local-api.md) for the full contract and the `ko-lite-job-manager` skill that drives it.
 
+## Dashboard status model
+
+Every job on the dashboard shows a compact, **color-only status pill** — two colored halves with no text, so it never truncates. It answers, at a glance, the only two questions that usually matter: **is something wrong right now?** and **is this job's history complete?** Hover either half for a plain-language explanation (each half also carries an `aria-label`); everything else lives on the job details page.
+
+**Left half — recent health.** Derived from the outcomes of the job's most recent slice windows (the last 10 that have a recorded state), so old failures don't dominate a job that is healthy now:
+
+- **Green — Healthy** — no failures among the recent slices. (**Waiting on upstream** — behind a healthy upstream — is also green.)
+- **Amber — Warning** — some recent failures, but the job is not broken now (a minority of recent slices failed, or it is recovering). **Blocked (upstream)** — an upstream job is itself unhealthy/paused — is also amber.
+- **Red — Attention** — broken now: the most recent resolved slice failed and at least half of the recent slices failed. A slice that is merely retry-pending does **not**, by itself, turn a job red — only a sustained failing pattern (or dead-lettering) does.
+- **Grey** — **Paused** or **Completed** (intentional/terminal lifecycle states).
+
+Running or queued work is noted in the health half's hover tooltip (the pill itself carries no separate indicator).
+
+**Right half — historical completeness.** Controlled per job by `healthPolicy` (see [schedule-json.md](schedule-json.md)):
+
+- `complete` (default, strict) — the job wants every slice eventually filled, so the right half is **amber** when there are **unaddressed terminal gaps** (dead-lettered slices) and **green** when there are none. Gaps show even when recent health is green, so "working now but the backfill is incomplete" is unambiguous; hover the half for the count. Rerun or repair the dead-lettered slices to close the gaps.
+- `recent` — the operator only cares about the recent trend, so there is no completeness half: the pill is a **single solid capsule** in the health color. Use this for jobs where backfilling the past is impossible or unnecessary.
+
+Because old dead-lettered slices no longer force a broadly-healthy job to show red, a job that "did well over the last few days but failed a while back" now reads **green** (with an amber completeness half under the strict policy) instead of a blanket red **Failed**. The dependency-graph node colors use the same recent-health tiers.
+
 ## Dependency graph
 
 Open a job's **Dependencies** tab, or multi-select jobs on the dashboard and choose **Dependencies**, to see the job's full dependency chain (transitive upstream and downstream `dependsOn` edges) as a graph colored by current job status. This view is a pure, read-only projection of local state and contacts no Kusto.

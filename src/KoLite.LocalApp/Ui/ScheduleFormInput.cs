@@ -18,6 +18,7 @@ namespace KoLite.LocalApp.Ui
         public int MaxParallelism { get; set; } = 1;
         public string QueryTimeout { get; set; } = "00:05:00";
         public bool IsPaused { get; set; }
+        public string HealthPolicy { get; set; } = "complete";
         public string StartFrom { get; set; } = DateTimeOffset.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture);
         public string? EndOn { get; set; }
         public string? Folder { get; set; }
@@ -53,6 +54,7 @@ namespace KoLite.LocalApp.Ui
                 MaxParallelism = definition.MaxParallelism,
                 QueryTimeout = definition.QueryTimeout.ToString("c", CultureInfo.InvariantCulture),
                 IsPaused = definition.IsPaused,
+                HealthPolicy = definition.HealthPolicy == JobHealthPolicy.Recent ? "recent" : "complete",
                 StartFrom = AppFormatting.Iso(definition.StartFrom),
                 EndOn = definition.EndOn is null ? null : AppFormatting.Iso(definition.EndOn.Value),
                 Folder = definition.Folder,
@@ -76,6 +78,7 @@ namespace KoLite.LocalApp.Ui
                 ["maxParallelism"] = MaxParallelism,
                 ["queryTimeout"] = QueryTimeout?.Trim() ?? string.Empty,
                 ["isPaused"] = IsPaused,
+                ["healthPolicy"] = string.Equals(HealthPolicy, "recent", StringComparison.OrdinalIgnoreCase) ? "recent" : "complete",
                 ["startFrom"] = StartFrom?.Trim() ?? string.Empty,
                 ["target"] = new JsonObject
                 {

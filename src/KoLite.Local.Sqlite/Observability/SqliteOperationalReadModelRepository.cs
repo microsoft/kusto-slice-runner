@@ -68,6 +68,45 @@ namespace KoLite.Local.Sqlite.Observability
             return results;
         }
 
+        // Per-job current states of the most recent slice windows (newest first), bounded to
+        // 'window' rows per job. Feeds the dashboard recent-trend health score. Only windows that
+        // have a persisted state row are returned; absent (never-run) windows are naturally skipped.
+        public IReadOnlyDictionary<string, IReadOnlyList<string>> GetRecentSliceStates(int window)
+        {
+            var results = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+            if (window <= 0)
+            {
+                return results.ToDictionary(kvp => kvp.Key, kvp => (IReadOnlyList<string>)kvp.Value, StringComparer.Ordinal);
+            }
+
+            using var c = connectionFactory.OpenConnection();
+            using var cmd = SqliteStorage.Command(c, null, """
+                SELECT job_id, state
+                FROM (
+                    SELECT job_id, state,
+                           ROW_NUMBER() OVER (PARTITION BY job_id ORDER BY slice_start_utc DESC, slice_end_utc DESC) rn
+                    FROM current_slice_state
+                )
+                WHERE rn <= $window
+                ORDER BY job_id, rn;
+                """);
+            cmd.Add("$window", window);
+            using var r = cmd.ExecuteReader();
+            while (r.Read())
+            {
+                var jobId = r.GetString(0);
+                if (!results.TryGetValue(jobId, out var states))
+                {
+                    states = new List<string>(window);
+                    results[jobId] = states;
+                }
+
+                states.Add(r.GetString(1));
+            }
+
+            return results.ToDictionary(kvp => kvp.Key, kvp => (IReadOnlyList<string>)kvp.Value, StringComparer.Ordinal);
+        }
+
         public IReadOnlyList<RecentFailure> GetRecentFailures(int take = 20)
         {
             using var c = connectionFactory.OpenConnection();

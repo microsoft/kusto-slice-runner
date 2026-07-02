@@ -1,4 +1,5 @@
 using KoLite.Local.Core.Schedules;
+using KoLite.Local.Core.Scheduling;
 using KoLite.Local.Sqlite.Catalog;
 using KoLite.Local.Core.Time;
 using KoLite.Local.Sqlite.Observability;
@@ -68,9 +69,13 @@ namespace KoLite.LocalApp.Ui
         JobDefinition Definition,
         JobStatusSummary? Summary,
         JobLifecycleProjection? Lifecycle,
-        string LifecycleStatus,
+        string PrimaryState,
         string StatusText,
         string StatusCss,
+        JobHealth Health,
+        bool InProgress,
+        string HealthTooltip,
+        string CompletenessTooltip,
         NextSliceTiming NextSlice,
         bool IsCompleted)
     {
@@ -81,6 +86,34 @@ namespace KoLite.LocalApp.Ui
         public int FailedSlices => Summary is null ? 0 : Summary.FailedCount + Summary.DeadLetteredCount;
 
         public int WaitingOnDependencySlices => Summary is null ? 0 : Summary.DependencyBlockedCount;
+
+        // Whether to render the completeness segment of the split pill. Complete-policy jobs show
+        // it (green "Complete" or amber "N gaps"); Recent-policy and soft-deleted jobs do not.
+        public bool ShowCompleteness => Health.TracksCompleteness && PrimaryState != "SoftDeleted";
+
+        public int GapCount => Health.GapCount;
+
+        // Ordering weight for the "status" sort: higher is more urgent so attention rises to the
+        // top. Historical gaps nudge an otherwise-calm job up so incomplete jobs are easy to find.
+        public int StatusSortRank
+        {
+            get
+            {
+                var rank = PrimaryState switch
+                {
+                    "Attention" => 60,
+                    "DependencyBlocked" => 50,
+                    "Borderline" => 40,
+                    "Paused" => 20,
+                    "WaitingOnUpstream" => 15,
+                    "Completed" => 10,
+                    "SoftDeleted" => 0,
+                    _ => 5 // Healthy
+                };
+
+                return ShowCompleteness && GapCount > 0 ? Math.Max(rank, 30) : rank;
+            }
+        }
     }
 
     public sealed record NextSliceTiming(DateTimeOffset? EligibleAtUtc, string Text, string? Detail);
@@ -116,9 +149,9 @@ namespace KoLite.LocalApp.Ui
             var filteredJobs = normalizedSelectedTags.Count == 0
                 ? jobs
                 : jobs.Where(job => MatchesSelectedTags(job, normalizedSelectedTags)).ToList();
-            var activeJobs = ApplySort(filteredJobs.Where(j => j.LifecycleStatus != "SoftDeleted" && !j.IsCompleted), effectiveSort);
-            var completedJobs = ApplySort(filteredJobs.Where(j => j.LifecycleStatus != "SoftDeleted" && j.IsCompleted), effectiveSort);
-            var softDeletedJobs = ApplySort(filteredJobs.Where(j => j.LifecycleStatus == "SoftDeleted"), effectiveSort);
+            var activeJobs = ApplySort(filteredJobs.Where(j => j.PrimaryState != "SoftDeleted" && !j.IsCompleted), effectiveSort);
+            var completedJobs = ApplySort(filteredJobs.Where(j => j.PrimaryState != "SoftDeleted" && j.IsCompleted), effectiveSort);
+            var softDeletedJobs = ApplySort(filteredJobs.Where(j => j.PrimaryState == "SoftDeleted"), effectiveSort);
             var chartJobIds = activeJobs.Select(job => job.Record.JobId).ToArray();
 
             return new DashboardPageData(
@@ -141,12 +174,15 @@ namespace KoLite.LocalApp.Ui
             var now = clock.UtcNow;
             var lifecycleStates = lifecycleReadModel.GetLatestStates();
             var summaries = readModels.GetJobStatusSummaries().ToDictionary(s => s.JobId, StringComparer.Ordinal);
+            var recentStates = readModels.GetRecentSliceStates(JobHealthEvaluator.RecentWindowSize);
             var queuedAvailability = readModels.GetQueuedAvailabilityByJob();
             var latestSliceEnds = readModels.GetLatestSliceEndsByJob();
             var records = catalog.List();
-            var classifier = DependencyStatusClassifier.Build(records, lifecycleStates, summaries, now);
+            var healthByJob = BuildHealthMap(records, summaries, recentStates);
+            var baseStatusById = BuildBaseStatusMap(records, lifecycleStates, summaries, healthByJob, now);
+            var classifier = DependencyStatusClassifier.Build(records, baseStatusById);
             return records
-                .Select(record => BuildJobListItem(record, lifecycleStates, summaries, queuedAvailability, latestSliceEnds, now, classifier))
+                .Select(record => BuildJobListItem(record, lifecycleStates, summaries, healthByJob, queuedAvailability, latestSliceEnds, now, classifier))
                 .ToList();
         }
 
@@ -155,8 +191,8 @@ namespace KoLite.LocalApp.Ui
             var ordered = sort.Key switch
             {
                 "status" => sort.Descending
-                    ? jobs.OrderByDescending(j => j.StatusText, StringComparer.OrdinalIgnoreCase)
-                    : jobs.OrderBy(j => j.StatusText, StringComparer.OrdinalIgnoreCase),
+                    ? jobs.OrderByDescending(j => j.StatusSortRank)
+                    : jobs.OrderBy(j => j.StatusSortRank),
                 "schedule" => sort.Descending
                     ? jobs.OrderByDescending(j => j.Definition.QueryWindowSize)
                     : jobs.OrderBy(j => j.Definition.QueryWindowSize),
@@ -183,17 +219,22 @@ namespace KoLite.LocalApp.Ui
             var now = clock.UtcNow;
             var lifecycleStates = lifecycleReadModel.GetLatestStates();
             var summaries = readModels.GetJobStatusSummaries().ToDictionary(s => s.JobId, StringComparer.Ordinal);
+            var recentStates = readModels.GetRecentSliceStates(JobHealthEvaluator.RecentWindowSize);
             var queuedAvailability = readModels.GetQueuedAvailabilityByJob();
             var latestSliceEnds = readModels.GetLatestSliceEndsByJob();
             // The whole catalog is needed so upstream health can be classified transitively.
-            var classifier = DependencyStatusClassifier.Build(catalog.List(), lifecycleStates, summaries, now);
-            return BuildJobListItem(record, lifecycleStates, summaries, queuedAvailability, latestSliceEnds, now, classifier);
+            var records = catalog.List();
+            var healthByJob = BuildHealthMap(records, summaries, recentStates);
+            var baseStatusById = BuildBaseStatusMap(records, lifecycleStates, summaries, healthByJob, now);
+            var classifier = DependencyStatusClassifier.Build(records, baseStatusById);
+            return BuildJobListItem(record, lifecycleStates, summaries, healthByJob, queuedAvailability, latestSliceEnds, now, classifier);
         }
 
         private static JobListItem BuildJobListItem(
             JobCatalogRecord record,
             IReadOnlyDictionary<string, JobLifecycleProjection> lifecycleStates,
             IReadOnlyDictionary<string, JobStatusSummary> summaries,
+            IReadOnlyDictionary<string, JobHealth> healthByJob,
             IReadOnlyDictionary<string, DateTimeOffset> queuedAvailability,
             IReadOnlyDictionary<string, DateTimeOffset> latestSliceEnds,
             DateTimeOffset now,
@@ -203,52 +244,133 @@ namespace KoLite.LocalApp.Ui
             lifecycleStates.TryGetValue(record.JobId, out var lifecycle);
             summaries.TryGetValue(record.JobId, out var summary);
             var completed = IsCompletedSchedule(definition, summary, now);
-            var status = classifier.Resolve(record.JobId);
+            var health = healthByJob.TryGetValue(record.JobId, out var h)
+                ? h
+                : JobHealthEvaluator.Evaluate(Array.Empty<string>(), definition.HealthPolicy, summary?.DeadLetteredCount ?? 0);
+            var primary = classifier.Resolve(record.JobId);
+            var inProgress = summary is { QueuedCount: > 0 } or { RunningCount: > 0 };
 
             return new JobListItem(
                 record,
                 definition,
                 summary,
                 lifecycle,
-                status,
-                status switch
-                {
-                    "SoftDeleted" => "Soft deleted",
-                    "DependencyBlocked" => "Dependency blocked",
-                    "WaitingOnUpstream" => "Waiting on upstream",
-                    _ => status
-                },
-                AppFormatting.BadgeCss(status),
+                primary,
+                AppFormatting.PrimaryStatusLabel(primary),
+                AppFormatting.PrimaryStatusBadgeCss(primary),
+                health,
+                inProgress,
+                BuildHealthTooltip(primary, health, inProgress),
+                BuildCompletenessTooltip(health),
                 GetNextSliceTiming(record, definition, lifecycle, summary, completed, queuedAvailability, latestSliceEnds, now),
                 completed);
         }
 
-        // The base job status ignoring dependency-health reclassification. Active work (Running) now
-        // outranks the dependency-blocked family so a downstream making progress is not painted as
-        // blocked; the blocked family is resolved to a calm or an attention state by the classifier.
-        private static string ComputeBaseStatus(
+        private static IReadOnlyDictionary<string, JobHealth> BuildHealthMap(
+            IReadOnlyList<JobCatalogRecord> records,
+            IReadOnlyDictionary<string, JobStatusSummary> summaries,
+            IReadOnlyDictionary<string, IReadOnlyList<string>> recentStates)
+        {
+            var map = new Dictionary<string, JobHealth>(StringComparer.Ordinal);
+            foreach (var record in records)
+            {
+                summaries.TryGetValue(record.JobId, out var summary);
+                var recent = recentStates.TryGetValue(record.JobId, out var states) ? states : Array.Empty<string>();
+                map[record.JobId] = JobHealthEvaluator.Evaluate(recent, record.Definition.HealthPolicy, summary?.DeadLetteredCount ?? 0);
+            }
+
+            return map;
+        }
+
+        private static IReadOnlyDictionary<string, string> BuildBaseStatusMap(
+            IReadOnlyList<JobCatalogRecord> records,
+            IReadOnlyDictionary<string, JobLifecycleProjection> lifecycleStates,
+            IReadOnlyDictionary<string, JobStatusSummary> summaries,
+            IReadOnlyDictionary<string, JobHealth> healthByJob,
+            DateTimeOffset now)
+        {
+            var map = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var record in records)
+            {
+                lifecycleStates.TryGetValue(record.JobId, out var lifecycle);
+                summaries.TryGetValue(record.JobId, out var summary);
+                var completed = IsCompletedSchedule(record.Definition, summary, now);
+                healthByJob.TryGetValue(record.JobId, out var health);
+                map[record.JobId] = ComputeBasePrimaryState(record, lifecycle, summary, health, completed);
+            }
+
+            return map;
+        }
+
+        // The base job status ignoring dependency-health reclassification. Lifecycle states (soft
+        // deleted, completed, paused) win first because they are intentional/terminal; otherwise the
+        // recent-trend health tier drives the color. The dependency-blocked family is resolved to a
+        // calm ("WaitingOnUpstream") or an attention ("DependencyBlocked") state by the classifier.
+        private static string ComputeBasePrimaryState(
             JobCatalogRecord record,
             JobLifecycleProjection? lifecycle,
             JobStatusSummary? summary,
+            JobHealth? health,
             bool completed)
             => lifecycle?.IsSoftDeleted == true
                 ? "SoftDeleted"
-                : !record.IsEnabled
-                    ? "Paused"
-                    : summary is { FailedCount: > 0 } or { DeadLetteredCount: > 0 }
-                        ? "Failed"
-                        : summary is { QueuedCount: > 0 } or { RunningCount: > 0 }
-                            ? "Running"
-                            : summary is { DependencyBlockedCount: > 0 }
-                                ? "DependencyBlocked"
-                                : completed
-                                    ? "Completed"
+                : completed
+                    ? "Completed"
+                    : !record.IsEnabled
+                        ? "Paused"
+                        : health?.Tier == JobHealthTier.Attention
+                            ? "Attention"
+                            : health?.Tier == JobHealthTier.Borderline
+                                ? "Borderline"
+                                : summary is { DependencyBlockedCount: > 0 }
+                                    ? "DependencyBlocked"
                                     : "Healthy";
+
+        // Builds the hover tooltip for the health (left) half of the color pill: a plain-language
+        // description of the recent-trend status, the recent slice ratio, and whether work is in
+        // progress (running/queued is surfaced only here now that the pill carries no dot).
+        private static string BuildHealthTooltip(string primary, JobHealth health, bool inProgress)
+        {
+            var parts = new List<string>
+            {
+                primary switch
+                {
+                    "Attention" => "Attention \u2014 recent slices are failing now",
+                    "Borderline" => "Warning \u2014 some recent slices failed",
+                    "Healthy" => "Healthy \u2014 recent slices are succeeding",
+                    "Paused" => "Paused",
+                    "Completed" => "Completed",
+                    "DependencyBlocked" => "Blocked \u2014 waiting on an unhealthy upstream",
+                    "WaitingOnUpstream" => "Waiting on a healthy upstream",
+                    "SoftDeleted" => "Soft deleted",
+                    _ => primary
+                }
+            };
+
+            if (health.RecentConsidered > 0)
+            {
+                parts.Add($"recent {health.RecentSucceeded}/{health.RecentConsidered} slices succeeded");
+            }
+
+            if (inProgress)
+            {
+                parts.Add("work in progress");
+            }
+
+            return string.Join(" \u00b7 ", parts);
+        }
+
+        // Builds the hover tooltip for the completeness (right) half of the color pill. Only shown for
+        // complete-policy jobs, so callers gate on ShowCompleteness.
+        private static string BuildCompletenessTooltip(JobHealth health) =>
+            health.GapCount > 0
+                ? $"{health.GapCount} unaddressed dead-lettered slice(s) \u2014 rerun or repair to close the gaps"
+                : "History complete \u2014 no unaddressed gaps";
 
         private static IReadOnlyList<JobTagSummary> BuildTagSummaries(IReadOnlyList<JobListItem> jobs, IReadOnlyList<string> selectedTags)
         {
             var tagCounts = jobs
-                .Where(job => job.LifecycleStatus != "SoftDeleted")
+                .Where(job => job.PrimaryState != "SoftDeleted")
                 .SelectMany(job => job.Definition.Tags)
                 .GroupBy(tag => tag, StringComparer.Ordinal)
                 .ToDictionary(group => group.Key, group => group.Count(), StringComparer.Ordinal);
@@ -375,7 +497,7 @@ namespace KoLite.LocalApp.Ui
         // Only jobs whose base status is already the blocked family are reclassified.
         internal sealed class DependencyStatusClassifier
         {
-            private static readonly string[] StuckBaseStatuses = { "Failed", "Paused", "SoftDeleted" };
+            private static readonly string[] StuckBaseStatuses = { "Attention", "Paused", "SoftDeleted" };
 
             private readonly IReadOnlyDictionary<string, string> baseStatusById;
             private readonly IReadOnlyDictionary<string, bool> blockedByStuckById;
@@ -403,9 +525,7 @@ namespace KoLite.LocalApp.Ui
 
             public static DependencyStatusClassifier Build(
                 IReadOnlyList<JobCatalogRecord> records,
-                IReadOnlyDictionary<string, JobLifecycleProjection> lifecycleStates,
-                IReadOnlyDictionary<string, JobStatusSummary> summaries,
-                DateTimeOffset now)
+                IReadOnlyDictionary<string, string> baseStatusById)
             {
                 var jobIdByActivityId = new Dictionary<string, string>(StringComparer.Ordinal);
                 foreach (var record in records)
@@ -414,18 +534,11 @@ namespace KoLite.LocalApp.Ui
                 }
 
                 var knownJobIds = new HashSet<string>(records.Select(record => record.JobId), StringComparer.Ordinal);
-                var baseStatusById = new Dictionary<string, string>(StringComparer.Ordinal);
                 var upstreamsById = new Dictionary<string, IReadOnlyList<string?>>(StringComparer.Ordinal);
                 foreach (var record in records)
                 {
-                    var definition = record.Definition;
-                    lifecycleStates.TryGetValue(record.JobId, out var lifecycle);
-                    summaries.TryGetValue(record.JobId, out var summary);
-                    var completed = IsCompletedSchedule(definition, summary, now);
-                    baseStatusById[record.JobId] = ComputeBaseStatus(record, lifecycle, summary, completed);
-
                     var upstreams = new List<string?>();
-                    foreach (var dependency in definition.DependsOn)
+                    foreach (var dependency in record.Definition.DependsOn)
                     {
                         // A null entry marks an unresolvable/missing upstream reference.
                         upstreams.Add(ResolveUpstreamJobId(dependency, knownJobIds, jobIdByActivityId));

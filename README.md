@@ -20,6 +20,7 @@ If you're familiar with [scheduled Kusto jobs](https://learn.microsoft.com/kusto
 
 - Imports and exports strict schedule JSON for Kusto output jobs, including optional job organization tags.
 - Shows active, completed, and soft-deleted jobs in a local dashboard.
+- Summarizes each job with a compact **color-only status pill** (hover to learn more): a left half for **recent health** — green (healthy), amber (warning), red (attention) — that answers "is it working now?", plus, for strict jobs, a right half that flags **historical completeness** (amber when unaddressed dead-lettered gaps exist, green when whole). The per-job `healthPolicy` (`complete` default, or `recent`) chooses whether old gaps are surfaced; `recent` jobs show a single solid capsule. See [docs/operations-runbook.md](docs/operations-runbook.md#dashboard-status-model).
 - Visualizes job dependencies as a graph (colored by current job status) from a job's details page or by multi-selecting jobs on the dashboard and choosing "Dependencies". On demand, the graph can also resolve each job's Kusto lineage — the downstream functions/materialized views that consume its output, the upstream tables/functions it reads (including cross-cluster sources), and **implicit** (undeclared) dependencies where a job reads another KO job's output without declaring it.
 - Schedules due time slices from enabled jobs into a local SQLite queue.
 - Executes live Kusto `.set-or-append` commands for each claimed slice.

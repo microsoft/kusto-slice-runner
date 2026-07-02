@@ -14,6 +14,7 @@ The schedule contract is intentionally strict. Unknown top-level fields, unknown
   "maxParallelism": 2,
   "queryTimeout": "00:05:00",
   "isPaused": true,
+  "healthPolicy": "complete",
   "tags": ["prod", "daily"],
   "startFrom": "2026-01-01T00:00:00Z",
   "target": {
@@ -41,6 +42,7 @@ durable `id`, dependency edges, slice history, or output idempotency.
 | `maxParallelism` | Yes | Minimum `1`; hard per-job concurrency bound, enforced at claim time for scheduled and repair/rerun work. When a cluster is under sustained ingestion throttling, the [throttling advisor](operations-runbook.md#ingestion-throttling-advisor) may recommend reducing this (never below the job's keep-up floor); reductions are applied only when an operator confirms them. |
 | `queryTimeout` | Yes | Positive `TimeSpan`; used for Kusto server timeout and queue lease sizing. |
 | `isPaused` | No | Defaults to `false`. Paused jobs do not schedule or claim queued retries. |
+| `healthPolicy` | No | `"complete"` (default) or `"recent"`. Controls how the dashboard scores this job's health. `complete` (strict) additionally surfaces unaddressed historical gaps (terminal dead-lettered slices) as a "N gaps" segment on the status pill, even when recent slices are healthy. `recent` colors purely by the recent-slice trend and ignores old gaps. See [Dashboard status](operations-runbook.md#dashboard-status-model). |
 | `startFrom` | Yes | UTC ISO-8601 timestamp. After execution history exists, this field is read-only. |
 | `endOn` | No | Optional UTC ISO-8601 timestamp. Must be greater than `startFrom` when present. |
 | `folder` | No | Existing output/Kusto-oriented metadata. It is not a UI grouping tag. |

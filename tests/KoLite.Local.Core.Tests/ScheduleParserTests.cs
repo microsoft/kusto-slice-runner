@@ -237,6 +237,46 @@ namespace KoLite.Local.Core.Tests
             { BoundedSample, "demo.bounded", 0 }
         };
 
+        [Fact]
+        public void Parser_defaults_healthPolicy_to_complete_when_absent()
+        {
+            var result = ScheduleParser.Parse(MinimalSample);
+
+            Assert.True(result.IsValid);
+            Assert.Equal(JobHealthPolicy.Complete, result.Definition!.HealthPolicy);
+        }
+
+        [Theory]
+        [InlineData("complete", JobHealthPolicy.Complete)]
+        [InlineData("recent", JobHealthPolicy.Recent)]
+        [InlineData("Recent", JobHealthPolicy.Recent)]
+        [InlineData("COMPLETE", JobHealthPolicy.Complete)]
+        public void Parser_accepts_healthPolicy_values(string value, JobHealthPolicy expected)
+        {
+            var result = ScheduleParser.Parse(WithTopLevel(MinimalSample, $"\"healthPolicy\": \"{value}\""));
+
+            Assert.True(result.IsValid, string.Join(Environment.NewLine, result.Errors.Select(e => $"{e.Field}: {e.Message}")));
+            Assert.Equal(expected, result.Definition!.HealthPolicy);
+        }
+
+        [Fact]
+        public void Parser_rejects_unknown_healthPolicy_value()
+        {
+            var result = ScheduleParser.Parse(WithTopLevel(MinimalSample, "\"healthPolicy\": \"bogus\""));
+
+            Assert.False(result.IsValid);
+            Assert.Contains(result.Errors, e => e.Field == "healthPolicy");
+        }
+
+        [Fact]
+        public void Parser_rejects_non_string_healthPolicy()
+        {
+            var result = ScheduleParser.Parse(WithTopLevel(MinimalSample, "\"healthPolicy\": true"));
+
+            Assert.False(result.IsValid);
+            Assert.Contains(result.Errors, e => e.Field == "healthPolicy");
+        }
+
         private const string MinimalSample = """
         {
           "activityId": "demo.minimal",

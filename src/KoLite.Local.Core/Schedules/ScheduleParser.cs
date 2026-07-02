@@ -11,7 +11,7 @@ namespace KoLite.Local.Core.Schedules
         {
             "id", "activityId", "functionName", "outputTable", "queryWindowSize", "delayFromUtcNow",
             "maxParallelism", "queryTimeout", "isPaused", "startFrom", "endOn", "folder",
-            "tags", "dependsOn", "jobSettings", "target"
+            "tags", "dependsOn", "jobSettings", "target", "healthPolicy"
         };
 
         private static readonly HashSet<string> AllowedTargetFields = new(StringComparer.Ordinal) { "clusterUri", "database" };
@@ -76,6 +76,7 @@ namespace KoLite.Local.Core.Schedules
 
                 var tags = ParseTags(doc.RootElement, activityId, errors);
                 var id = ParseId(doc.RootElement, activityId, errors);
+                var healthPolicy = ParseHealthPolicy(doc.RootElement, activityId, errors);
                 var dependencies = ParseDependencies(doc.RootElement, dto, id, activityId, errors);
                 var startFrom = ParseUtcIso8601(dto.StartFrom, "startFrom", activityId, errors);
                 var endOn = ParseUtcIso8601(dto.EndOn, "endOn", activityId, errors, required: false);
@@ -87,7 +88,7 @@ namespace KoLite.Local.Core.Schedules
                 }
 
                 return errors.Count == 0
-                    ? ScheduleValidationResult.Success(Map(dto, id, tags, dependencies, startFrom!.Value, endOn))
+                    ? ScheduleValidationResult.Success(Map(dto, id, tags, dependencies, startFrom!.Value, endOn, healthPolicy))
                     : ScheduleValidationResult.Failed(errors);
             }
         }
@@ -175,6 +176,33 @@ namespace KoLite.Local.Core.Schedules
             }
 
             return normalized;
+        }
+
+        private static JobHealthPolicy ParseHealthPolicy(JsonElement root, string? activityId, List<ScheduleValidationError> errors)
+        {
+            if (!root.TryGetProperty("healthPolicy", out var policy) || policy.ValueKind == JsonValueKind.Null)
+            {
+                return JobHealthPolicy.Complete;
+            }
+
+            if (policy.ValueKind != JsonValueKind.String)
+            {
+                errors.Add(new ScheduleValidationError(activityId, "healthPolicy", "healthPolicy must be a string ('complete' or 'recent')."));
+                return JobHealthPolicy.Complete;
+            }
+
+            return policy.GetString() switch
+            {
+                var v when string.Equals(v, "complete", StringComparison.OrdinalIgnoreCase) => JobHealthPolicy.Complete,
+                var v when string.Equals(v, "recent", StringComparison.OrdinalIgnoreCase) => JobHealthPolicy.Recent,
+                var v => Reject(v)
+            };
+
+            JobHealthPolicy Reject(string? value)
+            {
+                errors.Add(new ScheduleValidationError(activityId, "healthPolicy", $"healthPolicy must be 'complete' or 'recent'; got '{value}'."));
+                return JobHealthPolicy.Complete;
+            }
         }
 
         private static bool TryNormalizeGuid(string? raw, out string normalized)
@@ -334,7 +362,7 @@ namespace KoLite.Local.Core.Schedules
             if (Blank(target.Database)) errors.Add(new ScheduleValidationError(activityId, "target.database", "target.database is required and must be a non-empty string."));
         }
 
-        private static JobDefinition Map(ScheduleJsonDto dto, string? id, IReadOnlyList<string> tags, IReadOnlyList<DependentJob> dependencies, DateTimeOffset startFrom, DateTimeOffset? endOn) => new()
+        private static JobDefinition Map(ScheduleJsonDto dto, string? id, IReadOnlyList<string> tags, IReadOnlyList<DependentJob> dependencies, DateTimeOffset startFrom, DateTimeOffset? endOn, JobHealthPolicy healthPolicy) => new()
         {
             Id = id,
             ActivityId = dto.ActivityId!,
@@ -351,6 +379,7 @@ namespace KoLite.Local.Core.Schedules
             Tags = tags,
             DependsOn = dependencies,
             JobSettings = dto.JobSettings,
+            HealthPolicy = healthPolicy,
             Target = new JobTarget { ClusterUri = dto.Target!.ClusterUri!, Database = dto.Target.Database! }
         };
 

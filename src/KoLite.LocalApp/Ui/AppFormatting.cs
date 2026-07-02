@@ -106,5 +106,52 @@ namespace KoLite.LocalApp.Ui
             _ => "badge-neutral"
         };
 
+        // Human label for a job's resolved primary (segment-1) status on the dashboard split pill.
+        public static string PrimaryStatusLabel(string primaryState) => primaryState switch
+        {
+            "Attention" => "Attention",
+            "Borderline" => "Warning",
+            "Healthy" => "Healthy",
+            "Paused" => "Paused",
+            "Completed" => "Completed",
+            "SoftDeleted" => "Soft deleted",
+            "DependencyBlocked" => "Blocked (upstream)",
+            "WaitingOnUpstream" => "Waiting on upstream",
+            _ => primaryState
+        };
+
+        // Lowercased key used to build the segment CSS class (.status-seg.status-<key>) for the
+        // split pill and, via the dependency graph, the node colors. Kept in sync with the
+        // STATUS_COLORS map in site.js and the .status-<key> rules in site.css.
+        public static string PrimaryStatusKey(string primaryState) => primaryState.ToLowerInvariant();
+
+        // Badge-family class for the resolved primary status. Used where a single flat badge is
+        // rendered (dependency graph legend, inline-toggle fallback) rather than the split pill.
+        public static string PrimaryStatusBadgeCss(string primaryState) => primaryState switch
+        {
+            "Attention" => "badge-danger",
+            "Borderline" => "badge-warning",
+            "Healthy" => "badge-success",
+            "Paused" => "badge-neutral",
+            "Completed" => "badge-neutral",
+            "SoftDeleted" => "badge-neutral",
+            "DependencyBlocked" => "badge-warning",
+            "WaitingOnUpstream" => "badge-success",
+            _ => "badge-neutral"
+        };
+
+        // Label for the completeness (segment-2) chip: a subtle "Complete" when there are no
+        // unaddressed gaps, otherwise a capped "N gaps" count.
+        public static string CompletenessLabel(int gapCount) => gapCount switch
+        {
+            <= 0 => "Complete",
+            1 => "1 gap",
+            > 999 => "999+ gaps",
+            _ => $"{gapCount} gaps"
+        };
+
+        // CSS class for the completeness chip.
+        public static string CompletenessCss(int gapCount) => gapCount > 0 ? "status-gaps" : "status-complete";
+
     }
 }

@@ -1041,12 +1041,8 @@
 
     var row = form.closest("tr");
     if (row) {
-      if (typeof data.statusText === "string" && data.statusText) {
-        var badge = row.querySelector(".status-cell .badge");
-        if (badge) {
-          badge.textContent = data.statusText;
-          badge.className = "badge " + (data.statusCss || "badge-neutral");
-        }
+      if (typeof data.primaryKey === "string" && data.primaryKey) {
+        renderStatusPill(row.querySelector(".status-cell [data-status-pill]"), data);
       }
 
       if (typeof data.nextText === "string") {
@@ -1056,6 +1052,37 @@
           nextCell.setAttribute("title", data.nextDetail || "");
         }
       }
+    }
+  }
+
+  // Rebuilds a color-only status pill from a toggle response so the health half's color/tooltip and
+  // the completeness half stay consistent after pause/resume. The pill carries no text or dot.
+  function renderStatusPill(pill, data) {
+    if (!pill) return;
+
+    var health = pill.querySelector(".status-seg-health");
+    if (health) {
+      health.className = "status-seg status-seg-health status-" + (data.primaryKey || "healthy");
+      if (typeof data.healthTooltip === "string") {
+        health.setAttribute("title", data.healthTooltip);
+        health.setAttribute("aria-label", data.healthTooltip);
+      }
+    }
+
+    var completeness = pill.querySelector(".status-seg-completeness");
+    if (data.showCompleteness) {
+      pill.classList.remove("status-pill-solid");
+      if (!completeness) {
+        completeness = document.createElement("span");
+        completeness.setAttribute("role", "img");
+        pill.appendChild(completeness);
+      }
+      completeness.className = "status-seg status-seg-completeness " + (data.completenessCss || "status-complete");
+      completeness.setAttribute("title", data.completenessTooltip || "");
+      completeness.setAttribute("aria-label", data.completenessTooltip || "");
+    } else if (completeness) {
+      completeness.remove();
+      pill.classList.add("status-pill-solid");
     }
   }
 
@@ -1486,10 +1513,12 @@
   function depGraphStylesheet() {
     var STATUS_COLORS = {
       healthy: ["#dafbe1", "#1a7f37"],
+      borderline: ["#fff8c5", "#9a6700"],
+      attention: ["#ffebe9", "#cf222e"],
       waitingonupstream: ["#dafbe1", "#1a7f37"],
       running: ["#ddf4ff", "#0969da"],
       dependencyblocked: ["#fff8c5", "#9a6700"],
-      paused: ["#fff8c5", "#9a6700"],
+      paused: ["#f6f8fa", "#8c959f"],
       failed: ["#ffebe9", "#cf222e"],
       completed: ["#f6f8fa", "#8c959f"],
       softdeleted: ["#f6f8fa", "#cf222e"],
