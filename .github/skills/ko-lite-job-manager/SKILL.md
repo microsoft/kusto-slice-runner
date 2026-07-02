@@ -174,7 +174,8 @@ detailed field-by-field guide. Key points:
   `delayFromUtcNow`, `maxParallelism`, `queryTimeout`, `startFrom`, `target`
   (`clusterUri` + `database`).
 - Optional: `id` (GUID permanent identity — omit when creating; KO Lite mints it),
-  `endOn`, `isPaused`, `folder`, `tags`, `dependsOn`, `jobSettings`.
+  `endOn`, `isPaused`, `folder`, `tags`, `dependsOn`, `jobSettings`, `healthPolicy`
+  (`complete` default, or `recent`).
 - Unknown top-level, `target`, or `dependsOn` fields are rejected. `dependsOn`
   entries reference an upstream by `id` and/or `activityId`.
 - For an **update**, fetch the current job first (`Get-Job`), keep its `id`, edit

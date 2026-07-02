@@ -67,7 +67,7 @@ $AllowedTopLevel = [System.Collections.Generic.HashSet[string]]::new([System.Str
 @(
     'id','activityId','functionName','outputTable','queryWindowSize',
     'delayFromUtcNow','maxParallelism','queryTimeout','isPaused',
-    'startFrom','endOn','folder','tags','dependsOn','jobSettings','target'
+    'startFrom','endOn','folder','tags','dependsOn','jobSettings','target','healthPolicy'
 ) | ForEach-Object { [void]$AllowedTopLevel.Add($_) }
 
 $AllowedTargetFields = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
@@ -306,6 +306,20 @@ function Test-Definition {
         $kind = $isPausedProp.ValueKind
         if ($kind -ne [System.Text.Json.JsonValueKind]::True -and $kind -ne [System.Text.Json.JsonValueKind]::False) {
             Add-Error $errors 'isPaused' "isPaused must be a boolean (got $kind)."
+        }
+    }
+
+    $healthPolicyProp = Get-Property -Element $Root -Name 'healthPolicy'
+    if ($null -ne $healthPolicyProp -and $healthPolicyProp.ValueKind -ne [System.Text.Json.JsonValueKind]::Null) {
+        if ($healthPolicyProp.ValueKind -ne [System.Text.Json.JsonValueKind]::String) {
+            Add-Error $errors 'healthPolicy' "healthPolicy must be a string ('complete' or 'recent')."
+        }
+        else {
+            $hp = $healthPolicyProp.GetString()
+            if (-not ([string]::Equals($hp, 'complete', [System.StringComparison]::OrdinalIgnoreCase) -or
+                      [string]::Equals($hp, 'recent', [System.StringComparison]::OrdinalIgnoreCase))) {
+                Add-Error $errors 'healthPolicy' "healthPolicy must be 'complete' or 'recent'; got '$hp'."
+            }
         }
     }
 

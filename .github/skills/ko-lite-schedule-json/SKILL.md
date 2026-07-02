@@ -63,6 +63,7 @@ Anything else is rejected by the validator.
 | `tags` | No | array of strings | Optional local job organization tags. When present, must be an array of non-empty strings. KO Lite trims tags, normalizes them to lowercase, deduplicates after normalization, and uses them for dashboard/catalog filters. Tags are separate from Kusto ingestion tags and from `folder`. |
 | `dependsOn` | No | array of objects | Each entry references an upstream by `activityId` and/or `id` (the upstream's GUID): `{ "activityId": "<label>" }`, `{ "id": "<guid>" }`, or both. At least one is required per entry. No bare-string shorthand. No self-dependency. KO Lite resolves the reference to the upstream's GUID and stores the edge by `id`, so upstream renames don't break it; referencing by `activityId` requires the upstream to exist (in the catalog or same import batch). |
 | `jobSettings` | No | any JSON | Opaque pass-through for downstream code. KO Lite stores it but does not interpret it. |
+| `healthPolicy` | No | string enum | `complete` (default) or `recent` (case-insensitive). Controls how the dashboard scores the job's health. `complete` (strict) also flags unaddressed historical gaps — terminal dead-lettered slices — as an amber half on the status pill; `recent` colors purely by the recent-slice trend and ignores old gaps. Absent means `complete`. |
 
 Unknown fields anywhere in the top level, in `target`, or in any `dependsOn`
 entry are **errors**, not warnings. Producing JSON with extra fields will fail

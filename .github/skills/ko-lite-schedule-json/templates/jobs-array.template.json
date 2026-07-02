@@ -26,6 +26,7 @@
     "startFrom": "2026-01-01T00:00:00Z",
     "folder": "YourTeam/Full",
     "tags": ["example", "full"],
+    "healthPolicy": "recent",
     "dependsOn": [
       { "activityId": "YourDatabase.Minimal" }
     ],
