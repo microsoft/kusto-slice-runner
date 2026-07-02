@@ -56,6 +56,68 @@ namespace KoLite.Local.Sqlite.Tests
         }
 
         [Fact]
+        public void GetRunningSlices_exposes_running_attempt_start()
+        {
+            catalog.Create(Schedule("run.start"));
+            var jobId = JobId("run.start");
+            state.AcquireLease("s1", jobId, At(0), At(5), "worker-1", TimeSpan.FromMinutes(22), DateTimeOffset.UtcNow.AddHours(-1));
+            var startedAt = new DateTimeOffset(2026, 1, 1, 8, 30, 0, TimeSpan.Zero);
+            observability.RecordAttempt("s1-att", jobId, At(0), At(5), 1, "Started", "worker-1", startedAt, completedAtUtc: null);
+
+            // A second running slice with no in-flight Started attempt row -> null start.
+            state.AcquireLease("s2", jobId, At(5), At(10), "worker-1", TimeSpan.FromMinutes(22), DateTimeOffset.UtcNow.AddHours(-1));
+
+            var slices = diagnostics.GetRunningSlices(jobId, DateTimeOffset.UtcNow, take: 100);
+            Assert.Equal(startedAt, slices.Single(s => s.SliceStartUtc == At(0)).StartedAtUtc);
+            Assert.Null(slices.Single(s => s.SliceStartUtc == At(5)).StartedAtUtc);
+        }
+
+        [Fact]
+        public void GetTypicalSuccessfulDurationsByJob_returns_median_of_recent_successes()
+        {
+            catalog.Create(Schedule("dur.a"));
+            catalog.Create(Schedule("dur.b"));
+            catalog.Create(Schedule("dur.none"));
+            var since = DateTimeOffset.UtcNow.AddDays(-7);
+            var anchor = DateTimeOffset.UtcNow.AddHours(-1);
+
+            // Job A: in-window durations 4, 20, 6 min -> median 6 min. A Failed attempt and an
+            // out-of-window success must both be ignored.
+            SeedSuccessAttempt("dur.a", At(0), anchor.AddMinutes(-30), TimeSpan.FromMinutes(4));
+            SeedSuccessAttempt("dur.a", At(5), anchor.AddMinutes(-20), TimeSpan.FromMinutes(20));
+            SeedSuccessAttempt("dur.a", At(10), anchor.AddMinutes(-10), TimeSpan.FromMinutes(6));
+            SeedFailedAttempt("dur.a", At(15), anchor, TimeSpan.FromMinutes(99));
+            SeedSuccessAttempt("dur.a", At(20), DateTimeOffset.UtcNow.AddDays(-30), TimeSpan.FromMinutes(1));
+
+            // Job B: durations 8, 12 min -> even-count median = 10 min.
+            SeedSuccessAttempt("dur.b", At(0), anchor.AddMinutes(-15), TimeSpan.FromMinutes(8));
+            SeedSuccessAttempt("dur.b", At(5), anchor.AddMinutes(-5), TimeSpan.FromMinutes(12));
+
+            var jobIds = new[] { JobId("dur.a"), JobId("dur.b"), JobId("dur.none") };
+            var result = diagnostics.GetTypicalSuccessfulDurationsByJob(jobIds, since, perJobSampleCap: 50);
+
+            Assert.Equal(TimeSpan.FromMinutes(6), result[JobId("dur.a")]);
+            Assert.Equal(TimeSpan.FromMinutes(10), result[JobId("dur.b")]);
+            Assert.False(result.ContainsKey(JobId("dur.none")));
+        }
+
+        [Fact]
+        public void GetTypicalSuccessfulDurationsByJob_caps_to_newest_samples_per_job()
+        {
+            catalog.Create(Schedule("dur.cap"));
+            var since = DateTimeOffset.UtcNow.AddDays(-7);
+            var anchor = DateTimeOffset.UtcNow.AddHours(-1);
+            SeedSuccessAttempt("dur.cap", At(0), anchor.AddMinutes(-30), TimeSpan.FromMinutes(30));
+            SeedSuccessAttempt("dur.cap", At(5), anchor.AddMinutes(-5), TimeSpan.FromMinutes(4));
+
+            var jobIds = new[] { JobId("dur.cap") };
+
+            // cap=1 keeps only the newest success (4 min); the full set medians 4 and 30 -> 17 min.
+            Assert.Equal(TimeSpan.FromMinutes(4), diagnostics.GetTypicalSuccessfulDurationsByJob(jobIds, since, perJobSampleCap: 1)[JobId("dur.cap")]);
+            Assert.Equal(TimeSpan.FromMinutes(17), diagnostics.GetTypicalSuccessfulDurationsByJob(jobIds, since, perJobSampleCap: 50)[JobId("dur.cap")]);
+        }
+
+        [Fact]
         public void GetThroughputSeries_groups_by_job_when_requested()
         {
             catalog.Create(Schedule("tp.a"));
@@ -118,6 +180,20 @@ namespace KoLite.Local.Sqlite.Tests
         {
             state.Append($"done-{attemptId}", JobId(activityId), start, end, DurableSliceStatus.Completed, expectedVersion: 0);
             observability.RecordAttempt(attemptId, JobId(activityId), start, end, 1, "Succeeded", "worker", completedAtUtc.AddMinutes(-1), completedAtUtc);
+        }
+
+        private void SeedSuccessAttempt(string activityId, DateTimeOffset start, DateTimeOffset completedAt, TimeSpan duration)
+        {
+            var end = start.AddMinutes(5);
+            state.Append($"ok-{activityId}-{start.Ticks}", JobId(activityId), start, end, DurableSliceStatus.Completed, expectedVersion: 0);
+            observability.RecordAttempt($"att-{activityId}-{start.Ticks}", JobId(activityId), start, end, 1, "Succeeded", "worker", completedAt - duration, completedAt);
+        }
+
+        private void SeedFailedAttempt(string activityId, DateTimeOffset start, DateTimeOffset completedAt, TimeSpan duration)
+        {
+            var end = start.AddMinutes(5);
+            state.Append($"fail-{activityId}-{start.Ticks}", JobId(activityId), start, end, DurableSliceStatus.Failed, expectedVersion: 0);
+            observability.RecordAttempt($"attf-{activityId}-{start.Ticks}", JobId(activityId), start, end, 1, "Failed", "worker", completedAt - duration, completedAt);
         }
 
         private static DateTimeOffset At(int minutes) => new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero).AddMinutes(minutes);

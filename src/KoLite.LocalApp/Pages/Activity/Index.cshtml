@@ -54,12 +54,15 @@
                         <th>Slice</th>
                         <th>Attempt</th>
                         <th>Worker</th>
+                        <th>Started</th>
+                        <th>ETA</th>
                         <th>Lease</th>
                     </tr>
                 </thead>
                 <tbody>
-                    @foreach (var slice in running.RunningSlices)
+                    @foreach (var view in running.RunningSlices)
                     {
+                        var slice = view.Slice;
                         <tr>
                             <td><a href="/jobs/@Uri.EscapeDataString(slice.JobId)">@slice.ActivityId</a></td>
                             <td>
@@ -69,6 +72,21 @@
                             </td>
                             <td>@slice.Attempt</td>
                             <td>@(slice.LeaseOwner ?? "—")</td>
+                            <td>
+                                @AppFormatting.Local(view.StartedAtUtc)
+                                <span class="muted activity-relative">@AppFormatting.RelativeToNow(view.StartedAtUtc, data.GeneratedAtUtc)</span>
+                            </td>
+                            <td>
+                                @if (view.EtaUtc is { } eta)
+                                {
+                                    @AppFormatting.Local(eta)
+                                    <span class="muted activity-relative">@AppFormatting.RelativeToNow(eta, data.GeneratedAtUtc)</span>
+                                }
+                                else
+                                {
+                                    <span class="muted">No history yet</span>
+                                }
+                            </td>
                             <td>
                                 @if (slice.LeaseExpired)
                                 {

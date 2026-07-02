@@ -2049,6 +2049,9 @@ namespace KoLite.LocalApp.Tests
             Assert.Contains("activity.web", page);
             Assert.Contains("slice(s) executing", page);
             Assert.Contains("slice(s) waiting to be claimed", page);
+            // Running-now table surfaces when each running slice started and its projected finish.
+            Assert.Contains("<th>Started</th>", page);
+            Assert.Contains("<th>ETA</th>", page);
             // Processed totals: succeeded = 2 completed, failed = 1 Failed + 1 DeadLettered.
             Assert.Contains("Slices processed", page);
             Assert.Contains("Last day", page);

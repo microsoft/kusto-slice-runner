@@ -34,12 +34,21 @@ namespace KoLite.LocalApp.Ui
         public bool HasData => Points.Any(p => p.TotalCount > 0);
     }
 
+    // One running-slice row for the Activity table: the raw readout plus the resolved wall-clock
+    // start (StartedAtUtc, falling back to the last state change) and the projected finish
+    // (EtaUtc = start + median of the job's recent successful durations). EtaUtc is null when the job
+    // has no successful-run history yet.
+    public sealed record RunningSliceView(
+        RunningSliceReadout Slice,
+        DateTimeOffset StartedAtUtc,
+        DateTimeOffset? EtaUtc);
+
     // Point-in-time snapshot of in-flight work, sourced from current_slice_state (never pruned by
     // retention). RunningSlices is a capped detail list for the "which ones?" table.
     public sealed record RunningNowSummary(
         int RunningCount,
         int QueuedCount,
-        IReadOnlyList<RunningSliceReadout> RunningSlices);
+        IReadOnlyList<RunningSliceView> RunningSlices);
 
     public sealed record ActivityPageData(
         RunningNowSummary RunningNow,
@@ -48,7 +57,8 @@ namespace KoLite.LocalApp.Ui
         ProcessedTotals Last7Days,
         ProcessedTotals Last30Days,
         SlicesProcessedChart Chart,
-        TimeSpan SelectedRange);
+        TimeSpan SelectedRange,
+        DateTimeOffset GeneratedAtUtc);
 
     // Backs the Activity page. Two stores are read, chosen for correctness under retention:
     //  - current_slice_state (never pruned) -> running/queued now and the all-time totals by current
@@ -61,6 +71,11 @@ namespace KoLite.LocalApp.Ui
     {
         // Cap on the running-now detail list; the headline count is exact regardless.
         private const int RunningSlicesTake = 100;
+
+        // ETA for a running slice is projected from the median of that job's recent successful slice
+        // durations, sampled over this trailing window and capped per job.
+        private static readonly TimeSpan DurationHistoryLookback = TimeSpan.FromDays(30);
+        private const int DurationSampleCap = 50;
 
         private readonly IKoLiteSqliteConnectionFactory connectionFactory;
         private readonly IClock clock;
@@ -93,12 +108,40 @@ namespace KoLite.LocalApp.Ui
                 summaries.Sum(s => s.FailedCount + s.DeadLetteredCount));
 
             var runningSlices = diagnostics.GetRunningSlices(jobId: null, now, RunningSlicesTake);
-            var runningNow = new RunningNowSummary(runningCount, queuedCount, runningSlices);
+            var runningViews = BuildRunningViews(runningSlices, now);
+            var runningNow = new RunningNowSummary(runningCount, queuedCount, runningViews);
 
             var (lastDay, last7Days, last30Days) = ReadWindowedTotals(now);
             var chart = BuildChart(now, chartRange);
 
-            return new ActivityPageData(runningNow, allTime, lastDay, last7Days, last30Days, chart, chartRange);
+            return new ActivityPageData(runningNow, allTime, lastDay, last7Days, last30Days, chart, chartRange, now);
+        }
+
+        // Resolves each running slice's start (StartedAtUtc, else the last state change as a fallback)
+        // and projects an ETA = start + median of that job's recent successful durations. Jobs with no
+        // successful history get a null ETA (the page renders "No history yet"). Typical durations are
+        // fetched once for the distinct running jobs rather than per slice.
+        private IReadOnlyList<RunningSliceView> BuildRunningViews(IReadOnlyList<RunningSliceReadout> slices, DateTimeOffset now)
+        {
+            if (slices.Count == 0)
+            {
+                return Array.Empty<RunningSliceView>();
+            }
+
+            var jobIds = slices.Select(s => s.JobId).Distinct().ToList();
+            var typicalDurations = diagnostics.GetTypicalSuccessfulDurationsByJob(jobIds, now - DurationHistoryLookback, DurationSampleCap);
+
+            var views = new List<RunningSliceView>(slices.Count);
+            foreach (var slice in slices)
+            {
+                var startedAt = slice.StartedAtUtc ?? slice.UpdatedAtUtc;
+                DateTimeOffset? eta = typicalDurations.TryGetValue(slice.JobId, out var median)
+                    ? startedAt + median
+                    : null;
+                views.Add(new RunningSliceView(slice, startedAt, eta));
+            }
+
+            return views;
         }
 
         // Succeeded vs. failed/dead-lettered attempt completions for the trailing 1d/7d/30d windows in

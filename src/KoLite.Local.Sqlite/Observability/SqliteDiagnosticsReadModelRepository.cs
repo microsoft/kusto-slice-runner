@@ -1,3 +1,4 @@
+using System.Globalization;
 using KoLite.Local.Sqlite.Connections;
 using KoLite.Local.Sqlite.Infrastructure;
 using Microsoft.Data.Sqlite;
@@ -15,7 +16,10 @@ namespace KoLite.Local.Sqlite.Observability
         bool LeaseExpired,
         string? LastErrorCode,
         string? LastErrorMessage,
-        DateTimeOffset UpdatedAtUtc);
+        DateTimeOffset UpdatedAtUtc,
+        // Wall-clock start of the in-flight attempt (slice_attempts row with status='Started' and no
+        // completion yet). Null when no such attempt row exists (e.g. a stalled/older running slice).
+        DateTimeOffset? StartedAtUtc);
 
     public sealed record SliceStateReadout(
         string JobId,
@@ -104,7 +108,13 @@ namespace KoLite.Local.Sqlite.Observability
             using var c = connectionFactory.OpenConnection();
             using var cmd = SqliteStorage.Command(c, null, """
                 SELECT css.job_id, jd.activity_id, css.slice_start_utc, css.slice_end_utc, css.attempt,
-                       css.lease_owner, css.lease_expires_at_utc, css.last_error_code, css.last_error_message, css.updated_at_utc
+                       css.lease_owner, css.lease_expires_at_utc, css.last_error_code, css.last_error_message, css.updated_at_utc,
+                       (SELECT MAX(sa.started_at_utc) FROM slice_attempts sa
+                         WHERE sa.job_id = css.job_id
+                           AND sa.slice_start_utc = css.slice_start_utc
+                           AND sa.slice_end_utc = css.slice_end_utc
+                           AND sa.status = 'Started'
+                           AND sa.completed_at_utc IS NULL) AS started_running_at_utc
                 FROM current_slice_state css
                 JOIN job_definitions jd ON jd.job_id = css.job_id
                 WHERE css.state = 'Running' AND ($jobId IS NULL OR css.job_id = $jobId)
@@ -129,10 +139,104 @@ namespace KoLite.Local.Sqlite.Observability
                     leaseExpires is not null && leaseExpires.Value <= nowUtc.ToUniversalTime(),
                     r.IsDBNull(7) ? null : r.GetString(7),
                     r.IsDBNull(8) ? null : r.GetString(8),
-                    SqliteStorage.ReadUtc(r, "updated_at_utc")));
+                    SqliteStorage.ReadUtc(r, "updated_at_utc"),
+                    SqliteStorage.ReadNullableUtc(r, "started_running_at_utc")));
             }
 
             return results;
+        }
+
+        // Typical (median) wall-clock duration of recent successful attempts, per job, for the given
+        // job ids. Used by the Activity page to project a running slice's ETA (started + median). Only
+        // Succeeded attempts with both timestamps and a positive elapsed count; the newest
+        // perJobSampleCap per job are considered (bounded by an in-SQL ROW_NUMBER window). Jobs with no
+        // usable sample are omitted from the result.
+        public IReadOnlyDictionary<string, TimeSpan> GetTypicalSuccessfulDurationsByJob(
+            IReadOnlyCollection<string> jobIds, DateTimeOffset sinceUtc, int perJobSampleCap)
+        {
+            var result = new Dictionary<string, TimeSpan>();
+            if (jobIds.Count == 0 || perJobSampleCap <= 0)
+            {
+                return result;
+            }
+
+            var distinctJobIds = jobIds.Distinct().ToList();
+            var placeholders = new string[distinctJobIds.Count];
+            for (var i = 0; i < distinctJobIds.Count; i++)
+            {
+                placeholders[i] = "$j" + i.ToString(CultureInfo.InvariantCulture);
+            }
+
+            var inClause = string.Join(", ", placeholders);
+            using var c = connectionFactory.OpenConnection();
+            using var cmd = SqliteStorage.Command(c, null, $"""
+                SELECT job_id, started_at_utc, completed_at_utc
+                FROM (
+                    SELECT job_id, started_at_utc, completed_at_utc,
+                           ROW_NUMBER() OVER (PARTITION BY job_id ORDER BY completed_at_utc DESC) AS rn
+                    FROM slice_attempts
+                    WHERE status = 'Succeeded'
+                      AND started_at_utc IS NOT NULL
+                      AND completed_at_utc IS NOT NULL
+                      AND completed_at_utc >= $since
+                      AND job_id IN ({inClause})
+                )
+                WHERE rn <= $cap;
+                """);
+            cmd.Add("$since", SqliteStorage.Utc(sinceUtc));
+            cmd.Add("$cap", perJobSampleCap);
+            for (var i = 0; i < distinctJobIds.Count; i++)
+            {
+                cmd.Add(placeholders[i], distinctJobIds[i]);
+            }
+
+            var samplesByJob = new Dictionary<string, List<double>>();
+            using (var r = cmd.ExecuteReader())
+            {
+                while (r.Read())
+                {
+                    var started = SqliteStorage.ReadUtc(r, "started_at_utc");
+                    var completed = SqliteStorage.ReadUtc(r, "completed_at_utc");
+                    var elapsed = (completed - started).TotalSeconds;
+                    if (elapsed <= 0)
+                    {
+                        continue;
+                    }
+
+                    var jobId = r.GetString(0);
+                    if (!samplesByJob.TryGetValue(jobId, out var samples))
+                    {
+                        samples = new List<double>();
+                        samplesByJob[jobId] = samples;
+                    }
+
+                    samples.Add(elapsed);
+                }
+            }
+
+            foreach (var (jobId, samples) in samplesByJob)
+            {
+                if (samples.Count == 0)
+                {
+                    continue;
+                }
+
+                samples.Sort();
+                result[jobId] = MedianDuration(samples);
+            }
+
+            return result;
+        }
+
+        // Median of an ascending-sorted, non-empty sample of seconds.
+        private static TimeSpan MedianDuration(IReadOnlyList<double> sortedSeconds)
+        {
+            var count = sortedSeconds.Count;
+            var mid = count / 2;
+            var medianSeconds = count % 2 == 1
+                ? sortedSeconds[mid]
+                : (sortedSeconds[mid - 1] + sortedSeconds[mid]) / 2.0;
+            return TimeSpan.FromSeconds(medianSeconds);
         }
 
         // Materialized slice states for one job with their lease fields, newest slice first, optionally

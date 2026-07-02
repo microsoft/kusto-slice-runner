@@ -585,6 +585,7 @@ h3 { font-size: 16px; margin-bottom: 10px; }
   margin: 2px 0 8px;
 }
 .activity-total-split { display: flex; flex-wrap: wrap; gap: 6px; }
+.activity-relative { display: block; font-size: 12px; line-height: 1.2; margin-top: 2px; }
 @media (max-width: 720px) {
   .activity-metrics { grid-template-columns: 1fr; }
 }

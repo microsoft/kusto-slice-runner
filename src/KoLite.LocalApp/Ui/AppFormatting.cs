@@ -52,6 +52,23 @@ namespace KoLite.LocalApp.Ui
             return $"~{value.TotalDays.ToString("0.#", CultureInfo.InvariantCulture)} days";
         }
 
+        // Coarse, human-friendly relative phrasing of a target time against now: "in ~10 min",
+        // "~5 min ago", or "just now" when within a minute. Magnitude reuses ApproxDuration, so a
+        // past ETA (a slice running longer than usual) simply reads as "~X ago".
+        public static string RelativeToNow(DateTimeOffset target, DateTimeOffset now)
+        {
+            var delta = target - now;
+            var magnitude = delta < TimeSpan.Zero ? -delta : delta;
+            if (magnitude < TimeSpan.FromMinutes(1))
+            {
+                return "just now";
+            }
+
+            return delta < TimeSpan.Zero
+                ? $"{ApproxDuration(magnitude)} ago"
+                : $"in {ApproxDuration(magnitude)}";
+        }
+
         public static string Percent(int numerator, int denominator) => denominator <= 0 ? "n/a" : ((double)numerator / denominator).ToString("P1", CultureInfo.InvariantCulture);
 
         public static string StateCss(string state) => state switch

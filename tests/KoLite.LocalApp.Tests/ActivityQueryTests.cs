@@ -67,7 +67,9 @@ namespace KoLite.LocalApp.Tests
             Assert.Equal(1, data.RunningNow.RunningCount);
             Assert.Equal(1, data.RunningNow.QueuedCount);
             Assert.Single(data.RunningNow.RunningSlices);
-            Assert.Equal("activity.job", data.RunningNow.RunningSlices[0].ActivityId);
+            Assert.Equal("activity.job", data.RunningNow.RunningSlices[0].Slice.ActivityId);
+            // No in-flight Started attempt was recorded, so the start falls back to the last state change.
+            Assert.NotEqual(default, data.RunningNow.RunningSlices[0].StartedAtUtc);
 
             // All-time: Completed = 3 (includes the 40-day-old one); Failed + DeadLettered = 2.
             Assert.Equal(3, data.AllTime.Succeeded);
@@ -104,6 +106,52 @@ namespace KoLite.LocalApp.Tests
             Assert.False(data.Chart.HasData);
         }
 
+        [Fact]
+        public void Running_slices_expose_start_time_and_median_eta()
+        {
+            var jobId = catalog.Create(Schedule("eta.job")).JobId;
+
+            // Prior successful runs (each needs a slice-state row for the attempt foreign key).
+            // Durations 6, 20, 10 minutes -> median 10 minutes.
+            SeedSlice(jobId, At(0), DurableSliceStatus.Completed);
+            SeedSlice(jobId, At(5), DurableSliceStatus.Completed);
+            SeedSlice(jobId, At(10), DurableSliceStatus.Completed);
+            RecordSucceeded(jobId, At(0), Now.AddHours(-3), TimeSpan.FromMinutes(6));
+            RecordSucceeded(jobId, At(5), Now.AddHours(-2), TimeSpan.FromMinutes(20));
+            RecordSucceeded(jobId, At(10), Now.AddHours(-1), TimeSpan.FromMinutes(10));
+
+            // The in-flight slice with a Started attempt.
+            var runningStart = At(100);
+            SeedSlice(jobId, runningStart, DurableSliceStatus.Running);
+            var startedAt = Now.AddMinutes(-4);
+            RecordStarted(jobId, runningStart, startedAt);
+
+            var query = new ActivityQuery(factory, new ManualClock(Now), readModels, diagnostics);
+            var data = query.GetActivity(TimeSpan.FromDays(1));
+
+            var view = Assert.Single(data.RunningNow.RunningSlices);
+            Assert.Equal(startedAt, view.StartedAtUtc);
+            Assert.Equal(startedAt + TimeSpan.FromMinutes(10), view.EtaUtc);
+            Assert.Equal(Now, data.GeneratedAtUtc);
+        }
+
+        [Fact]
+        public void Running_slice_without_successful_history_has_no_eta()
+        {
+            var jobId = catalog.Create(Schedule("eta.nohistory")).JobId;
+            var runningStart = At(100);
+            SeedSlice(jobId, runningStart, DurableSliceStatus.Running);
+            var startedAt = Now.AddMinutes(-2);
+            RecordStarted(jobId, runningStart, startedAt);
+
+            var query = new ActivityQuery(factory, new ManualClock(Now), readModels, diagnostics);
+            var data = query.GetActivity(TimeSpan.FromDays(1));
+
+            var view = Assert.Single(data.RunningNow.RunningSlices);
+            Assert.Equal(startedAt, view.StartedAtUtc);
+            Assert.Null(view.EtaUtc);
+        }
+
         private void SeedSlice(string jobId, DateTimeOffset sliceStart, DurableSliceStatus status)
         {
             var sliceEnd = sliceStart.AddMinutes(5);
@@ -114,6 +162,20 @@ namespace KoLite.LocalApp.Tests
         {
             var sliceEnd = sliceStart.AddMinutes(5);
             readModels.RecordAttempt($"{jobId}-att-{sliceStart.Ticks}", jobId, sliceStart, sliceEnd, 1, status, "worker", completedAt.AddMinutes(-1), completedAt);
+        }
+
+        // In-flight attempt: started, not yet completed (drives the running slice's StartedAtUtc).
+        private void RecordStarted(string jobId, DateTimeOffset sliceStart, DateTimeOffset startedAt)
+        {
+            var sliceEnd = sliceStart.AddMinutes(5);
+            readModels.RecordAttempt($"{jobId}-att-{sliceStart.Ticks}", jobId, sliceStart, sliceEnd, 1, "Started", "worker", startedAt, completedAtUtc: null);
+        }
+
+        // A completed successful attempt with an explicit wall-clock duration (drives the ETA median).
+        private void RecordSucceeded(string jobId, DateTimeOffset sliceStart, DateTimeOffset completedAt, TimeSpan duration)
+        {
+            var sliceEnd = sliceStart.AddMinutes(5);
+            readModels.RecordAttempt($"{jobId}-att-{sliceStart.Ticks}", jobId, sliceStart, sliceEnd, 1, "Succeeded", "worker", completedAt - duration, completedAt);
         }
 
         private static DateTimeOffset At(int minutes) => new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero).AddMinutes(minutes);
