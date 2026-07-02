@@ -1,7 +1,7 @@
 using System.Net;
 using KoLite.Local.Sqlite.Catalog;
 using KoLite.Local.Sqlite.Connections;
-using KoLite.Local.Sqlite.Migrations;
+using KoLite.Local.Sqlite.Schema;
 using KoLite.LocalApp.Api;
 using Microsoft.AspNetCore.Antiforgery;
 
@@ -29,7 +29,7 @@ namespace KoLite.LocalApp
             var databasePath = app.Services.GetRequiredService<KoLiteSqliteConnectionOptions>().DatabasePath;
             SingleInstanceGuard.Enforce(databasePath, app.Configuration, app.Logger);
 
-            app.Services.GetRequiredService<KoLiteSqliteMigrator>().Migrate();
+            app.Services.GetRequiredService<KoLiteSqliteSchema>().EnsureSchema();
 
             app.Logger.LogInformation(
                 "KO Lite local SQLite database resolved to {DatabasePath}.",

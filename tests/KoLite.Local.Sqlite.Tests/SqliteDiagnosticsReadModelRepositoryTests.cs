@@ -1,6 +1,6 @@
 using KoLite.Local.Sqlite.Catalog;
 using KoLite.Local.Sqlite.Connections;
-using KoLite.Local.Sqlite.Migrations;
+using KoLite.Local.Sqlite.Schema;
 using KoLite.Local.Sqlite.Observability;
 using KoLite.Local.Sqlite.State;
 using Microsoft.Data.Sqlite;
@@ -20,7 +20,7 @@ namespace KoLite.Local.Sqlite.Tests
         {
             Directory.CreateDirectory(testDirectory);
             factory = new KoLiteSqliteConnectionFactory(new KoLiteSqliteConnectionOptions(Path.Combine(testDirectory, "diagnostics.db")));
-            new KoLiteSqliteMigrator(factory).Migrate();
+            new KoLiteSqliteSchema(factory).EnsureSchema();
             catalog = new SqliteJobCatalogRepository(factory);
             state = new SqliteSliceStateRepository(factory);
             observability = new SqliteOperationalReadModelRepository(factory);

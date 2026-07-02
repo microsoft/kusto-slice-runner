@@ -2,7 +2,7 @@ using System.Diagnostics;
 using KoLite.Local.Sqlite.Catalog;
 using KoLite.Local.Sqlite.Connections;
 using KoLite.Local.Sqlite.Lifecycle;
-using KoLite.Local.Sqlite.Migrations;
+using KoLite.Local.Sqlite.Schema;
 using Microsoft.Data.Sqlite;
 
 namespace KoLite.Local.Sqlite.Tests
@@ -13,7 +13,7 @@ namespace KoLite.Local.Sqlite.Tests
     // full-scan current_slice_state once per deleted event to enforce the SET NULL. On a real
     // high-volume job (observed live: 12,021 events x 98,812 states ~= 1.2 billion row scans) the purge
     // ran for many minutes, holding the single WAL writer and starving the worker (SQLITE_BUSY
-    // "database is locked"). Migration v4 indexes the FK column; these tests fail without it.
+    // "database is locked"). The schema indexes the FK column; these tests fail without it.
     public sealed class HardDeleteForeignKeyIndexTests : IDisposable
     {
         private readonly string testDirectory = Path.Combine(AppContext.BaseDirectory, "hard-delete-fk-index-tests", Guid.NewGuid().ToString("N"));
@@ -23,7 +23,7 @@ namespace KoLite.Local.Sqlite.Tests
         {
             Directory.CreateDirectory(testDirectory);
             factory = new KoLiteSqliteConnectionFactory(new KoLiteSqliteConnectionOptions(Path.Combine(testDirectory, "fk.db")) { BusyTimeoutMilliseconds = 10_000 });
-            new KoLiteSqliteMigrator(factory).Migrate();
+            new KoLiteSqliteSchema(factory).EnsureSchema();
         }
 
         public void Dispose()
@@ -33,7 +33,7 @@ namespace KoLite.Local.Sqlite.Tests
         }
 
         // Deterministic root-cause guard: the FK enforcement lookup must be index-backed. Without the
-        // migration v4 index the query plan is "SCAN current_slice_state" (the quadratic purge); with it
+        // FK-column index the query plan is "SCAN current_slice_state" (the quadratic purge); with it
         // the plan is "SEARCH ... USING INDEX ix_current_slice_state_last_event".
         [Fact]
         public void Fk_set_null_lookup_on_current_slice_state_uses_an_index_not_a_full_scan()

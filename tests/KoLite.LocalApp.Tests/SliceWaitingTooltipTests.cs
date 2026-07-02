@@ -3,7 +3,7 @@ using KoLite.Local.Core.Time;
 using KoLite.Local.Sqlite.Catalog;
 using KoLite.Local.Sqlite.Connections;
 using KoLite.Local.Sqlite.Lifecycle;
-using KoLite.Local.Sqlite.Migrations;
+using KoLite.Local.Sqlite.Schema;
 using KoLite.Local.Sqlite.Observability;
 using KoLite.Local.Sqlite.Queue;
 using KoLite.Local.Sqlite.State;
@@ -29,7 +29,7 @@ namespace KoLite.LocalApp.Tests
         {
             Directory.CreateDirectory(testDirectory);
             sqlite = new KoLiteSqliteConnectionFactory(new KoLiteSqliteConnectionOptions(Path.Combine(testDirectory, "tooltip.db")) { BusyTimeoutMilliseconds = 10_000 });
-            new KoLiteSqliteMigrator(sqlite).Migrate();
+            new KoLiteSqliteSchema(sqlite).EnsureSchema();
             catalog = new SqliteJobCatalogRepository(sqlite);
             sliceState = new SqliteSliceStateRepository(sqlite);
             readModels = new SqliteOperationalReadModelRepository(sqlite);

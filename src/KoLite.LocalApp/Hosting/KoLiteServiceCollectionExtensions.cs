@@ -6,12 +6,12 @@ using KoLite.Local.Kusto.Execution;
 using KoLite.Local.Sqlite.Catalog;
 using KoLite.Local.Sqlite.Connections;
 using KoLite.Local.Sqlite.Lifecycle;
-using KoLite.Local.Sqlite.Migrations;
 using KoLite.Local.Sqlite.Observability;
 using KoLite.Local.Sqlite.Orchestration;
 using KoLite.Local.Sqlite.Queue;
 using KoLite.Local.Sqlite.Repair;
 using KoLite.Local.Sqlite.Rerun;
+using KoLite.Local.Sqlite.Schema;
 using KoLite.Local.Sqlite.State;
 using KoLite.Local.Sqlite.Throttling;
 using KoLite.LocalApp.Retention;
@@ -39,7 +39,7 @@ namespace KoLite.LocalApp
         {
             services.AddSingleton(_ => new KoLiteSqliteConnectionOptions(ResolveDatabasePath(configuration)));
             services.AddSingleton<IKoLiteSqliteConnectionFactory, KoLiteSqliteConnectionFactory>();
-            services.AddSingleton<KoLiteSqliteMigrator>();
+            services.AddSingleton<KoLiteSqliteSchema>();
             services.AddScoped<SqliteJobCatalogRepository>();
             services.AddScoped<SqliteOperationalReadModelRepository>();
             services.AddScoped<SqliteLifecycleReadModelRepository>();

@@ -19,7 +19,7 @@ If port `5057` is busy, add an explicit URL:
 --KoLite:Urls=http://127.0.0.1:5058
 ```
 
-To view the **live** database (`%LOCALAPPDATA%\KoLite\ko-lite.db`) while your app keeps running, start a second UI-only instance with `.\scripts\Start-KoLiteUi.ps1` (defaults to the live database on port 5099). A second instance on the same database is otherwise refused by the single-instance guard; the script bypasses it with `KoLite:AllowMultipleInstances=true` and keeps the scheduler, worker, and retention disabled so the viewer makes no background writes. Startup still migrates whatever database it opens, so pass `-UseCopy` when your branch changes the schema.
+To view the **live** database (`%LOCALAPPDATA%\KoLite\ko-lite.db`) while your app keeps running, start a second UI-only instance with `.\scripts\Start-KoLiteUi.ps1` (defaults to the live database on port 5099). A second instance on the same database is otherwise refused by the single-instance guard; the script bypasses it with `KoLite:AllowMultipleInstances=true` and keeps the scheduler, worker, and retention disabled so the viewer makes no background writes. Startup still applies the current schema to whatever database it opens, so pass `-UseCopy` when your branch changes the schema.
 
 ## Live local execution
 
@@ -43,7 +43,7 @@ dotnet run --project .\src\KoLite.LocalApp\KoLite.LocalApp.csproj -- --Connectio
 | `ConnectionStrings:KoLiteSqlite` | Empty | Preferred explicit local SQLite path. |
 | `KoLite:DatabasePath` | `%LOCALAPPDATA%\KoLite\ko-lite.db` | Fallback database path when no connection string is supplied. |
 | `KoLite:Urls` | `http://127.0.0.1:5057` | Local bind URL. |
-| `KoLite:AllowMultipleInstances` | `false` | Bypasses the single-instance guard so a UI-only viewer can run alongside the live app against the same database. Only for that intentional case: keep `KoLite:Scheduler:Enabled=false` and `KoLite:Retention:Enabled=false`, and note startup still migrates whatever database it opens. See [Safe local review](#safe-local-review). |
+| `KoLite:AllowMultipleInstances` | `false` | Bypasses the single-instance guard so a UI-only viewer can run alongside the live app against the same database. Only for that intentional case: keep `KoLite:Scheduler:Enabled=false` and `KoLite:Retention:Enabled=false`, and note startup still applies the current schema to whatever database it opens. See [Safe local review](#safe-local-review). |
 | `KoLite:Scheduler:Enabled` | `true` | Disable for UI-only or safe first-run review. |
 | `KoLite:Scheduler:TickInterval` | `00:00:10` | Scheduler cadence. Must be greater than zero. |
 | `KoLite:Scheduler:LogEveryPass` | `false` | Writes durable scheduler/worker diagnostic rows when enabled. |
@@ -372,33 +372,6 @@ FROM work_queue
 WHERE state = 'Leased' AND locked_until_utc <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
 ORDER BY slice_start_utc;
 ```
-
-## GUID identity upgrade (schema v6)
-
-Schema v6 is a one-time, in-place re-key that makes each job's permanent identity an opaque GUID
-(`job_definitions.job_id`) and turns `activityId` into a mutable, unique display label. No jobs are
-deleted or recreated; existing rows are migrated in place when the app next opens the database.
-
-Run the upgrade with the app **stopped and gracefully drained** so no slices are in-flight:
-
-1. **Drain and stop** the running instance with `scripts\Stop-KoLiteApp.ps1` (graceful drain — lets
-   active slices record final state). Do not hard-kill; an in-flight slice that ingested but did not
-   complete could re-execute after the re-key.
-2. **Back up** the SQLite file (copy it, or `VACUUM INTO` a dated copy).
-3. **Rehearse first on a copy**: point a throwaway instance/connection at the backup copy and confirm
-   the migration applies and the verification queries pass (per-table row counts unchanged except the
-   re-keyed columns; no orphan foreign keys; no NULL `activity_id`).
-4. **Apply** to the real database by starting the app (or running the migrator) once; verify again.
-5. **Restart** KO Lite normally.
-
-The upgrade is one-way: to roll back, restore the pre-migration backup.
-
-**Kusto idempotency note.** The re-key changes the `ingestIfNotExists`/`ingest-by` tag basis from
-`activityId` to the GUID. Output already in Kusto keeps its old activityId-based extent tag, which the
-SQLite migration cannot rewrite. Draining before the upgrade removes the crash-retry path. The one
-remaining case to avoid: a **repair with the `ExecuteNoCleanup` strategy on a slice that completed
-before the upgrade** can double-ingest, because the new GUID-based tag will not match the old extent.
-For such slices use `CleanSliceOutputThenExecute` or the rerun cleanup flow instead.
 
 ## Troubleshooting
 

@@ -15,7 +15,7 @@ This guide covers repository layout and local validation commands for KO Lite co
 | --- | --- |
 | `KoLite.Local.sln` | Standalone local-first solution. |
 | `src\KoLite.Local.Core` | Schedule parsing, scheduling models, mutation policy, dependency readiness, rerun/repair contracts. |
-| `src\KoLite.Local.Sqlite` | Local SQLite persistence, migrations, queue, catalog, state, observability, repair, and rerun services. |
+| `src\KoLite.Local.Sqlite` | Local SQLite persistence, schema, queue, catalog, state, observability, repair, and rerun services. |
 | `src\KoLite.Local.Kusto` | Live Kusto request building, authentication, execution, and error classification. |
 | `src\KoLite.LocalApp` | Razor Pages dashboard, local hosted scheduler/worker services, health/shutdown endpoints, and static assets. |
 | `tests\KoLite.Local.*` | Unit, integration, web, and local end-to-end tests for the active solution. |
@@ -65,7 +65,7 @@ $db = "$env:LOCALAPPDATA\KoLite\ko-lite.db"
 dotnet run --project .\src\KoLite.LocalApp\KoLite.LocalApp.csproj -- --ConnectionStrings:KoLiteSqlite="$db" --KoLite:Scheduler:Enabled=false --KoLite:Retention:Enabled=false --KoLite:AllowMultipleInstances=true --KoLite:Kusto:AuthMode=AzureCli --KoLite:Urls=http://127.0.0.1:5099
 ```
 
-Startup still runs migrations against the live database, so when your branch changes the schema use `-UseCopy` (or a sandbox `-DatabasePath`) instead. Mutating UI actions also write to the live database.
+Startup still applies the current schema to the live database, so when your branch changes the schema use `-UseCopy` (or a sandbox `-DatabasePath`) instead. Mutating UI actions also write to the live database.
 
 ## Run from a deployed copy (avoid the build file lock)
 

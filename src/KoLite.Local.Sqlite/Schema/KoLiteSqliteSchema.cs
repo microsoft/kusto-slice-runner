@@ -1,194 +1,46 @@
-using System.Security.Cryptography;
-using System.Text;
 using KoLite.Local.Sqlite.Connections;
 using Microsoft.Data.Sqlite;
 
-namespace KoLite.Local.Sqlite.Migrations
+namespace KoLite.Local.Sqlite.Schema
 {
-    public sealed class KoLiteSqliteMigrator
+    // Provisions the KO Lite SQLite database to the current schema. The schema is a single,
+    // idempotent definition (every statement is CREATE ... IF NOT EXISTS), so EnsureSchema runs on
+    // every startup and is a no-op once the database is already provisioned.
+    public sealed class KoLiteSqliteSchema
     {
-        private const int BaselineVersion = 1;
-        private const string BaselineName = "baseline-guid-schema";
-
-        // The schema is a single, idempotent baseline: a fresh database gets the full GUID-identity
-        // schema directly (no historical migration chain to replay). A legacy pre-consolidation
-        // ledger (the old 1..6 chain) is collapsed to this baseline once, in place, on first run.
-        // Additive post-baseline migrations (version >= 2) are appended here and replay normally on
-        // databases already provisioned at the baseline.
-        private static readonly SqliteMigration[] Migrations =
-        [
-            new(BaselineVersion, BaselineName, BaselineSchemaSql),
-            new(2, "ingestion-throttle-observations", IngestionThrottleObservationsSql),
-            new(3, "ingestion-throttle-terminal", IngestionThrottleTerminalSql),
-            new(4, "foreign-key-delete-indexes", ForeignKeyDeleteIndexesSql),
-        ];
-
         private readonly IKoLiteSqliteConnectionFactory connectionFactory;
 
-        public KoLiteSqliteMigrator(IKoLiteSqliteConnectionFactory connectionFactory)
+        public KoLiteSqliteSchema(IKoLiteSqliteConnectionFactory connectionFactory)
         {
             this.connectionFactory = connectionFactory ?? throw new ArgumentNullException(nameof(connectionFactory));
         }
 
-        public static int LatestVersion => Migrations[^1].Version;
-
-        public void Migrate()
+        public void EnsureSchema()
         {
             using var connection = connectionFactory.OpenConnection();
-            Migrate(connection);
+            EnsureSchema(connection);
         }
 
-        public void Migrate(SqliteConnection connection)
+        public void EnsureSchema(SqliteConnection connection)
         {
             ArgumentNullException.ThrowIfNull(connection);
 
-            // Establish WAL exactly once, at startup, before any hosted service opens a pooled
-            // connection. WAL is a persistent database-header property, so per-connection ApplyPragmas
-            // no longer sets it (doing so took a write lock on every open, including read-only paths).
-            // WAL must run outside a transaction, so it is set here before any ledger work begins.
-            ExecuteNonQuery(connection, null, "PRAGMA journal_mode = WAL;");
-
-            EnsureLedger(connection);
-            CollapseLegacyLedger(connection);
-
-            foreach (var migration in Migrations)
-            {
-                if (HasApplied(connection, migration))
-                {
-                    continue;
-                }
-
-                ApplyMigration(connection, migration);
-            }
-
-            SetMetadata(connection, "schema_version", LatestVersion.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            // Establish WAL once, at startup, before any hosted service opens a pooled connection. WAL
+            // is a persistent database-header property; setting it per connection would take a write
+            // lock on every open (including read-only paths), so connection setup leaves it alone. WAL
+            // must run outside a transaction, so it is set before the schema statements run.
+            ExecuteNonQuery(connection, "PRAGMA journal_mode = WAL;");
+            ExecuteNonQuery(connection, SchemaSql);
         }
 
-        // Applies a not-yet-recorded migration and stamps the ledger. Additive migrations are written
-        // to be idempotent (CREATE ... IF NOT EXISTS). SQLite has no ADD COLUMN IF NOT EXISTS, so a
-        // replay onto a schema that already has the column (e.g. a legacy-ledger collapse on a database
-        // that is already at the latest schema) surfaces as a duplicate-column error; that is treated
-        // as a no-op and the migration is still recorded so the ledger converges.
-        private static void ApplyMigration(SqliteConnection connection, SqliteMigration migration)
-        {
-            using (var transaction = connection.BeginTransaction())
-            {
-                try
-                {
-                    ExecuteNonQuery(connection, transaction, migration.Sql);
-                    InsertLedger(connection, transaction, migration);
-                    transaction.Commit();
-                    return;
-                }
-                catch (SqliteException ex) when (IsAlreadyPresentColumn(ex))
-                {
-                    transaction.Rollback();
-                }
-            }
-
-            using var stamp = connection.BeginTransaction();
-            InsertLedger(connection, stamp, migration);
-            stamp.Commit();
-        }
-
-        private static bool IsAlreadyPresentColumn(SqliteException ex) =>
-            ex.SqliteErrorCode == 1 && ex.Message.Contains("duplicate column name", StringComparison.OrdinalIgnoreCase);
-
-        // One-time, in-place collapse of a pre-consolidation ledger to the single baseline. Detected
-        // precisely by the legacy version-1 migration name, so it never fires on a baseline database
-        // or on any future post-baseline migration. The idempotent baseline that follows makes no
-        // schema change to an already-provisioned database.
-        private static void CollapseLegacyLedger(SqliteConnection connection)
-        {
-            using var check = connection.CreateCommand();
-            check.CommandText = "SELECT 1 FROM schema_migrations WHERE version = 1 AND name <> $baseline LIMIT 1;";
-            check.Parameters.AddWithValue("$baseline", BaselineName);
-            if (check.ExecuteScalar() is null)
-            {
-                return;
-            }
-
-            ExecuteNonQuery(connection, null, "DELETE FROM schema_migrations;");
-        }
-
-        private static void EnsureLedger(SqliteConnection connection)
-        {
-            ExecuteNonQuery(connection, null, """
-                CREATE TABLE IF NOT EXISTS schema_migrations (
-                    version INTEGER NOT NULL PRIMARY KEY,
-                    name TEXT NOT NULL,
-                    checksum TEXT NOT NULL,
-                    applied_at_utc TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-                );
-                """);
-        }
-
-        private static bool HasApplied(SqliteConnection connection, SqliteMigration migration)
+        private static void ExecuteNonQuery(SqliteConnection connection, string sql)
         {
             using var command = connection.CreateCommand();
-            command.CommandText = "SELECT checksum FROM schema_migrations WHERE version = $version LIMIT 1;";
-            command.Parameters.AddWithValue("$version", migration.Version);
-            var appliedChecksum = command.ExecuteScalar() as string;
-            if (appliedChecksum is null)
-            {
-                return false;
-            }
-
-            var expectedChecksum = Sha256(migration.Sql);
-            if (!StringComparer.Ordinal.Equals(appliedChecksum, expectedChecksum))
-            {
-                throw new InvalidOperationException($"SQLite migration {migration.Version} ({migration.Name}) checksum mismatch. Expected {expectedChecksum}, found {appliedChecksum}.");
-            }
-
-            return true;
-        }
-
-        private static void InsertLedger(SqliteConnection connection, SqliteTransaction transaction, SqliteMigration migration)
-        {
-            using var command = connection.CreateCommand();
-            command.Transaction = transaction;
-            command.CommandText = """
-                INSERT INTO schema_migrations (version, name, checksum)
-                VALUES ($version, $name, $checksum);
-                """;
-            command.Parameters.AddWithValue("$version", migration.Version);
-            command.Parameters.AddWithValue("$name", migration.Name);
-            command.Parameters.AddWithValue("$checksum", Sha256(migration.Sql));
-            command.ExecuteNonQuery();
-        }
-
-        private static void SetMetadata(SqliteConnection connection, string key, string value)
-        {
-            using var command = connection.CreateCommand();
-            command.CommandText = """
-                INSERT INTO app_metadata (key, value, updated_at_utc)
-                VALUES ($key, $value, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-                ON CONFLICT(key) DO UPDATE SET
-                    value = excluded.value,
-                    updated_at_utc = excluded.updated_at_utc;
-                """;
-            command.Parameters.AddWithValue("$key", key);
-            command.Parameters.AddWithValue("$value", value);
-            command.ExecuteNonQuery();
-        }
-
-        private static void ExecuteNonQuery(SqliteConnection connection, SqliteTransaction? transaction, string sql)
-        {
-            using var command = connection.CreateCommand();
-            command.Transaction = transaction;
             command.CommandText = sql;
             command.ExecuteNonQuery();
         }
 
-        private static string Sha256(string text)
-        {
-            var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(text));
-            return Convert.ToHexString(bytes).ToLowerInvariant();
-        }
-
-        private sealed record SqliteMigration(int Version, string Name, string Sql);
-
-        private const string BaselineSchemaSql = """
+        private const string SchemaSql = """
             CREATE TABLE IF NOT EXISTS app_metadata (
                 key TEXT NOT NULL PRIMARY KEY,
                 value TEXT NOT NULL,
@@ -466,14 +318,7 @@ namespace KoLite.Local.Sqlite.Migrations
             CREATE INDEX IF NOT EXISTS ix_rerun_batches_root_requested ON rerun_batches(root_job_id, requested_at_utc);
             CREATE INDEX IF NOT EXISTS ix_rerun_slices_batch_status ON rerun_slices(rerun_batch_id, status);
             CREATE INDEX IF NOT EXISTS ix_rerun_slices_job_slice ON rerun_slices(job_id, slice_start_utc, slice_end_utc);
-            """;
 
-        // Version 2 (additive): records every Kusto ingestion-capacity throttle (429,
-        // CapacityPolicy/Ingestion) a slice attempt hit. Drives the sustained-throttle detector and
-        // the advisory maxParallelism recommendations. Append-only, time-pruned, and purged with the
-        // owning job; no foreign key (matches the slice_attempts / current_slice_state pattern, with
-        // explicit cleanup on hard-delete).
-        private const string IngestionThrottleObservationsSql = """
             CREATE TABLE IF NOT EXISTS ingestion_throttle_observations (
                 observation_id TEXT NOT NULL PRIMARY KEY,
                 job_id TEXT NOT NULL,
@@ -482,33 +327,14 @@ namespace KoLite.Local.Sqlite.Migrations
                 slice_end_utc TEXT NOT NULL,
                 attempt INTEGER NOT NULL DEFAULT 0,
                 reported_capacity INTEGER NULL,
-                observed_at_utc TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+                observed_at_utc TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+                terminal INTEGER NOT NULL DEFAULT 0
             );
 
             CREATE INDEX IF NOT EXISTS ix_ingestion_throttle_cluster_observed ON ingestion_throttle_observations(cluster_uri, observed_at_utc);
             CREATE INDEX IF NOT EXISTS ix_ingestion_throttle_job ON ingestion_throttle_observations(job_id);
-            """;
-
-        // Version 3 (additive): marks the throttle observation that corresponds to a slice's terminal
-        // (dead-letter) attempt, i.e. the slice gave up after consecutive throttled attempts. This is
-        // the worst throttling outcome (a data gap needing a rerun); the column lets the advisor
-        // surface such slices and force the page/banner to show regardless of the rate gate.
-        private const string IngestionThrottleTerminalSql = """
-            ALTER TABLE ingestion_throttle_observations ADD COLUMN terminal INTEGER NOT NULL DEFAULT 0;
-
             CREATE INDEX IF NOT EXISTS ix_ingestion_throttle_terminal ON ingestion_throttle_observations(terminal, observed_at_utc);
-            """;
 
-        // Version 4 (additive): index the two foreign-key columns whose ON DELETE action is otherwise
-        // unindexed, so a hard delete does not degrade to O(rows^2). The FK
-        // current_slice_state.last_event_id -> slice_state_events(event_id) ON DELETE SET NULL forced a
-        // full scan of current_slice_state for every slice_state_events row deleted during a purge
-        // (e.g. 12k events x 99k states ~= 1.2 billion row scans), which hung the hard-delete request,
-        // held the single WAL writer, and starved the worker (SQLITE_BUSY "database is locked"). The
-        // repair_slices.enqueued_queue_item_id -> work_queue(queue_item_id) ON DELETE SET NULL FK has
-        // the same latent problem on the work_queue delete. These indexes turn each FK enforcement
-        // lookup into an index seek. Pure indexes (no data change); replays idempotently.
-        private const string ForeignKeyDeleteIndexesSql = """
             CREATE INDEX IF NOT EXISTS ix_current_slice_state_last_event ON current_slice_state(last_event_id);
             CREATE INDEX IF NOT EXISTS ix_repair_slices_enqueued_queue_item ON repair_slices(enqueued_queue_item_id);
             """;

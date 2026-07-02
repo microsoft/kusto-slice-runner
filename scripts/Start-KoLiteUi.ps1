@@ -21,7 +21,7 @@ It always passes these fixed overrides (a later value in -AppArguments still win
 4. --KoLite:AllowMultipleInstances=true  bypasses the single-instance guard so this UI-only
    instance can run alongside your live app against the SAME database. The guard normally refuses a
    second instance on one database; with the scheduler, worker, and retention all disabled here the
-   only writes are the brief idempotent startup migration, which is safe next to the live writer
+   only writes are the brief idempotent startup schema apply, which is safe next to the live writer
    under WAL. The secondary instance logs a "guard is disabled; use a distinct database" warning;
    that is expected here and can be ignored (this is the intentional shared-database viewer case).
 5. --KoLite:Urls=http://127.0.0.1:<Port>  binds a non-default loopback port so this instance can
@@ -33,8 +33,8 @@ that and open it yourself.
 
 Safety notes when running against the live database (the default):
 
-- Startup runs schema migrations against whatever database it opens. Pure UI / read-model / Razor
-  changes are a no-op, but if your branch adds a new migration it WILL be applied to that database.
+- Startup applies the current schema to whatever database it opens. Pure UI / read-model / Razor
+  changes are a no-op, but if your branch changes the schema it WILL be applied to that database.
   Use -UseCopy (or point -DatabasePath at a throwaway file) when your branch changes the schema.
 - The scheduler being disabled stops automated execution, but the UI still exposes mutating
   operator actions (enable/disable, soft-delete, pause/resume, edit schedule, rerun ack, repair),
@@ -42,7 +42,7 @@ Safety notes when running against the live database (the default):
   is not, when running against the live database.
 - This instance coexists with a running live app on the same database (the single-instance guard is
   bypassed). Reads and the disabled background services are safe under WAL; the residual risk is the
-  startup migration above, so still prefer -UseCopy when your branch changes the schema.
+  startup schema apply above, so still prefer -UseCopy when your branch changes the schema.
 
 -UseCopy snapshots the chosen database (plus its -wal / -shm sidecars when present) to a throwaway
 file and runs against that copy, leaving the live database untouched. The copy is best-effort while
@@ -56,7 +56,7 @@ Loopback port for this instance. Default: 5099. Choose one that is free and not 
 
 .PARAMETER UseCopy
 Run against a throwaway copy of the database instead of the database itself. Leaves the source
-database untouched and removes the migration / accidental-mutation risk.
+database untouched and removes the schema-apply / accidental-mutation risk.
 
 .PARAMETER CopyPath
 Destination for -UseCopy. Default: '<source-name>-validate.db' next to the source database.
@@ -197,7 +197,7 @@ Write-Host "Command        : $commandPreview"
 if (-not $UseCopy) {
     Write-Host ''
     Write-Host 'WARNING: this instance opens the live database read/write.' -ForegroundColor Yellow
-    Write-Host '  - Startup applies any schema migration your branch adds to this database.' -ForegroundColor Yellow
+    Write-Host '  - Startup applies any schema change your branch adds to this database.' -ForegroundColor Yellow
     Write-Host '  - UI actions (disable/delete/edit/rerun/repair) write to this database.' -ForegroundColor Yellow
     Write-Host '  - Re-run with -UseCopy to validate against a throwaway copy instead.' -ForegroundColor Yellow
 }

@@ -3,7 +3,7 @@ using System.Net;
 using System.Text.Json;
 using KoLite.Local.Sqlite.Catalog;
 using KoLite.Local.Sqlite.Connections;
-using KoLite.Local.Sqlite.Migrations;
+using KoLite.Local.Sqlite.Schema;
 using KoLite.Local.Sqlite.Observability;
 using KoLite.Local.Sqlite.State;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -25,7 +25,7 @@ namespace KoLite.LocalApp.Tests
             Directory.CreateDirectory(testDirectory);
             databasePath = Path.Combine(testDirectory, "diagnostics.db");
             sqlite = new KoLiteSqliteConnectionFactory(new KoLiteSqliteConnectionOptions(databasePath));
-            new KoLiteSqliteMigrator(sqlite).Migrate();
+            new KoLiteSqliteSchema(sqlite).EnsureSchema();
             factory = CreateFactory();
         }
 

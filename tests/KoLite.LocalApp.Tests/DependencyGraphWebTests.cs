@@ -6,7 +6,7 @@ using KoLite.Local.Kusto.Execution;
 using KoLite.Local.Sqlite.Catalog;
 using KoLite.Local.Sqlite.Connections;
 using KoLite.Local.Sqlite.Lifecycle;
-using KoLite.Local.Sqlite.Migrations;
+using KoLite.Local.Sqlite.Schema;
 using KoLite.LocalApp.Ui;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
@@ -33,7 +33,7 @@ namespace KoLite.LocalApp.Tests
             Directory.CreateDirectory(testDirectory);
             databasePath = Path.Combine(testDirectory, "web.db");
             sqlite = new KoLiteSqliteConnectionFactory(new KoLiteSqliteConnectionOptions(databasePath));
-            new KoLiteSqliteMigrator(sqlite).Migrate();
+            new KoLiteSqliteSchema(sqlite).EnsureSchema();
             factory = CreateFactory();
         }
 
