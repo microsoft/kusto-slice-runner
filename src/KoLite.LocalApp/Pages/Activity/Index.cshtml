@@ -54,9 +54,8 @@
                         <th>Slice</th>
                         <th>Attempt</th>
                         <th>Worker</th>
-                        <th>Started</th>
-                        <th>ETA</th>
-                        <th>Lease</th>
+                        <th>Started (local)</th>
+                        <th>ETA (local)</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -73,32 +72,18 @@
                             <td>@slice.Attempt</td>
                             <td>@(slice.LeaseOwner ?? "—")</td>
                             <td>
-                                @AppFormatting.Local(view.StartedAtUtc)
+                                @AppFormatting.LocalNoZone(view.StartedAtUtc)
                                 <span class="muted activity-relative">@AppFormatting.RelativeToNow(view.StartedAtUtc, data.GeneratedAtUtc)</span>
                             </td>
                             <td>
                                 @if (view.EtaUtc is { } eta)
                                 {
-                                    @AppFormatting.Local(eta)
+                                    @AppFormatting.LocalNoZone(eta)
                                     <span class="muted activity-relative">@AppFormatting.RelativeToNow(eta, data.GeneratedAtUtc)</span>
                                 }
                                 else
                                 {
                                     <span class="muted">No history yet</span>
-                                }
-                            </td>
-                            <td>
-                                @if (slice.LeaseExpired)
-                                {
-                                    <span class="badge badge-warning">Lease expired</span>
-                                }
-                                else if (slice.LeaseExpiresAtUtc is { } expires)
-                                {
-                                    <text>@AppFormatting.Local(expires)</text>
-                                }
-                                else
-                                {
-                                    <text>—</text>
                                 }
                             </td>
                         </tr>
