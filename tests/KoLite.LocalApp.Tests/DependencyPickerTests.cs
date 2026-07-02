@@ -2,7 +2,7 @@ using System.Net;
 using System.Text.RegularExpressions;
 using KoLite.Local.Sqlite.Catalog;
 using KoLite.Local.Sqlite.Connections;
-using KoLite.Local.Sqlite.Migrations;
+using KoLite.Local.Sqlite.Schema;
 using KoLite.LocalApp.Ui;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
@@ -77,7 +77,7 @@ namespace KoLite.LocalApp.Tests
             Directory.CreateDirectory(testDirectory);
             databasePath = Path.Combine(testDirectory, "picker.db");
             sqlite = new KoLiteSqliteConnectionFactory(new KoLiteSqliteConnectionOptions(databasePath));
-            new KoLiteSqliteMigrator(sqlite).Migrate();
+            new KoLiteSqliteSchema(sqlite).EnsureSchema();
             factory = CreateFactory();
         }
 

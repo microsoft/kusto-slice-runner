@@ -2,7 +2,7 @@ using KoLite.Local.Core.Scheduling;
 using KoLite.Local.Sqlite.Catalog;
 using KoLite.Local.Sqlite.Connections;
 using KoLite.Local.Sqlite.Lifecycle;
-using KoLite.Local.Sqlite.Migrations;
+using KoLite.Local.Sqlite.Schema;
 using KoLite.Local.Sqlite.State;
 using Microsoft.Data.Sqlite;
 
@@ -24,7 +24,7 @@ namespace KoLite.Local.Sqlite.Tests
         {
             Directory.CreateDirectory(testDirectory);
             factory = new KoLiteSqliteConnectionFactory(new KoLiteSqliteConnectionOptions(Path.Combine(testDirectory, "hang.db")) { BusyTimeoutMilliseconds = 10_000 });
-            new KoLiteSqliteMigrator(factory).Migrate();
+            new KoLiteSqliteSchema(factory).EnsureSchema();
         }
 
         public void Dispose()

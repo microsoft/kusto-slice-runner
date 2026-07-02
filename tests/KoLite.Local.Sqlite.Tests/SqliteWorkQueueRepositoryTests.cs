@@ -1,6 +1,6 @@
 using KoLite.Local.Sqlite.Catalog;
 using KoLite.Local.Sqlite.Connections;
-using KoLite.Local.Sqlite.Migrations;
+using KoLite.Local.Sqlite.Schema;
 using KoLite.Local.Sqlite.Queue;
 using KoLite.Local.Sqlite.State;
 using Microsoft.Data.Sqlite;
@@ -18,7 +18,7 @@ namespace KoLite.Local.Sqlite.Tests
         {
             Directory.CreateDirectory(testDirectory);
             var factory = new KoLiteSqliteConnectionFactory(new KoLiteSqliteConnectionOptions(Path.Combine(testDirectory, "queue.db")) { BusyTimeoutMilliseconds = 10_000 });
-            new KoLiteSqliteMigrator(factory).Migrate();
+            new KoLiteSqliteSchema(factory).EnsureSchema();
             catalog = new SqliteJobCatalogRepository(factory);
             state = new SqliteSliceStateRepository(factory);
             catalog.Create(Schedule("job.queue"));

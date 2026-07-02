@@ -1,7 +1,7 @@
 using System.Text.Json;
 using KoLite.Local.Core.Time;
 using KoLite.Local.Sqlite.Connections;
-using KoLite.Local.Sqlite.Migrations;
+using KoLite.Local.Sqlite.Schema;
 using KoLite.LocalApp.Updates;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
@@ -22,7 +22,7 @@ namespace KoLite.LocalApp.Tests
             Directory.CreateDirectory(testDirectory);
             databasePath = Path.Combine(testDirectory, "update.db");
             sqlite = new KoLiteSqliteConnectionFactory(new KoLiteSqliteConnectionOptions(databasePath) { BusyTimeoutMilliseconds = 10_000 });
-            new KoLiteSqliteMigrator(sqlite).Migrate();
+            new KoLiteSqliteSchema(sqlite).EnsureSchema();
         }
 
         [Fact]

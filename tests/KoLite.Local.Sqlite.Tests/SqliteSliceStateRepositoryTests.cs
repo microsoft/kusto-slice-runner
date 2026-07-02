@@ -2,7 +2,7 @@ using KoLite.Local.Core.Schedules;
 using KoLite.Local.Core.Scheduling;
 using KoLite.Local.Sqlite.Catalog;
 using KoLite.Local.Sqlite.Connections;
-using KoLite.Local.Sqlite.Migrations;
+using KoLite.Local.Sqlite.Schema;
 using KoLite.Local.Sqlite.State;
 using Microsoft.Data.Sqlite;
 
@@ -18,7 +18,7 @@ namespace KoLite.Local.Sqlite.Tests
         {
             Directory.CreateDirectory(testDirectory);
             factory = new KoLiteSqliteConnectionFactory(new KoLiteSqliteConnectionOptions(Path.Combine(testDirectory, "state.db")) { BusyTimeoutMilliseconds = 10_000 });
-            new KoLiteSqliteMigrator(factory).Migrate();
+            new KoLiteSqliteSchema(factory).EnsureSchema();
             var catalog = new SqliteJobCatalogRepository(factory);
             catalog.Create(Schedule("upstream", "00:30:00", dependsOn: null));
             catalog.Create(Schedule("downstream", "01:00:00", dependsOn: "upstream"));

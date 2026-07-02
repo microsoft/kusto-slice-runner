@@ -26,7 +26,7 @@ For targeted changes, run the narrow relevant test project first, then decide wh
 
 - `KoLite.Local.sln` is the active standalone local-first solution.
 - `src\KoLite.Local.Core` contains schedule parsing, scheduling models, mutation policy, dependency readiness, rerun and repair contracts.
-- `src\KoLite.Local.Sqlite` contains local SQLite persistence, migrations, queue, catalog, state, observability, repair, and rerun services.
+- `src\KoLite.Local.Sqlite` contains local SQLite persistence, schema, queue, catalog, state, observability, repair, and rerun services.
 - `src\KoLite.Local.Kusto` contains live Kusto request building, authentication, execution, and error classification.
 - `src\KoLite.LocalApp` contains the ASP.NET Core/Razor dashboard, hosted scheduler and worker services, health/shutdown endpoints, UI read models, and static assets.
 - `tests\KoLite.Local.*` mirrors the active solution with unit, integration, web, and local end-to-end tests.

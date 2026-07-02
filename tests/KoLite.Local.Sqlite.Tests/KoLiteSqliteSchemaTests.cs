@@ -1,12 +1,11 @@
 using KoLite.Local.Sqlite.Connections;
-using KoLite.Local.Sqlite.Migrations;
+using KoLite.Local.Sqlite.Schema;
 using Microsoft.Data.Sqlite;
 
 namespace KoLite.Local.Sqlite.Tests
 {
-    public sealed class KoLiteSqliteMigrationTests : IDisposable
+    public sealed class KoLiteSqliteSchemaTests : IDisposable
     {
-        private const string BaselineSchemaChecksum = "07743713f19cd9c306aa330d12a44f9f30be486ce794e25134d17370c225661c";
         private readonly string testDirectory = Path.Combine(AppContext.BaseDirectory, "sqlite-file-tests", Guid.NewGuid().ToString("N"));
 
         public void Dispose()
@@ -32,116 +31,50 @@ namespace KoLite.Local.Sqlite.Tests
         }
 
         [Fact]
-        public void NewDatabaseMigratesFromEmptyToLatestVersion()
+        public void EnsureSchemaProvisionsAFreshDatabaseWithoutALedger()
         {
             var factory = CreateFactory();
-            var migrator = new KoLiteSqliteMigrator(factory);
 
-            migrator.Migrate();
+            new KoLiteSqliteSchema(factory).EnsureSchema();
 
             using var connection = factory.OpenConnection();
-            Assert.Equal(KoLiteSqliteMigrator.LatestVersion, QueryInt(connection, "SELECT MAX(version) FROM schema_migrations;"));
-            Assert.Equal(KoLiteSqliteMigrator.LatestVersion.ToString(), QueryString(connection, "SELECT value FROM app_metadata WHERE key = 'schema_version';"));
+            Assert.Equal(1, QueryInt(connection, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'job_definitions';"));
+
+            // The schema is provisioned directly, with no migration ledger or version metadata.
+            Assert.Equal(0, QueryInt(connection, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations';"));
+            Assert.Equal(0, QueryInt(connection, "SELECT COUNT(*) FROM app_metadata WHERE key = 'schema_version';"));
         }
 
         [Fact]
-        public void RerunningMigrationsIsIdempotentAndPreservesLedgerRows()
+        public void EnsureSchemaIsIdempotentAndPreservesData()
         {
             var factory = CreateFactory();
-            var migrator = new KoLiteSqliteMigrator(factory);
+            var schema = new KoLiteSqliteSchema(factory);
 
-            migrator.Migrate();
-            using var firstConnection = factory.OpenConnection();
-            var firstLedgerCount = QueryInt(firstConnection, "SELECT COUNT(*) FROM schema_migrations;");
-            var firstAppliedAt = QueryString(firstConnection, "SELECT applied_at_utc FROM schema_migrations WHERE version = 1;");
-            firstConnection.Dispose();
-
-            migrator.Migrate();
-
-            using var secondConnection = factory.OpenConnection();
-            Assert.Equal(firstLedgerCount, QueryInt(secondConnection, "SELECT COUNT(*) FROM schema_migrations;"));
-            Assert.Equal(firstAppliedAt, QueryString(secondConnection, "SELECT applied_at_utc FROM schema_migrations WHERE version = 1;"));
-        }
-
-        [Fact]
-        public void BaselineSchemaChecksumIsStable()
-        {
-            var factory = CreateFactory();
-            new KoLiteSqliteMigrator(factory).Migrate();
-
-            using var connection = factory.OpenConnection();
-
-            Assert.Equal(BaselineSchemaChecksum, QueryString(connection, "SELECT checksum FROM schema_migrations WHERE version = 1;"));
-        }
-
-        [Fact]
-        public void LegacyMigrationLedgerIsCollapsedToBaselineInPlace()
-        {
-            var factory = CreateFactory();
-            var migrator = new KoLiteSqliteMigrator(factory);
-            migrator.Migrate();
-
+            schema.EnsureSchema();
             using (var connection = factory.OpenConnection())
             {
                 ExecuteNonQuery(connection, "INSERT INTO job_definitions (job_id, activity_id, display_name, schedule_json) VALUES ('guid1','my.job','my.job','{}');");
-                ExecuteNonQuery(connection, "DELETE FROM schema_migrations;");
-                ExecuteNonQuery(connection, """
-                    INSERT INTO schema_migrations (version, name, checksum) VALUES
-                        (1,'initial-local-first-schema','old1'),
-                        (2,'repair-batches-job-association','old2'),
-                        (3,'rerun-batches','old3'),
-                        (4,'drop-activity-cursors','old4'),
-                        (5,'slice-attempts-job-completed-index','old5'),
-                        (6,'rekey-activity-id-to-guid','old6');
-                    """);
             }
 
-            migrator.Migrate();
+            schema.EnsureSchema();
 
             using (var connection = factory.OpenConnection())
             {
-                Assert.Equal(KoLiteSqliteMigrator.LatestVersion, QueryInt(connection, "SELECT COUNT(*) FROM schema_migrations;"));
-                Assert.Equal("baseline-guid-schema", QueryString(connection, "SELECT name FROM schema_migrations WHERE version = 1;"));
-                Assert.Equal(BaselineSchemaChecksum, QueryString(connection, "SELECT checksum FROM schema_migrations WHERE version = 1;"));
-                Assert.Equal(KoLiteSqliteMigrator.LatestVersion.ToString(), QueryString(connection, "SELECT value FROM app_metadata WHERE key = 'schema_version';"));
                 Assert.Equal("my.job", QueryString(connection, "SELECT activity_id FROM job_definitions WHERE job_id = 'guid1';"));
+                Assert.Equal(1, QueryInt(connection, "SELECT COUNT(*) FROM job_definitions;"));
             }
-
-            // A subsequent run does not reconcile again or duplicate the ledger.
-            migrator.Migrate();
-            using (var connection = factory.OpenConnection())
-            {
-                Assert.Equal(KoLiteSqliteMigrator.LatestVersion, QueryInt(connection, "SELECT COUNT(*) FROM schema_migrations;"));
-            }
-        }
-
-        [Fact]
-        public void RerunningMigrationsFailsWhenAppliedChecksumDrifts()
-        {
-            var factory = CreateFactory();
-            var migrator = new KoLiteSqliteMigrator(factory);
-
-            migrator.Migrate();
-            using (var connection = factory.OpenConnection())
-            {
-                ExecuteNonQuery(connection, "UPDATE schema_migrations SET checksum = 'tampered-checksum' WHERE version = 1;");
-            }
-
-            var exception = Assert.Throws<InvalidOperationException>(() => migrator.Migrate());
-            Assert.Contains("SQLite migration 1 (baseline-guid-schema) checksum mismatch", exception.Message);
-            Assert.Contains("tampered-checksum", exception.Message);
         }
 
         [Fact]
         public void RequiredTablesAndIndexesExist()
         {
             var factory = CreateFactory();
-            new KoLiteSqliteMigrator(factory).Migrate();
+            new KoLiteSqliteSchema(factory).EnsureSchema();
 
             using var connection = factory.OpenConnection();
             var expectedTables = new[]
             {
-                "schema_migrations",
                 "app_metadata",
                 "app_settings",
                 "job_definitions",
@@ -203,10 +136,7 @@ namespace KoLite.Local.Sqlite.Tests
                 Assert.Equal(1, QueryInt(connection, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = $name;", ("$name", index)));
             }
 
-            Assert.Equal(0, QueryInt(connection, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'activity_cursors';"));
-            Assert.Equal(0, QueryInt(connection, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'ix_activity_cursors_job';"));
-
-            // The GUID-identity baseline ships activity_id (NOT NULL) and its unique index directly.
+            // The GUID-identity schema ships activity_id (NOT NULL) and its unique index directly.
             Assert.Equal(1, QueryInt(connection, "SELECT COUNT(*) FROM pragma_table_info('job_definitions') WHERE name = 'activity_id' AND \"notnull\" = 1;"));
             Assert.Equal(1, QueryInt(connection, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'ux_job_definitions_activity_id';"));
         }
@@ -215,7 +145,7 @@ namespace KoLite.Local.Sqlite.Tests
         public void RepairBatchesHaveJobAssociationColumn()
         {
             var factory = CreateFactory();
-            new KoLiteSqliteMigrator(factory).Migrate();
+            new KoLiteSqliteSchema(factory).EnsureSchema();
 
             using var connection = factory.OpenConnection();
 
@@ -226,7 +156,7 @@ namespace KoLite.Local.Sqlite.Tests
         public void IngestionThrottleObservationsHaveTerminalColumn()
         {
             var factory = CreateFactory();
-            new KoLiteSqliteMigrator(factory).Migrate();
+            new KoLiteSqliteSchema(factory).EnsureSchema();
 
             using var connection = factory.OpenConnection();
 
@@ -237,7 +167,7 @@ namespace KoLite.Local.Sqlite.Tests
         public void ForeignKeyEnforcementIsEnabled()
         {
             var factory = CreateFactory();
-            new KoLiteSqliteMigrator(factory).Migrate();
+            new KoLiteSqliteSchema(factory).EnsureSchema();
 
             using var connection = factory.OpenConnection();
             Assert.Equal(1, QueryInt(connection, "PRAGMA foreign_keys;"));
@@ -251,42 +181,43 @@ namespace KoLite.Local.Sqlite.Tests
         }
 
         [Fact]
-        public void MigratorEstablishesWalAndFactoryAppliesConnectionPragmas()
+        public void SchemaEstablishesWalAndFactoryAppliesConnectionPragmas()
         {
             var factory = CreateFactory(busyTimeoutMilliseconds: 7_500);
 
-            // WAL is a persistent database property established once by the migrator, not re-applied on
-            // every open. Before migration a fresh connection is in the default journal mode, but the
-            // connection-scoped pragmas (busy_timeout, foreign_keys, synchronous) are applied per open.
-            using (var beforeMigration = factory.OpenConnection())
+            // WAL is a persistent database property established once by EnsureSchema, not re-applied on
+            // every open. Before the schema is applied a fresh connection is in the default journal
+            // mode, but the connection-scoped pragmas (busy_timeout, foreign_keys, synchronous) are
+            // applied on every open.
+            using (var beforeSchema = factory.OpenConnection())
             {
-                Assert.Equal("delete", QueryString(beforeMigration, "PRAGMA journal_mode;"));
-                Assert.Equal(7_500, QueryInt(beforeMigration, "PRAGMA busy_timeout;"));
-                Assert.Equal(1, QueryInt(beforeMigration, "PRAGMA foreign_keys;"));
-                Assert.Equal(1, QueryInt(beforeMigration, "PRAGMA synchronous;"));
+                Assert.Equal("delete", QueryString(beforeSchema, "PRAGMA journal_mode;"));
+                Assert.Equal(7_500, QueryInt(beforeSchema, "PRAGMA busy_timeout;"));
+                Assert.Equal(1, QueryInt(beforeSchema, "PRAGMA foreign_keys;"));
+                Assert.Equal(1, QueryInt(beforeSchema, "PRAGMA synchronous;"));
             }
 
-            new KoLiteSqliteMigrator(factory).Migrate();
+            new KoLiteSqliteSchema(factory).EnsureSchema();
 
-            using var afterMigration = factory.OpenConnection();
-            Assert.Equal("wal", QueryString(afterMigration, "PRAGMA journal_mode;"));
-            Assert.Equal(7_500, QueryInt(afterMigration, "PRAGMA busy_timeout;"));
-            Assert.Equal(1, QueryInt(afterMigration, "PRAGMA foreign_keys;"));
-            Assert.Equal(1, QueryInt(afterMigration, "PRAGMA synchronous;"));
+            using var afterSchema = factory.OpenConnection();
+            Assert.Equal("wal", QueryString(afterSchema, "PRAGMA journal_mode;"));
+            Assert.Equal(7_500, QueryInt(afterSchema, "PRAGMA busy_timeout;"));
+            Assert.Equal(1, QueryInt(afterSchema, "PRAGMA foreign_keys;"));
+            Assert.Equal(1, QueryInt(afterSchema, "PRAGMA synchronous;"));
         }
 
         [Fact]
-        public void MigrationCanBeOpenedThroughConnectionFactory()
+        public void SchemaCanBeAppliedThroughConnectionFactory()
         {
             var factory = CreateFactory();
 
             using (var connection = factory.OpenConnection())
             {
-                new KoLiteSqliteMigrator(factory).Migrate(connection);
+                new KoLiteSqliteSchema(factory).EnsureSchema(connection);
             }
 
             using var verification = factory.OpenConnection();
-            Assert.Equal(KoLiteSqliteMigrator.LatestVersion, QueryInt(verification, "SELECT MAX(version) FROM schema_migrations;"));
+            Assert.Equal(1, QueryInt(verification, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'job_definitions';"));
         }
 
         private KoLiteSqliteConnectionFactory CreateFactory(int busyTimeoutMilliseconds = 5_000)

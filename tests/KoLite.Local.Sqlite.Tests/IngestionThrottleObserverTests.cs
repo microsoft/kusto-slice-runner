@@ -1,6 +1,6 @@
 using KoLite.Local.Core.Orchestration;
 using KoLite.Local.Sqlite.Connections;
-using KoLite.Local.Sqlite.Migrations;
+using KoLite.Local.Sqlite.Schema;
 using KoLite.Local.Sqlite.Throttling;
 using Microsoft.Data.Sqlite;
 
@@ -19,7 +19,7 @@ namespace KoLite.Local.Sqlite.Tests
         {
             Directory.CreateDirectory(testDirectory);
             factory = new KoLiteSqliteConnectionFactory(new KoLiteSqliteConnectionOptions(Path.Combine(testDirectory, "observer.db")) { BusyTimeoutMilliseconds = 10_000 });
-            new KoLiteSqliteMigrator(factory).Migrate();
+            new KoLiteSqliteSchema(factory).EnsureSchema();
             store = new SqliteIngestionThrottleRepository(factory);
             observer = new IngestionThrottleObserver(store);
         }

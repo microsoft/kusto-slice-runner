@@ -1,5 +1,5 @@
 using KoLite.Local.Sqlite.Connections;
-using KoLite.Local.Sqlite.Migrations;
+using KoLite.Local.Sqlite.Schema;
 using KoLite.Local.Sqlite.Throttling;
 using Microsoft.Data.Sqlite;
 
@@ -15,7 +15,7 @@ namespace KoLite.Local.Sqlite.Tests
         {
             Directory.CreateDirectory(testDirectory);
             factory = new KoLiteSqliteConnectionFactory(new KoLiteSqliteConnectionOptions(Path.Combine(testDirectory, "throttle.db")) { BusyTimeoutMilliseconds = 10_000 });
-            new KoLiteSqliteMigrator(factory).Migrate();
+            new KoLiteSqliteSchema(factory).EnsureSchema();
             repository = new SqliteIngestionThrottleRepository(factory);
         }
 
@@ -29,7 +29,7 @@ namespace KoLite.Local.Sqlite.Tests
         }
 
         [Fact]
-        public void Migration_v2_creates_the_observations_table()
+        public void Schema_creates_the_observations_table()
         {
             using var c = factory.OpenConnection();
             using var cmd = c.CreateCommand();

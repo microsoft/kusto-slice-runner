@@ -44,7 +44,7 @@ namespace KoLite.Local.Sqlite.Connections
             // Connection-scoped pragmas only. journal_mode = WAL is intentionally NOT set here: WAL is
             // a persistent database-header property, so setting it on every open (including read-only
             // dashboard/health paths) takes a write lock each time and needlessly widens write
-            // contention. It is established once at startup in KoLiteSqliteMigrator.Migrate instead.
+            // contention. It is established once at startup in KoLiteSqliteSchema.EnsureSchema instead.
             //
             // A pooled connection can be handed back still inside a transaction if a prior owner left
             // one open (an untracked BEGIN, or a commit/rollback that failed under write contention).
