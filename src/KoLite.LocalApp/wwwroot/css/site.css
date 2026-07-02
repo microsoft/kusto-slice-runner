@@ -338,8 +338,8 @@ h3 { font-size: 16px; margin-bottom: 10px; }
   line-height: 1;
 }
 .ko-table.compact th, .ko-table.compact td { padding: 5px 7px; font-size: 12px; }
-.job-col-status { width: 132px; }
-.job-col-activity { width: 280px; }
+.job-col-status { width: 88px; }
+.job-col-activity { width: 324px; }
 .job-col-function { width: 240px; }
 .job-col-schedule { width: 112px; }
 .job-col-progress { width: 210px; }
