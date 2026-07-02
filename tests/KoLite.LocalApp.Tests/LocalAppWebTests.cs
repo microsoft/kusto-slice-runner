@@ -291,7 +291,8 @@ namespace KoLite.LocalApp.Tests
             Assert.True(dashboard.IndexOf("Active jobs", StringComparison.Ordinal) < dashboard.IndexOf("Success Statistics", StringComparison.Ordinal));
             Assert.Contains("Next eligible", dashboard);
             Assert.Contains("Eligible now", dashboard);
-            Assert.Contains(">Healthy</span>", dashboard);
+            Assert.Contains("status-seg status-seg-health status-healthy", dashboard);
+            Assert.Contains("aria-label=\"Healthy", dashboard);
             Assert.Contains("Success Rate By Function", dashboard);
             Assert.Contains("Success Rate After Retries by function", dashboard);
             Assert.Contains("src=\"/lib/chartjs/chart.umd.min.js?v=", dashboard);
@@ -574,10 +575,11 @@ namespace KoLite.LocalApp.Tests
 
             var down = Assert.Single(CreateDashboardQuery(clock).GetAllJobs(), job => job.Record.JobId == JobId("down.running"));
 
-            // In-progress work no longer overrides the primary status; it renders as a calm activity
-            // indicator layered on the dependency state (a healthy upstream stays calm green).
+            // In-progress work no longer overrides the primary status; a healthy upstream stays calm
+            // green and the running/queued state is surfaced via the health-half tooltip.
             Assert.Equal(("WaitingOnUpstream", "badge-success"), (down.PrimaryState, down.StatusCss));
-            Assert.True(down.ShowActivityIndicator);
+            Assert.True(down.InProgress);
+            Assert.Contains("work in progress", down.HealthTooltip, StringComparison.Ordinal);
         }
 
         private DashboardPageQuery CreateDashboardQuery(IClock clock) => new(
@@ -668,7 +670,7 @@ namespace KoLite.LocalApp.Tests
         }
 
         [Fact]
-        public async Task Dashboard_renders_two_segment_status_pill_with_gaps()
+        public async Task Dashboard_renders_color_only_status_pill_with_gaps()
         {
             var catalog = new SqliteJobCatalogRepository(sqlite);
             var state = new SqliteSliceStateRepository(sqlite);
@@ -682,10 +684,12 @@ namespace KoLite.LocalApp.Tests
             using var client = factory.CreateClient();
             var html = await client.GetStringAsync("/");
 
+            // Color-only pill: a green health half and an amber gaps half, no in-pill text; the gap
+            // detail lives in the completeness half's tooltip/aria-label.
             Assert.Contains("class=\"status-pill\"", html);
-            Assert.Contains("status-seg status-seg-primary status-healthy", html);
+            Assert.Contains("status-seg status-seg-health status-healthy", html);
             Assert.Contains("status-seg status-seg-completeness status-gaps", html);
-            Assert.Contains("2 gaps", html);
+            Assert.Contains("2 unaddressed dead-lettered", html);
         }
 
         [Fact]
@@ -1021,9 +1025,8 @@ namespace KoLite.LocalApp.Tests
                 var root = pauseDoc.RootElement;
                 Assert.False(root.GetProperty("enabled").GetBoolean());
                 Assert.Equal(2, root.GetProperty("version").GetInt64());
-                Assert.Equal("Paused", root.GetProperty("statusText").GetString());
-                Assert.Equal("badge-neutral", root.GetProperty("statusCss").GetString());
                 Assert.Equal("paused", root.GetProperty("primaryKey").GetString());
+                Assert.Contains("Paused", root.GetProperty("healthTooltip").GetString()!, StringComparison.Ordinal);
                 Assert.False(root.GetProperty("conflict").GetBoolean());
             }
             Assert.False(catalog.Get(JobId("job.toggle"))?.IsEnabled);
@@ -1038,8 +1041,8 @@ namespace KoLite.LocalApp.Tests
                 var root = resumeDoc.RootElement;
                 Assert.True(root.GetProperty("enabled").GetBoolean());
                 Assert.Equal(3, root.GetProperty("version").GetInt64());
-                Assert.Equal("Healthy", root.GetProperty("statusText").GetString());
                 Assert.Equal("healthy", root.GetProperty("primaryKey").GetString());
+                Assert.Contains("Healthy", root.GetProperty("healthTooltip").GetString()!, StringComparison.Ordinal);
             }
             Assert.True(catalog.Get(JobId("job.toggle"))?.IsEnabled);
 

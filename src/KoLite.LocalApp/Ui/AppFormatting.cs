@@ -110,7 +110,7 @@ namespace KoLite.LocalApp.Ui
         public static string PrimaryStatusLabel(string primaryState) => primaryState switch
         {
             "Attention" => "Attention",
-            "Borderline" => "Borderline",
+            "Borderline" => "Warning",
             "Healthy" => "Healthy",
             "Paused" => "Paused",
             "Completed" => "Completed",

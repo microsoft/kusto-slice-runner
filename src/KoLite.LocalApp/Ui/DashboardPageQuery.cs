@@ -74,7 +74,8 @@ namespace KoLite.LocalApp.Ui
         string StatusCss,
         JobHealth Health,
         bool InProgress,
-        string StatusTooltip,
+        string HealthTooltip,
+        string CompletenessTooltip,
         NextSliceTiming NextSlice,
         bool IsCompleted)
     {
@@ -91,10 +92,6 @@ namespace KoLite.LocalApp.Ui
         public bool ShowCompleteness => Health.TracksCompleteness && PrimaryState != "SoftDeleted";
 
         public int GapCount => Health.GapCount;
-
-        // Whether to show the subtle in-progress indicator on the primary segment. Only meaningful
-        // when the job is live (not paused/completed/soft-deleted).
-        public bool ShowActivityIndicator => InProgress && PrimaryState is not ("Paused" or "Completed" or "SoftDeleted");
 
         // Ordering weight for the "status" sort: higher is more urgent so attention rises to the
         // top. Historical gaps nudge an otherwise-calm job up so incomplete jobs are easy to find.
@@ -263,7 +260,8 @@ namespace KoLite.LocalApp.Ui
                 AppFormatting.PrimaryStatusBadgeCss(primary),
                 health,
                 inProgress,
-                BuildStatusTooltip(primary, health, definition.HealthPolicy),
+                BuildHealthTooltip(primary, health, inProgress),
+                BuildCompletenessTooltip(health),
                 GetNextSliceTiming(record, definition, lifecycle, summary, completed, queuedAvailability, latestSliceEnds, now),
                 completed);
         }
@@ -328,35 +326,46 @@ namespace KoLite.LocalApp.Ui
                                     ? "DependencyBlocked"
                                     : "Healthy";
 
-        // Builds the hover tooltip: recent-trend summary, dependency context, gap note, and the
-        // job's health policy, joined so it reads on a single title line.
-        private static string BuildStatusTooltip(string primary, JobHealth health, JobHealthPolicy policy)
+        // Builds the hover tooltip for the health (left) half of the color pill: a plain-language
+        // description of the recent-trend status, the recent slice ratio, and whether work is in
+        // progress (running/queued is surfaced only here now that the pill carries no dot).
+        private static string BuildHealthTooltip(string primary, JobHealth health, bool inProgress)
         {
-            var parts = new List<string>();
-            parts.Add(health.RecentConsidered > 0
-                ? $"Recent: {health.RecentSucceeded}/{health.RecentConsidered} slices succeeded"
-                : "No recent slice outcomes yet");
-
-            if (primary == "DependencyBlocked")
+            var parts = new List<string>
             {
-                parts.Add("Blocked by an unhealthy upstream");
-            }
-            else if (primary == "WaitingOnUpstream")
+                primary switch
+                {
+                    "Attention" => "Attention \u2014 recent slices are failing now",
+                    "Borderline" => "Warning \u2014 some recent slices failed",
+                    "Healthy" => "Healthy \u2014 recent slices are succeeding",
+                    "Paused" => "Paused",
+                    "Completed" => "Completed",
+                    "DependencyBlocked" => "Blocked \u2014 waiting on an unhealthy upstream",
+                    "WaitingOnUpstream" => "Waiting on a healthy upstream",
+                    "SoftDeleted" => "Soft deleted",
+                    _ => primary
+                }
+            };
+
+            if (health.RecentConsidered > 0)
             {
-                parts.Add("Waiting on a healthy upstream");
+                parts.Add($"recent {health.RecentSucceeded}/{health.RecentConsidered} slices succeeded");
             }
 
-            if (health.HasGaps)
+            if (inProgress)
             {
-                parts.Add($"{health.GapCount} unaddressed dead-lettered slice(s)");
+                parts.Add("work in progress");
             }
-
-            parts.Add(policy == JobHealthPolicy.Complete
-                ? "Policy: complete (tracks historical gaps)"
-                : "Policy: recent trend only");
 
             return string.Join(" \u00b7 ", parts);
         }
+
+        // Builds the hover tooltip for the completeness (right) half of the color pill. Only shown for
+        // complete-policy jobs, so callers gate on ShowCompleteness.
+        private static string BuildCompletenessTooltip(JobHealth health) =>
+            health.GapCount > 0
+                ? $"{health.GapCount} unaddressed dead-lettered slice(s) \u2014 rerun or repair to close the gaps"
+                : "History complete \u2014 no unaddressed gaps";
 
         private static IReadOnlyList<JobTagSummary> BuildTagSummaries(IReadOnlyList<JobListItem> jobs, IReadOnlyList<string> selectedTags)
         {

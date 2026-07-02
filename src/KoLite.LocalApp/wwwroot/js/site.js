@@ -1041,7 +1041,7 @@
 
     var row = form.closest("tr");
     if (row) {
-      if (typeof data.statusText === "string" && data.statusText) {
+      if (typeof data.primaryKey === "string" && data.primaryKey) {
         renderStatusPill(row.querySelector(".status-cell [data-status-pill]"), data);
       }
 
@@ -1055,38 +1055,34 @@
     }
   }
 
-  // Rebuilds a dashboard status pill from a toggle response so the recent-health segment, the
-  // in-progress indicator, and the completeness segment all stay consistent after pause/resume.
+  // Rebuilds a color-only status pill from a toggle response so the health half's color/tooltip and
+  // the completeness half stay consistent after pause/resume. The pill carries no text or dot.
   function renderStatusPill(pill, data) {
     if (!pill) return;
-    pill.setAttribute("title", data.tooltip || "");
 
-    var primary = pill.querySelector(".status-seg-primary");
-    if (primary) {
-      primary.className = "status-seg status-seg-primary status-" + (data.primaryKey || "healthy");
-      primary.innerHTML = "";
-      if (data.showActivity) {
-        var dot = document.createElement("span");
-        dot.className = "status-inprogress";
-        dot.setAttribute("aria-hidden", "true");
-        primary.appendChild(dot);
+    var health = pill.querySelector(".status-seg-health");
+    if (health) {
+      health.className = "status-seg status-seg-health status-" + (data.primaryKey || "healthy");
+      if (typeof data.healthTooltip === "string") {
+        health.setAttribute("title", data.healthTooltip);
+        health.setAttribute("aria-label", data.healthTooltip);
       }
-      var label = document.createElement("span");
-      label.className = "status-seg-label";
-      label.textContent = data.statusText;
-      primary.appendChild(label);
     }
 
     var completeness = pill.querySelector(".status-seg-completeness");
     if (data.showCompleteness) {
+      pill.classList.remove("status-pill-solid");
       if (!completeness) {
         completeness = document.createElement("span");
+        completeness.setAttribute("role", "img");
         pill.appendChild(completeness);
       }
       completeness.className = "status-seg status-seg-completeness " + (data.completenessCss || "status-complete");
-      completeness.textContent = data.completenessLabel || "Complete";
+      completeness.setAttribute("title", data.completenessTooltip || "");
+      completeness.setAttribute("aria-label", data.completenessTooltip || "");
     } else if (completeness) {
       completeness.remove();
+      pill.classList.add("status-pill-solid");
     }
   }
 

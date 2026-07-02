@@ -183,22 +183,23 @@ KO Lite hosts a localhost-only JSON API so a same-machine agent or tool can read
 
 ## Dashboard status model
 
-Every job on the dashboard shows a two-segment **status pill**. The pill is designed to answer, at a glance, the only two questions that usually matter: **is something wrong right now?** and **is this job's history complete?** Everything else lives on the job details page.
+Every job on the dashboard shows a compact, **color-only status pill** — two colored halves with no text, so it never truncates. It answers, at a glance, the only two questions that usually matter: **is something wrong right now?** and **is this job's history complete?** Hover either half for a plain-language explanation (each half also carries an `aria-label`); everything else lives on the job details page.
 
-**Segment 1 — recent health (the pill color).** Derived from the outcomes of the job's most recent slice windows (the last 10 that have a recorded state), so old failures don't dominate a job that is healthy now:
+**Left half — recent health.** Derived from the outcomes of the job's most recent slice windows (the last 10 that have a recorded state), so old failures don't dominate a job that is healthy now:
 
-- **Healthy** (green) — no failures among the recent slices.
-- **Borderline** (amber) — some recent failures, but the job is not broken now (a minority of recent slices failed, or it is recovering).
-- **Attention** (red) — broken now: the most recent resolved slice failed and at least half of the recent slices failed. A slice that is merely retry-pending does **not**, by itself, turn a job red — only a sustained failing pattern (or dead-lettering) does.
+- **Green — Healthy** — no failures among the recent slices. (**Waiting on upstream** — behind a healthy upstream — is also green.)
+- **Amber — Warning** — some recent failures, but the job is not broken now (a minority of recent slices failed, or it is recovering). **Blocked (upstream)** — an upstream job is itself unhealthy/paused — is also amber.
+- **Red — Attention** — broken now: the most recent resolved slice failed and at least half of the recent slices failed. A slice that is merely retry-pending does **not**, by itself, turn a job red — only a sustained failing pattern (or dead-lettering) does.
+- **Grey** — **Paused** or **Completed** (intentional/terminal lifecycle states).
 
-Lifecycle states take precedence over the health color when they apply: **Paused** and **Completed** render as calm neutral segments, **Blocked (upstream)** (amber) means an upstream job is itself unhealthy/paused, and **Waiting on upstream** (green) means the job is simply behind a healthy upstream. A small pulsing dot on the segment indicates a slice is currently running or queued.
+Running or queued work is noted in the health half's hover tooltip (the pill itself carries no separate indicator).
 
-**Segment 2 — historical completeness.** Controlled per job by `healthPolicy` (see [schedule-json.md](schedule-json.md)):
+**Right half — historical completeness.** Controlled per job by `healthPolicy` (see [schedule-json.md](schedule-json.md)):
 
-- `complete` (default, strict) — the job wants every slice eventually filled, so any **unaddressed terminal gaps** (dead-lettered slices) are surfaced as an amber **"N gaps"** segment, and a green **"Complete"** segment when there are none. Gaps are shown even when recent health is green, so "working now but the backfill is incomplete" is unambiguous. Rerun or repair the dead-lettered slices to close the gaps; the count decrements as you address them.
-- `recent` — the operator only cares about the recent trend, so the completeness segment is hidden and old gaps never raise attention. Use this for jobs where backfilling the past is impossible or unnecessary.
+- `complete` (default, strict) — the job wants every slice eventually filled, so the right half is **amber** when there are **unaddressed terminal gaps** (dead-lettered slices) and **green** when there are none. Gaps show even when recent health is green, so "working now but the backfill is incomplete" is unambiguous; hover the half for the count. Rerun or repair the dead-lettered slices to close the gaps.
+- `recent` — the operator only cares about the recent trend, so there is no completeness half: the pill is a **single solid capsule** in the health color. Use this for jobs where backfilling the past is impossible or unnecessary.
 
-Because old dead-lettered slices no longer force a broadly-healthy job to show red, a job that "did well over the last few days but failed a while back" now reads **Healthy** (with a gaps chip under the strict policy) instead of a blanket **Failed**. The dependency-graph node colors use the same recent-health tiers.
+Because old dead-lettered slices no longer force a broadly-healthy job to show red, a job that "did well over the last few days but failed a while back" now reads **green** (with an amber completeness half under the strict policy) instead of a blanket red **Failed**. The dependency-graph node colors use the same recent-health tiers.
 
 ## Dependency graph
 

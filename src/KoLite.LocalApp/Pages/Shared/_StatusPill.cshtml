@@ -1,19 +1,15 @@
 @model JobListItem
 @{
-    // Two-segment status pill shared by the dashboard tables and the job details header.
-    // Segment 1 = recent-trend health (the "is it working now?" color); segment 2 (only for
-    // complete-policy jobs) = historical completeness ("Complete" or "N gaps").
+    // Color-only "Dr. Mario" status pill shared by the dashboard tables and the job details header.
+    // Left half = recent-trend health color; right half (complete-policy jobs only) = historical
+    // completeness color. No text: each half carries a hover tooltip and an aria-label so the meaning
+    // is available to screen readers too. Recent-policy jobs render a single solid capsule.
+    var healthKey = AppFormatting.PrimaryStatusKey(Model.PrimaryState);
 }
-<span class="status-pill" title="@Model.StatusTooltip" data-status-pill>
-    <span class="status-seg status-seg-primary status-@AppFormatting.PrimaryStatusKey(Model.PrimaryState)">
-        @if (Model.ShowActivityIndicator)
-        {
-            <span class="status-inprogress" aria-hidden="true"></span>
-        }
-        <span class="status-seg-label">@Model.StatusText</span>
-    </span>
+<span class="status-pill@(Model.ShowCompleteness ? null : " status-pill-solid")" data-status-pill role="group" aria-label="Job status">
+    <span class="status-seg status-seg-health status-@healthKey" role="img" title="@Model.HealthTooltip" aria-label="@Model.HealthTooltip"></span>
     @if (Model.ShowCompleteness)
     {
-        <span class="status-seg status-seg-completeness @AppFormatting.CompletenessCss(Model.GapCount)">@AppFormatting.CompletenessLabel(Model.GapCount)</span>
+        <span class="status-seg status-seg-completeness @AppFormatting.CompletenessCss(Model.GapCount)" role="img" title="@Model.CompletenessTooltip" aria-label="@Model.CompletenessTooltip"></span>
     }
 </span>
