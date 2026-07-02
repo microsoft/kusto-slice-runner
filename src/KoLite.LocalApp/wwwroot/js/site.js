@@ -258,22 +258,20 @@
     });
   }
 
-  function initSuccessRateCharts() {
-    document.querySelectorAll("[data-chartjs-success]").forEach(function (container) {
-      var chartId = container.getAttribute("data-chartjs-success");
+  // Shared Chart.js container bootstrap: for every [data-chartjs-<attr>] figure, resolve its
+  // canvas + JSON payload script, parse it, and hand both to onPayload. Parse/build failures
+  // surface a uniform in-figure error message (and rethrow). The per-chart build* functions own
+  // all chart-specific behavior; this only removes the repeated plumbing/error handling.
+  function initCharts(attr, onPayload) {
+    document.querySelectorAll("[data-chartjs-" + attr + "]").forEach(function (container) {
+      var chartId = container.getAttribute("data-chartjs-" + attr);
       var canvas = document.getElementById(chartId);
       var payloadNode = document.getElementById(chartId + "-data");
       if (!canvas || !payloadNode) return;
 
       try {
         var payload = JSON.parse(payloadNode.textContent || "{}");
-        var chart = buildSuccessRateChart(canvas, payload);
-        if (chart) {
-          successRateChartEntries.push({
-            chart: chart,
-            datasets: chart.data.datasets.slice()
-          });
-        }
+        onPayload(canvas, payload);
       } catch (error) {
         container.classList.add("chart-error");
         var message = document.createElement("p");
@@ -370,27 +368,6 @@
             title: { display: true, text: "Throttled attempts", color: "#57606a" }
           }
         }
-      }
-    });
-  }
-
-  function initThrottleSeverityCharts() {
-    document.querySelectorAll("[data-chartjs-throttle]").forEach(function (container) {
-      var chartId = container.getAttribute("data-chartjs-throttle");
-      var canvas = document.getElementById(chartId);
-      var payloadNode = document.getElementById(chartId + "-data");
-      if (!canvas || !payloadNode) return;
-
-      try {
-        var payload = JSON.parse(payloadNode.textContent || "{}");
-        buildThrottleSeverityChart(canvas, payload);
-      } catch (error) {
-        container.classList.add("chart-error");
-        var message = document.createElement("p");
-        message.className = "empty";
-        message.textContent = "Chart data could not be rendered.";
-        container.prepend(message);
-        throw error;
       }
     });
   }
@@ -492,27 +469,6 @@
             title: { display: true, text: "Slices processed", color: "#57606a" }
           }
         }
-      }
-    });
-  }
-
-  function initSlicesProcessedCharts() {
-    document.querySelectorAll("[data-chartjs-activity]").forEach(function (container) {
-      var chartId = container.getAttribute("data-chartjs-activity");
-      var canvas = document.getElementById(chartId);
-      var payloadNode = document.getElementById(chartId + "-data");
-      if (!canvas || !payloadNode) return;
-
-      try {
-        var payload = JSON.parse(payloadNode.textContent || "{}");
-        buildSlicesProcessedChart(canvas, payload);
-      } catch (error) {
-        container.classList.add("chart-error");
-        var message = document.createElement("p");
-        message.className = "empty";
-        message.textContent = "Chart data could not be rendered.";
-        container.prepend(message);
-        throw error;
       }
     });
   }
@@ -630,27 +586,6 @@
             }
           }
         }
-      }
-    });
-  }
-
-  function initJobDetailCharts() {
-    document.querySelectorAll("[data-chartjs-job]").forEach(function (container) {
-      var chartId = container.getAttribute("data-chartjs-job");
-      var canvas = document.getElementById(chartId);
-      var payloadNode = document.getElementById(chartId + "-data");
-      if (!canvas || !payloadNode) return;
-
-      try {
-        var payload = JSON.parse(payloadNode.textContent || "{}");
-        buildJobDetailChart(canvas, payload);
-      } catch (error) {
-        container.classList.add("chart-error");
-        var message = document.createElement("p");
-        message.className = "empty";
-        message.textContent = "Chart data could not be rendered.";
-        container.prepend(message);
-        throw error;
       }
     });
   }
@@ -1777,10 +1712,15 @@
   window.initDependencyGraphs = initDependencyGraphs;
   window.initDependencyPickers = initDependencyPickers;
   window.initBulkSelect = initBulkSelect;
-  initSuccessRateCharts();
-  initThrottleSeverityCharts();
-  initSlicesProcessedCharts();
-  initJobDetailCharts();
+  initCharts("success", function (canvas, payload) {
+    var chart = buildSuccessRateChart(canvas, payload);
+    if (chart) {
+      successRateChartEntries.push({ chart: chart, datasets: chart.data.datasets.slice() });
+    }
+  });
+  initCharts("throttle", buildThrottleSeverityChart);
+  initCharts("activity", buildSlicesProcessedChart);
+  initCharts("job", buildJobDetailChart);
   initJobDetailTabs();
   initDashboardJobFilter();
   initDashboardColumnResize();
