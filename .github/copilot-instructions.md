@@ -35,7 +35,7 @@ For targeted changes, run the narrow relevant test project first, then decide wh
 ## Key conventions
 
 - Keep `.github\copilot-instructions.md` as the single repo-level Copilot instruction file. Do not add duplicate root-level instruction files.
-- Commit on the current branch (normally `main`) by default. Do not create a git branch or worktree, or open a pull request, unless the user explicitly asks for one; when they do, follow the name and location they specify.
+- For branch, worktree, and pull request conventions, see the "Git workflow (feature branches and worktrees)" section below. By default, commit on the current branch (normally `main`) and do not create a branch, worktree, or pull request unless the user explicitly asks for one.
 - Prefer Windows paths and PowerShell examples. Existing scripts use `Set-StrictMode -Version Latest` and `$ErrorActionPreference = 'Stop'`; preserve that style in new PowerShell scripts.
 - Use the .NET SDK from `global.json`. When writing C#, use block-scoped namespace declarations (`namespace Name { ... }`) instead of file-scoped namespaces, keep app entry points inside an explicit `Program` class instead of top-level statements, and use conventional class declarations with explicit constructors instead of class primary constructors.
 - Preserve local-first safety defaults. Do not enable live scheduling, widen destructive operations, weaken explicit confirmations, or execute Kusto cleanup/import actions unless the user explicitly asks for that outcome.
@@ -44,6 +44,23 @@ For targeted changes, run the narrow relevant test project first, then decide wh
 - Scheduler enqueue behavior and worker claim/execution behavior are separate. Preserve per-job `maxParallelism`, global worker concurrency, visibility/query timeout leases, pause/delete state, and dependency readiness semantics.
 - Schedule JSON import/export accepts a single schedule object or an array. The parser rejects unknown top-level fields, unknown `target` fields, and unknown `dependsOn` entry fields. A job's permanent identity is an opaque GUID `id` (server-assigned, immutable); `activityId` is a mutable, unique display label. Imports match by `id` when present (enabling rename = same `id`, new `activityId`), else by `activityId`. `dependsOn` entries reference an upstream by `id` and/or `activityId` and are stored by GUID.
 - For `.csl` and `.kql`, follow `.github\instructions\kusto.instructions.md`.
+
+## Git workflow (feature branches and worktrees)
+
+By default, commit on the current branch (normally `main`); do **not** create a git branch, worktree, or pull request unless the user explicitly asks for one. When the user does ask for a feature branch or worktree, use the following format unless they specify a different name or location.
+
+- **Branch name:** `<username>/<feature>`, the feature in kebab-case (e.g., `benmartens/schedule-json-export`).
+- **Group worktrees** under a sibling folder of the repo root named `ko-lite.worktrees\`, one subfolder per feature: `ko-lite.worktrees\<feature>` (e.g., `C:\src\ko-lite.worktrees\schedule-json-export`, alongside `C:\src\ko-lite`). Grouping them this way avoids loose worktree folders scattered in the parent directory.
+- **Create from the repo root (on `main`):**
+
+  ```powershell
+  git worktree add ..\ko-lite.worktrees\<feature> -b <username>/<feature>
+  git -C ..\ko-lite.worktrees\<feature> push -u origin <username>/<feature>
+  ```
+
+  `git worktree add` creates the `ko-lite.worktrees` parent folder as needed.
+- **Teardown when the feature is done:** merge the branch into `main` (or open a PR), push `main`, then `git worktree remove <dir>`, `git branch -d <username>/<feature>`, and `git push origin --delete <username>/<feature>`. Leave other contributors' worktrees alone.
+- **Concurrent-activity caution:** this repo can have concurrent worktree activity on `main`, so re-check `HEAD`/the tip immediately before any merge, amend, reset, or rebase, and stage only your own files so unrelated working-tree changes from other sessions aren't swept into your commit.
 
 ## Kusto safety
 
