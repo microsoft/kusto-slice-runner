@@ -1,4 +1,5 @@
 using Microsoft.Data.Sqlite;
+using SQLitePCL;
 
 namespace KoLite.Local.Sqlite.Connections
 {
@@ -44,9 +45,28 @@ namespace KoLite.Local.Sqlite.Connections
             // a persistent database-header property, so setting it on every open (including read-only
             // dashboard/health paths) takes a write lock each time and needlessly widens write
             // contention. It is established once at startup in KoLiteSqliteMigrator.Migrate instead.
+            //
+            // A pooled connection can be handed back still inside a transaction if a prior owner left
+            // one open (an untracked BEGIN, or a commit/rollback that failed under write contention).
+            // `PRAGMA synchronous` (the "safety level") cannot be changed inside a transaction and
+            // `PRAGMA foreign_keys` is silently ignored inside one, so reset to autocommit first.
+            EnsureAutocommit(connection);
             ExecuteNonQuery(connection, $"PRAGMA busy_timeout = {Math.Max(0, busyTimeoutMilliseconds)};");
             ExecuteNonQuery(connection, "PRAGMA foreign_keys = ON;");
             ExecuteNonQuery(connection, "PRAGMA synchronous = NORMAL;");
+        }
+
+        private static void EnsureAutocommit(SqliteConnection connection)
+        {
+            // sqlite3_get_autocommit returns 0 only while a transaction is active. Checking it keeps
+            // the common (clean) path free of an extra round-trip or a thrown-and-caught exception,
+            // and rolling back a leftover transaction is safe: the pool hands this connection to a
+            // single owner, and any transaction still open on it belongs to an operation that already
+            // failed.
+            if (connection.Handle is { } handle && raw.sqlite3_get_autocommit(handle) == 0)
+            {
+                ExecuteNonQuery(connection, "ROLLBACK;");
+            }
         }
 
         private static void ExecuteNonQuery(SqliteConnection connection, string sql)
