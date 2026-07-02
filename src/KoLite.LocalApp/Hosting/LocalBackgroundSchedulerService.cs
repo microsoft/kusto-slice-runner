@@ -37,10 +37,58 @@ namespace KoLite.LocalApp
             {
                 if (!shutdownDrain.IsDrainRequested)
                 {
-                    await RunPassAsync(stoppingToken);
+                    try
+                    {
+                        await RunPassAsync(stoppingToken);
+                    }
+                    catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                    {
+                        break;
+                    }
+                    catch (Exception ex)
+                    {
+                        // A single failed scheduler pass must never stop the host. The SQLite errors
+                        // seen here (e.g. a transient SQLITE_ABORT under heavy concurrency) are
+                        // transient, so log and continue — the next tick recovers. Without this guard
+                        // the default HostOptions.BackgroundServiceExceptionBehavior = StopHost tears
+                        // down the whole app (UI, workers, scheduler) on one hiccup. This mirrors the
+                        // resilience already present in the worker and retention background services.
+                        logger.LogError(ex, "Local scheduler pass failed; the scheduler will continue on the next tick.");
+                        TryRecordSchedulerPassFailure(ex);
+                    }
                 }
 
-                await Task.Delay(options.TickInterval, stoppingToken);
+                try
+                {
+                    await Task.Delay(options.TickInterval, stoppingToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+            }
+        }
+
+        private void TryRecordSchedulerPassFailure(Exception ex)
+        {
+            try
+            {
+                using var scope = scopes.CreateScope();
+                var observability = scope.ServiceProvider.GetRequiredService<SqliteOperationalReadModelRepository>();
+                var propertiesJson = JsonSerializer.Serialize(
+                    new
+                    {
+                        error = ex.Message,
+                        exceptionType = ex.GetType().FullName,
+                    },
+                    SchedulerPassLogJson.Options);
+                observability.RecordLog("Error", "Scheduler pass failed.", "scheduler-pass", propertiesJson: propertiesJson);
+            }
+            catch (Exception recordEx)
+            {
+                // The failure recorder must itself be resilient: if the database is the thing
+                // struggling, RecordLog can fail too. Never let observability bookkeeping crash the loop.
+                logger.LogDebug(recordEx, "Failed to record scheduler pass failure to operational logs.");
             }
         }
 

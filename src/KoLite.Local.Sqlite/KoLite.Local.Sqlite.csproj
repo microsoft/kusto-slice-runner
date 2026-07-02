@@ -16,6 +16,8 @@
     <!-- The LocalApp chart queries reuse the SqliteStorage UTC helpers so there is a single
          SQL formatting/parsing helper rather than a duplicated UI-side copy. -->
     <InternalsVisibleTo Include="KoLite.LocalApp" />
+    <!-- Unit tests exercise internal infrastructure helpers such as SqliteTransientRetry. -->
+    <InternalsVisibleTo Include="KoLite.Local.Sqlite.Tests" />
   </ItemGroup>
 
   <PropertyGroup>

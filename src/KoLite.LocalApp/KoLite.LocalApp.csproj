@@ -6,6 +6,12 @@
     <ProjectReference Include="..\KoLite.Local.Kusto\KoLite.Local.Kusto.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Tests construct the internal hosted background services to verify they survive transient
+         faults instead of stopping the host. -->
+    <InternalsVisibleTo Include="KoLite.LocalApp.Tests" />
+  </ItemGroup>
+
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>

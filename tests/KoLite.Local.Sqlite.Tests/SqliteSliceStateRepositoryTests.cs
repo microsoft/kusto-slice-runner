@@ -112,6 +112,35 @@ namespace KoLite.Local.Sqlite.Tests
             Assert.Single(leases, l => l is not null);
         }
 
+        [Fact]
+        public void ListSliceStates_reports_status_and_event_count_version_per_slice()
+        {
+            var jobId = JobId("upstream");
+            var s0 = At(0);
+            var e0 = At(30);
+            var s1 = At(30);
+            var e1 = At(60);
+
+            // Slice 0: two events -> version 2, terminal Completed.
+            var queued = repository.Append("op-0-queued", jobId, s0, e0, DurableSliceStatus.Queued, expectedVersion: 0);
+            repository.Append("op-0-done", jobId, s0, e0, DurableSliceStatus.Completed, expectedVersion: queued.State.Version);
+
+            // Slice 1: one event -> version 1, Queued.
+            repository.Append("op-1-queued", jobId, s1, e1, DurableSliceStatus.Queued, expectedVersion: 0);
+
+            var map = repository.ListSliceStates(jobId);
+
+            Assert.Equal(2, map.Count);
+            Assert.Equal(new SliceSchedulingState(DurableSliceStatus.Completed, 2), map[s0.ToUniversalTime()]);
+            Assert.Equal(new SliceSchedulingState(DurableSliceStatus.Queued, 1), map[s1.ToUniversalTime()]);
+        }
+
+        [Fact]
+        public void ListSliceStates_is_empty_for_a_job_without_materialized_slices()
+        {
+            Assert.Empty(repository.ListSliceStates(JobId("downstream")));
+        }
+
         private static DateTimeOffset At(int minutes) => new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero).AddMinutes(minutes);
 
         private static string JobId(string activityId)

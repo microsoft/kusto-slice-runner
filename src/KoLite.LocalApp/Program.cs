@@ -26,11 +26,14 @@ namespace KoLite.LocalApp
 
             var app = builder.Build();
 
+            var databasePath = app.Services.GetRequiredService<KoLiteSqliteConnectionOptions>().DatabasePath;
+            SingleInstanceGuard.Enforce(databasePath, app.Configuration, app.Logger);
+
             app.Services.GetRequiredService<KoLiteSqliteMigrator>().Migrate();
 
             app.Logger.LogInformation(
                 "KO Lite local SQLite database resolved to {DatabasePath}.",
-                app.Services.GetRequiredService<KoLiteSqliteConnectionOptions>().DatabasePath);
+                databasePath);
 
             app.Use(async (context, next) =>
             {

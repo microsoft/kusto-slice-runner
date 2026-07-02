@@ -62,22 +62,27 @@ namespace KoLite.Local.Sqlite.State
         // Loads every Completed slice key across all jobs in a single query. The scheduler loads this
         // once per pass and reuses it for all dependency-readiness checks instead of reloading the full
         // set per schedulable slice.
-        public IReadOnlySet<SliceKey> ListCompletedSliceKeys()
+        public IReadOnlySet<SliceKey> ListCompletedSliceKeys() => SqliteTransientRetry.Execute(() =>
         {
             var completed = new HashSet<SliceKey>(); using var c = connectionFactory.OpenConnection();
             using (var cmd = SqliteStorage.Command(c, null, "SELECT job_id, slice_start_utc, slice_end_utc FROM current_slice_state WHERE state = 'Completed';"))
             using (var r = cmd.ExecuteReader()) while (r.Read()) completed.Add(SliceKey.Create(r.GetString(0), DateTimeOffset.Parse(r.GetString(1)), DateTimeOffset.Parse(r.GetString(2))));
-            return completed;
-        }
+            return (IReadOnlySet<SliceKey>)completed;
+        });
 
         // Loads the current state and version of every materialized slice of a job in a single query,
         // keyed by UTC slice start. Keys absent from the map are Missing. The scheduler loads this once
         // per job per pass so per-slice status lookups are in-memory instead of one connection per slice.
-        public IReadOnlyDictionary<DateTimeOffset, SliceSchedulingState> ListSliceStates(string jobId)
+        public IReadOnlyDictionary<DateTimeOffset, SliceSchedulingState> ListSliceStates(string jobId) => SqliteTransientRetry.Execute(() =>
         {
             var map = new Dictionary<DateTimeOffset, SliceSchedulingState>();
             using var c = connectionFactory.OpenConnection();
-            using var cmd = SqliteStorage.Command(c, null, "SELECT css.slice_start_utc AS slice_start_utc, css.state AS state, (SELECT COUNT(*) FROM slice_state_events e WHERE e.job_id=css.job_id AND e.slice_start_utc=css.slice_start_utc AND e.slice_end_utc=css.slice_end_utc) AS version FROM current_slice_state css WHERE css.job_id=$j;");
+            // version = number of slice_state_events rows for the slice. Computed with a single
+            // grouped join (restricted to this job so it uses the (job_id, slice_start_utc,
+            // slice_end_utc, ...) index) rather than a per-row correlated subquery: fewer/shorter
+            // steps means a smaller window for the read to collide with concurrent slice-state
+            // writers, which is what surfaced as a transient SQLITE_ABORT under load.
+            using var cmd = SqliteStorage.Command(c, null, "SELECT css.slice_start_utc AS slice_start_utc, css.state AS state, COALESCE(ev.version, 0) AS version FROM current_slice_state css LEFT JOIN (SELECT job_id, slice_start_utc, slice_end_utc, COUNT(*) AS version FROM slice_state_events WHERE job_id=$j GROUP BY job_id, slice_start_utc, slice_end_utc) ev ON ev.job_id=css.job_id AND ev.slice_start_utc=css.slice_start_utc AND ev.slice_end_utc=css.slice_end_utc WHERE css.job_id=$j;");
             cmd.Add("$j", jobId);
             using var r = cmd.ExecuteReader();
             while (r.Read())
@@ -87,8 +92,8 @@ namespace KoLite.Local.Sqlite.State
                 var version = r.GetInt64(r.GetOrdinal("version"));
                 map[start.ToUniversalTime()] = new SliceSchedulingState(status, version);
             }
-            return map;
-        }
+            return (IReadOnlyDictionary<DateTimeOffset, SliceSchedulingState>)map;
+        });
 
         private bool FinishLease(string op, string jobId, DateTimeOffset start, DateTimeOffset end, string owner, string leaseToken, DateTimeOffset now, DurableSliceStatus status, string? reason, string payload)
         {

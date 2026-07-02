@@ -72,54 +72,29 @@ namespace KoLite.LocalApp
                         continue;
                     }
 
-                    var availableSlots = Math.Max(0, options.MaxConcurrency - inFlightWorkers.Count);
-                    var started = 0;
-                    // Always include expired (orphaned) leases when claiming and counting, not only when
-                    // the pool is fully idle. Workstream A guarantees a healthy attempt finishes (or its
-                    // bounded execution times out and is released) before its lease can expire beyond the
-                    // reclaim grace, so an expired lease reliably means a crashed/abandoned owner. This
-                    // lets orphans recover on the next dispatch cycle instead of waiting for a fully-idle
-                    // pool, while the grace margin and the single-row claim guard prevent stealing a
-                    // healthy, still-held lease.
-                    const bool includeExpiredLeases = true;
-                    var queueSnapshot = ReadQueueSnapshot(includeExpiredLeases);
-                    if (availableSlots > 0 && queueSnapshot.ClaimableBacklog > 0)
+                    try
                     {
-                        var workersToStart = Math.Min(Math.Min(availableSlots, options.MaxDispatchStartsPerCycle), queueSnapshot.ClaimableBacklog);
-                        foreach (var slotNumber in AvailableWorkerSlots().Take(workersToStart))
-                        {
-                            var workerId = WorkerIdForSlot(slotNumber);
-                            inFlightWorkers.Add(new InFlightWorker(
-                                slotNumber,
-                                workerId,
-                                RunTrackedWorkerOnceAsync(workerId, includeExpiredLeases, executionCancellation.Token)));
-                            started++;
-                        }
-
-                        if (started > 0)
-                        {
-                            logger.LogDebug("Local worker dispatcher started {Started} workers with {InFlight} in flight.", started, inFlightWorkers.Count);
-                        }
+                        await RunDispatchCycleAsync(executionCancellation.Token, stoppingToken).ConfigureAwait(false);
                     }
-
-                    var activeWorkerIds = inFlightWorkers.Select(worker => worker.WorkerId).ToArray();
-                    var isIdle = inFlightWorkers.Count == 0 && queueSnapshot.ClaimableBacklog == 0 && started == 0;
-                    var isSaturated = inFlightWorkers.Count >= options.MaxConcurrency && queueSnapshot.ClaimableBacklog > started;
-                    workerPoolState.RecordDispatchCycle(
-                        inFlightWorkers.Count,
-                        activeWorkerIds,
-                        started,
-                        isIdle,
-                        isSaturated,
-                        clock.UtcNow);
-                    if (options.LogEveryPass)
+                    catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
                     {
-                        LogWorkerDispatch(queueSnapshot, started, inFlightWorkers.Count, includeExpiredLeases, isIdle, isSaturated, activeWorkerIds);
+                        break;
                     }
-
-                    if (started == 0)
+                    catch (Exception ex)
                     {
-                        await WaitForWorkerOrIdleDelayAsync(stoppingToken).ConfigureAwait(false);
+                        // Keep the dispatcher alive across a transient failure in the dispatch cycle
+                        // (e.g. a SQLite read error while counting claimable work). Without this the
+                        // default BackgroundServiceExceptionBehavior = StopHost would stop the whole
+                        // host. Log, back off one idle delay, and continue.
+                        logger.LogError(ex, "Local worker dispatch cycle failed; the dispatcher will continue on the next cycle.");
+                        try
+                        {
+                            await Task.Delay(options.IdleDelay, stoppingToken).ConfigureAwait(false);
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            break;
+                        }
                     }
                 }
             }
@@ -129,6 +104,59 @@ namespace KoLite.LocalApp
             finally
             {
                 await DrainInFlightWorkersAsync().ConfigureAwait(false);
+            }
+        }
+
+        private async Task RunDispatchCycleAsync(CancellationToken executionToken, CancellationToken stoppingToken)
+        {
+            var availableSlots = Math.Max(0, options.MaxConcurrency - inFlightWorkers.Count);
+            var started = 0;
+            // Always include expired (orphaned) leases when claiming and counting, not only when
+            // the pool is fully idle. Workstream A guarantees a healthy attempt finishes (or its
+            // bounded execution times out and is released) before its lease can expire beyond the
+            // reclaim grace, so an expired lease reliably means a crashed/abandoned owner. This
+            // lets orphans recover on the next dispatch cycle instead of waiting for a fully-idle
+            // pool, while the grace margin and the single-row claim guard prevent stealing a
+            // healthy, still-held lease.
+            const bool includeExpiredLeases = true;
+            var queueSnapshot = ReadQueueSnapshot(includeExpiredLeases);
+            if (availableSlots > 0 && queueSnapshot.ClaimableBacklog > 0)
+            {
+                var workersToStart = Math.Min(Math.Min(availableSlots, options.MaxDispatchStartsPerCycle), queueSnapshot.ClaimableBacklog);
+                foreach (var slotNumber in AvailableWorkerSlots().Take(workersToStart))
+                {
+                    var workerId = WorkerIdForSlot(slotNumber);
+                    inFlightWorkers.Add(new InFlightWorker(
+                        slotNumber,
+                        workerId,
+                        RunTrackedWorkerOnceAsync(workerId, includeExpiredLeases, executionToken)));
+                    started++;
+                }
+
+                if (started > 0)
+                {
+                    logger.LogDebug("Local worker dispatcher started {Started} workers with {InFlight} in flight.", started, inFlightWorkers.Count);
+                }
+            }
+
+            var activeWorkerIds = inFlightWorkers.Select(worker => worker.WorkerId).ToArray();
+            var isIdle = inFlightWorkers.Count == 0 && queueSnapshot.ClaimableBacklog == 0 && started == 0;
+            var isSaturated = inFlightWorkers.Count >= options.MaxConcurrency && queueSnapshot.ClaimableBacklog > started;
+            workerPoolState.RecordDispatchCycle(
+                inFlightWorkers.Count,
+                activeWorkerIds,
+                started,
+                isIdle,
+                isSaturated,
+                clock.UtcNow);
+            if (options.LogEveryPass)
+            {
+                LogWorkerDispatch(queueSnapshot, started, inFlightWorkers.Count, includeExpiredLeases, isIdle, isSaturated, activeWorkerIds);
+            }
+
+            if (started == 0)
+            {
+                await WaitForWorkerOrIdleDelayAsync(stoppingToken).ConfigureAwait(false);
             }
         }
 
