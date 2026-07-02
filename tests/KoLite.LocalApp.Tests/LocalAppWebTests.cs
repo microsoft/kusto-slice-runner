@@ -693,6 +693,24 @@ namespace KoLite.LocalApp.Tests
         }
 
         [Fact]
+        public async Task Job_details_header_drops_pill_and_links_function_and_table_to_adx()
+        {
+            var catalog = new SqliteJobCatalogRepository(sqlite);
+            catalog.Create(Schedule("job.links", "MyFunction", isPaused: false, outputTable: "MyTable"));
+
+            using var client = factory.CreateClient();
+            var html = await client.GetStringAsync($"/jobs/{JobId("job.links")}");
+
+            // The header health pill is gone: the wrapping p.job-status-line no longer renders.
+            Assert.DoesNotContain("job-status-line", html);
+
+            // Function and output table are now Azure Data Explorer deep links on the job's own cluster/db.
+            Assert.Contains("class=\"entity-link\"", html);
+            Assert.Contains(AppFormatting.KustoShowFunctionLink("https://kolite-example.invalid", "DemoDb", "MyFunction"), html);
+            Assert.Contains(AppFormatting.KustoTablePreviewLink("https://kolite-example.invalid", "DemoDb", "MyTable"), html);
+        }
+
+        [Fact]
         public async Task Dashboard_and_catalog_constrain_long_job_names()
         {
             const string longJobId = "CopilotUsage.GhcpReportingUserLanguageToolUsageAndModelToolUsageExtraLongIdentifierForLayout";

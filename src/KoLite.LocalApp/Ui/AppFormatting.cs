@@ -153,5 +153,33 @@ namespace KoLite.LocalApp.Ui
         // CSS class for the completeness chip.
         public static string CompletenessCss(int gapCount) => gapCount > 0 ? "status-gaps" : "status-complete";
 
+        // Quotes a Kusto entity name using the bracket/quoted-string form (['name']) so names that
+        // contain dots, spaces, or reserved words still resolve. Embedded single quotes and
+        // backslashes are escaped per Kusto quoted-string rules.
+        public static string KustoQuoteName(string name)
+        {
+            var escaped = (name ?? string.Empty).Replace("\\", "\\\\", StringComparison.Ordinal).Replace("'", "\\'", StringComparison.Ordinal);
+            return $"['{escaped}']";
+        }
+
+        // Builds a Kusto.WebExplorer (Azure Data Explorer web UI) deep link that preselects the
+        // cluster/database and prefills the given query or management command. Short text only needs
+        // standard URI query encoding; base64+gzip is only required for very long queries. Regular
+        // queries auto-run; management commands (starting with '.') are prefilled but require the
+        // user to run them, which is a Kusto.WebExplorer security behavior.
+        public static string KustoWebExplorerLink(string clusterUri, string database, string query)
+        {
+            var host = Uri.TryCreate(clusterUri, UriKind.Absolute, out var uri) ? uri.Host : clusterUri;
+            return $"https://dataexplorer.azure.com/clusters/{Uri.EscapeDataString(host)}/databases/{Uri.EscapeDataString(database)}?query={Uri.EscapeDataString(query)}";
+        }
+
+        // Deep link that shows the definition of the job's Kusto function.
+        public static string KustoShowFunctionLink(string clusterUri, string database, string functionName) =>
+            KustoWebExplorerLink(clusterUri, database, $".show function {KustoQuoteName(functionName)}");
+
+        // Deep link that previews the latest rows of the job's output table.
+        public static string KustoTablePreviewLink(string clusterUri, string database, string outputTable) =>
+            KustoWebExplorerLink(clusterUri, database, $"{KustoQuoteName(outputTable)} | take 10");
+
     }
 }

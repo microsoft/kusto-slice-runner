@@ -69,6 +69,29 @@ h3 { font-size: 16px; margin-bottom: 10px; }
 .strong { font-weight: 700; }
 .empty { color: var(--muted); padding: 12px; }
 
+/* Header links to the job's Kusto function/output table. Rendered as monospace, primary-colored
+   entity names that open the Azure Data Explorer web UI; a dashed underline appears on hover/focus
+   to signal they navigate off to ADX. The muted arrow between them reads "function writes table". */
+.entity-links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 0 0;
+  font-size: 13px;
+}
+.entity-link {
+  font-family: Consolas, "Courier New", monospace;
+  color: var(--primary);
+  border-bottom: 1px dashed transparent;
+}
+.entity-link:hover,
+.entity-link:focus-visible {
+  text-decoration: none;
+  border-bottom-color: currentColor;
+}
+.entity-arrow { color: var(--muted); font-family: Consolas, "Courier New", monospace; }
+
 .card {
   background: var(--surface);
   border: 1px solid var(--border);

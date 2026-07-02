@@ -12,15 +12,21 @@ else
 {
     var data = Model.Data;
     var charts = Model.Charts;
+    var target = data.Definition.Target;
+    var clusterHost = Uri.TryCreate(target.ClusterUri, UriKind.Absolute, out var clusterUriValue) ? clusterUriValue.Host : target.ClusterUri;
+    var functionLink = AppFormatting.KustoShowFunctionLink(target.ClusterUri, target.Database, data.Definition.FunctionName);
+    var tableLink = AppFormatting.KustoTablePreviewLink(target.ClusterUri, target.Database, data.Definition.OutputTable);
+    var functionTooltip = $"Open Azure Data Explorer on {clusterHost} / {target.Database} and show the definition of function {data.Definition.FunctionName}. ADX does not auto-run commands, so select Run in the web explorer.";
+    var tableTooltip = $"Open Azure Data Explorer on {clusterHost} / {target.Database} and preview the latest 10 rows of {data.Definition.OutputTable}.";
     <div class="page-heading">
         <div>
             <h1>@data.Job.ActivityId</h1>
-            <p class="muted">@data.Definition.FunctionName -> @data.Definition.OutputTable</p>
+            <p class="entity-links">
+                <a class="entity-link" href="@functionLink" target="_blank" rel="noopener noreferrer" title="@functionTooltip">@data.Definition.FunctionName</a>
+                <span class="entity-arrow" aria-hidden="true">-&gt;</span>
+                <a class="entity-link" href="@tableLink" target="_blank" rel="noopener noreferrer" title="@tableTooltip">@data.Definition.OutputTable</a>
+            </p>
             <p class="muted mono">id: @data.Job.JobId</p>
-            @if (Model.Status is { } status)
-            {
-                <p class="job-status-line"><partial name="_StatusPill" model="status" /></p>
-            }
         </div>
         <partial name="_PausedIndicator" model="data" />
         <div class="button-row">
