@@ -1,0 +1,19 @@
+@model JobListItem
+@{
+    // Two-segment status pill shared by the dashboard tables and the job details header.
+    // Segment 1 = recent-trend health (the "is it working now?" color); segment 2 (only for
+    // complete-policy jobs) = historical completeness ("Complete" or "N gaps").
+}
+<span class="status-pill" title="@Model.StatusTooltip" data-status-pill>
+    <span class="status-seg status-seg-primary status-@AppFormatting.PrimaryStatusKey(Model.PrimaryState)">
+        @if (Model.ShowActivityIndicator)
+        {
+            <span class="status-inprogress" aria-hidden="true"></span>
+        }
+        <span class="status-seg-label">@Model.StatusText</span>
+    </span>
+    @if (Model.ShowCompleteness)
+    {
+        <span class="status-seg status-seg-completeness @AppFormatting.CompletenessCss(Model.GapCount)">@AppFormatting.CompletenessLabel(Model.GapCount)</span>
+    }
+</span>

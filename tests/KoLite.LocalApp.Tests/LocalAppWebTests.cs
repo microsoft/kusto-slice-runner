@@ -499,10 +499,11 @@ namespace KoLite.LocalApp.Tests
             var missing = Assert.Single(data.ActiveJobs, job => job.Record.JobId == JobId("job.missing.finished-window"));
             var running = Assert.Single(data.ActiveJobs, job => job.Record.JobId == JobId("job.running.finished-window"));
             Assert.Empty(data.CompletedJobs);
-            Assert.Equal(("DependencyBlocked", "Blocked", false), (blocked.LifecycleStatus, blocked.NextSlice.Text, blocked.IsCompleted));
-            Assert.Equal(("Failed", "Attention", false), (failed.LifecycleStatus, failed.NextSlice.Text, failed.IsCompleted));
-            Assert.Equal(("Healthy", "Incomplete", false), (missing.LifecycleStatus, missing.NextSlice.Text, missing.IsCompleted));
-            Assert.Equal(("Running", "In progress", false), (running.LifecycleStatus, running.NextSlice.Text, running.IsCompleted));
+            Assert.Equal(("DependencyBlocked", "Blocked", false), (blocked.PrimaryState, blocked.NextSlice.Text, blocked.IsCompleted));
+            Assert.Equal(("Attention", "Attention", false), (failed.PrimaryState, failed.NextSlice.Text, failed.IsCompleted));
+            Assert.Equal(("Healthy", "Incomplete", false), (missing.PrimaryState, missing.NextSlice.Text, missing.IsCompleted));
+            Assert.Equal(("Healthy", "In progress", false), (running.PrimaryState, running.NextSlice.Text, running.IsCompleted));
+            Assert.True(running.InProgress);
         }
 
         [Fact]
@@ -518,7 +519,7 @@ namespace KoLite.LocalApp.Tests
             var down = Assert.Single(CreateDashboardQuery(clock).GetAllJobs(), job => job.Record.JobId == JobId("down.waiting"));
 
             // A downstream blocked only because a healthy upstream is behind is calm, not a warning.
-            Assert.Equal(("WaitingOnUpstream", "Waiting on upstream", "badge-success"), (down.LifecycleStatus, down.StatusText, down.StatusCss));
+            Assert.Equal(("WaitingOnUpstream", "Waiting on upstream", "badge-success"), (down.PrimaryState, down.StatusText, down.StatusCss));
         }
 
         [Fact]
@@ -535,7 +536,7 @@ namespace KoLite.LocalApp.Tests
             var down = Assert.Single(CreateDashboardQuery(clock).GetAllJobs(), job => job.Record.JobId == JobId("down.blocked"));
 
             // The upstream has genuinely failed, so the downstream stays flagged as blocked.
-            Assert.Equal(("DependencyBlocked", "Dependency blocked", "badge-warning"), (down.LifecycleStatus, down.StatusText, down.StatusCss));
+            Assert.Equal(("DependencyBlocked", "Blocked (upstream)", "badge-warning"), (down.PrimaryState, down.StatusText, down.StatusCss));
         }
 
         [Fact]
@@ -556,8 +557,8 @@ namespace KoLite.LocalApp.Tests
             var b = Assert.Single(jobs, job => job.Record.JobId == JobId("chain.b"));
             var a = Assert.Single(jobs, job => job.Record.JobId == JobId("chain.a"));
 
-            Assert.Equal("DependencyBlocked", b.LifecycleStatus);
-            Assert.Equal("DependencyBlocked", a.LifecycleStatus);
+            Assert.Equal("DependencyBlocked", b.PrimaryState);
+            Assert.Equal("DependencyBlocked", a.PrimaryState);
         }
 
         [Fact]
@@ -573,8 +574,10 @@ namespace KoLite.LocalApp.Tests
 
             var down = Assert.Single(CreateDashboardQuery(clock).GetAllJobs(), job => job.Record.JobId == JobId("down.running"));
 
-            // Active work outranks the dependency-blocked family: a progressing job reads as Running.
-            Assert.Equal(("Running", "badge-info"), (down.LifecycleStatus, down.StatusCss));
+            // In-progress work no longer overrides the primary status; it renders as a calm activity
+            // indicator layered on the dependency state (a healthy upstream stays calm green).
+            Assert.Equal(("WaitingOnUpstream", "badge-success"), (down.PrimaryState, down.StatusCss));
+            Assert.True(down.ShowActivityIndicator);
         }
 
         private DashboardPageQuery CreateDashboardQuery(IClock clock) => new(
@@ -626,9 +629,63 @@ namespace KoLite.LocalApp.Tests
 
             var completedJob = Assert.Single(data.CompletedJobs);
             Assert.Equal(JobId("job.complete.finished-window"), completedJob.Record.JobId);
-            Assert.Equal("Completed", completedJob.LifecycleStatus);
+            Assert.Equal("Completed", completedJob.PrimaryState);
             Assert.True(completedJob.IsCompleted);
             Assert.Empty(data.ActiveJobs);
+        }
+
+        [Fact]
+        public void Dashboard_scores_recent_health_and_surfaces_old_gaps_per_policy()
+        {
+            var clock = new ManualClock(At(1000));
+            var catalog = new SqliteJobCatalogRepository(sqlite);
+            var state = new SqliteSliceStateRepository(sqlite);
+            // Two jobs, identical slice history: the oldest two windows dead-lettered (gaps that
+            // fall OUTSIDE the recent window), the newest ten completed. Only the health policy differs.
+            catalog.Create(Schedule("job.strict", "StrictFunction", isPaused: false, healthPolicy: "complete"));
+            catalog.Create(Schedule("job.relaxed", "RelaxedFunction", isPaused: false, healthPolicy: "recent"));
+            foreach (var activityId in new[] { "job.strict", "job.relaxed" })
+            {
+                for (var i = 0; i < 12; i++)
+                {
+                    var status = i < 2 ? DurableSliceStatus.DeadLettered : DurableSliceStatus.Completed;
+                    state.Append($"{activityId}-{i}", JobId(activityId), At(i * 5), At(i * 5 + 5), status, expectedVersion: 0);
+                }
+            }
+
+            var jobs = CreateDashboardQuery(clock).GetAllJobs();
+            var strict = Assert.Single(jobs, job => job.Record.JobId == JobId("job.strict"));
+            var relaxed = Assert.Single(jobs, job => job.Record.JobId == JobId("job.relaxed"));
+
+            // Recent window (10 newest) is all completed, so both read Healthy regardless of old gaps.
+            Assert.Equal("Healthy", strict.PrimaryState);
+            Assert.Equal("Healthy", relaxed.PrimaryState);
+
+            // The strict (complete) job surfaces the two historical dead-letters; the relaxed one hides them.
+            Assert.True(strict.ShowCompleteness);
+            Assert.Equal(2, strict.GapCount);
+            Assert.False(relaxed.ShowCompleteness);
+        }
+
+        [Fact]
+        public async Task Dashboard_renders_two_segment_status_pill_with_gaps()
+        {
+            var catalog = new SqliteJobCatalogRepository(sqlite);
+            var state = new SqliteSliceStateRepository(sqlite);
+            catalog.Create(Schedule("job.pill", "PillFunction", isPaused: false, healthPolicy: "complete"));
+            for (var i = 0; i < 12; i++)
+            {
+                var status = i < 2 ? DurableSliceStatus.DeadLettered : DurableSliceStatus.Completed;
+                state.Append($"pill-{i}", JobId("job.pill"), At(i * 5), At(i * 5 + 5), status, expectedVersion: 0);
+            }
+
+            using var client = factory.CreateClient();
+            var html = await client.GetStringAsync("/");
+
+            Assert.Contains("class=\"status-pill\"", html);
+            Assert.Contains("status-seg status-seg-primary status-healthy", html);
+            Assert.Contains("status-seg status-seg-completeness status-gaps", html);
+            Assert.Contains("2 gaps", html);
         }
 
         [Fact]
@@ -965,7 +1022,8 @@ namespace KoLite.LocalApp.Tests
                 Assert.False(root.GetProperty("enabled").GetBoolean());
                 Assert.Equal(2, root.GetProperty("version").GetInt64());
                 Assert.Equal("Paused", root.GetProperty("statusText").GetString());
-                Assert.Equal("badge-warning", root.GetProperty("statusCss").GetString());
+                Assert.Equal("badge-neutral", root.GetProperty("statusCss").GetString());
+                Assert.Equal("paused", root.GetProperty("primaryKey").GetString());
                 Assert.False(root.GetProperty("conflict").GetBoolean());
             }
             Assert.False(catalog.Get(JobId("job.toggle"))?.IsEnabled);
@@ -981,6 +1039,7 @@ namespace KoLite.LocalApp.Tests
                 Assert.True(root.GetProperty("enabled").GetBoolean());
                 Assert.Equal(3, root.GetProperty("version").GetInt64());
                 Assert.Equal("Healthy", root.GetProperty("statusText").GetString());
+                Assert.Equal("healthy", root.GetProperty("primaryKey").GetString());
             }
             Assert.True(catalog.Get(JobId("job.toggle"))?.IsEnabled);
 
@@ -2422,7 +2481,7 @@ namespace KoLite.LocalApp.Tests
             return new Guid(bytes).ToString("N");
         }
 
-        private static string Schedule(string activityId, string functionName, bool isPaused, string outputTable = "Output", int maxParallelism = 1, string queryWindowSize = "00:05:00", string? folder = null, IReadOnlyList<string>? tags = null, string? endOn = null)
+        private static string Schedule(string activityId, string functionName, bool isPaused, string outputTable = "Output", int maxParallelism = 1, string queryWindowSize = "00:05:00", string? folder = null, IReadOnlyList<string>? tags = null, string? endOn = null, string? healthPolicy = null)
         {
             var schedule = $$"""
             {
@@ -2454,6 +2513,11 @@ namespace KoLite.LocalApp.Tests
             if (endOn is not null)
             {
                 metadata.Add($"  \"endOn\": {JsonSerializer.Serialize(endOn)},");
+            }
+
+            if (healthPolicy is not null)
+            {
+                metadata.Add($"  \"healthPolicy\": {JsonSerializer.Serialize(healthPolicy)},");
             }
 
             return metadata.Count == 0

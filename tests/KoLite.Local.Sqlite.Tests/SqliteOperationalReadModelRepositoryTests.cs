@@ -180,6 +180,42 @@ namespace KoLite.Local.Sqlite.Tests
             Assert.Null(sample.LastCompletedUtc);
         }
 
+        [Fact]
+        public void Recent_slice_states_returns_newest_first_bounded_by_window()
+        {
+            catalog.Create(Schedule("job.obs2"));
+
+            // 12 windows for job.obs; newest two are DeadLettered (At55) then Failed (At50).
+            for (var i = 0; i < 12; i++)
+            {
+                var start = At(i * 5);
+                var status = i switch
+                {
+                    11 => DurableSliceStatus.DeadLettered,
+                    10 => DurableSliceStatus.Failed,
+                    _ => DurableSliceStatus.Completed
+                };
+                state.Append($"obs-{i}", JobId("job.obs"), start, start.AddMinutes(5), status, expectedVersion: 0);
+            }
+
+            // A second job with only two windows, to confirm per-job partitioning.
+            state.Append("obs2-0", JobId("job.obs2"), At(0), At(5), DurableSliceStatus.Completed, expectedVersion: 0);
+            state.Append("obs2-1", JobId("job.obs2"), At(5), At(10), DurableSliceStatus.Failed, expectedVersion: 0);
+
+            var recent = readModels.GetRecentSliceStates(10);
+
+            var obs = recent[JobId("job.obs")];
+            Assert.Equal(10, obs.Count);
+            Assert.Equal("DeadLettered", obs[0]);
+            Assert.Equal("Failed", obs[1]);
+            Assert.All(obs.Skip(2), s => Assert.Equal("Completed", s));
+
+            var obs2 = recent[JobId("job.obs2")];
+            Assert.Equal(2, obs2.Count);
+            Assert.Equal("Failed", obs2[0]);
+            Assert.Equal("Completed", obs2[1]);
+        }
+
         private int Count(string table)
         {
             using var c = factory.OpenConnection(); using var cmd = c.CreateCommand(); cmd.CommandText = $"SELECT COUNT(*) FROM {table};"; return Convert.ToInt32(cmd.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture);

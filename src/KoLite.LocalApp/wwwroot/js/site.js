@@ -1042,11 +1042,7 @@
     var row = form.closest("tr");
     if (row) {
       if (typeof data.statusText === "string" && data.statusText) {
-        var badge = row.querySelector(".status-cell .badge");
-        if (badge) {
-          badge.textContent = data.statusText;
-          badge.className = "badge " + (data.statusCss || "badge-neutral");
-        }
+        renderStatusPill(row.querySelector(".status-cell [data-status-pill]"), data);
       }
 
       if (typeof data.nextText === "string") {
@@ -1056,6 +1052,41 @@
           nextCell.setAttribute("title", data.nextDetail || "");
         }
       }
+    }
+  }
+
+  // Rebuilds a dashboard status pill from a toggle response so the recent-health segment, the
+  // in-progress indicator, and the completeness segment all stay consistent after pause/resume.
+  function renderStatusPill(pill, data) {
+    if (!pill) return;
+    pill.setAttribute("title", data.tooltip || "");
+
+    var primary = pill.querySelector(".status-seg-primary");
+    if (primary) {
+      primary.className = "status-seg status-seg-primary status-" + (data.primaryKey || "healthy");
+      primary.innerHTML = "";
+      if (data.showActivity) {
+        var dot = document.createElement("span");
+        dot.className = "status-inprogress";
+        dot.setAttribute("aria-hidden", "true");
+        primary.appendChild(dot);
+      }
+      var label = document.createElement("span");
+      label.className = "status-seg-label";
+      label.textContent = data.statusText;
+      primary.appendChild(label);
+    }
+
+    var completeness = pill.querySelector(".status-seg-completeness");
+    if (data.showCompleteness) {
+      if (!completeness) {
+        completeness = document.createElement("span");
+        pill.appendChild(completeness);
+      }
+      completeness.className = "status-seg status-seg-completeness " + (data.completenessCss || "status-complete");
+      completeness.textContent = data.completenessLabel || "Complete";
+    } else if (completeness) {
+      completeness.remove();
     }
   }
 
@@ -1486,10 +1517,12 @@
   function depGraphStylesheet() {
     var STATUS_COLORS = {
       healthy: ["#dafbe1", "#1a7f37"],
+      borderline: ["#fff8c5", "#9a6700"],
+      attention: ["#ffebe9", "#cf222e"],
       waitingonupstream: ["#dafbe1", "#1a7f37"],
       running: ["#ddf4ff", "#0969da"],
       dependencyblocked: ["#fff8c5", "#9a6700"],
-      paused: ["#fff8c5", "#9a6700"],
+      paused: ["#f6f8fa", "#8c959f"],
       failed: ["#ffebe9", "#cf222e"],
       completed: ["#f6f8fa", "#8c959f"],
       softdeleted: ["#f6f8fa", "#cf222e"],

@@ -467,6 +467,55 @@ h3 { font-size: 16px; margin-bottom: 10px; }
 .badge-danger { color: var(--danger); border-color: rgba(207, 34, 46, 0.35); background: #ffebe9; }
 .badge-info { color: var(--info); border-color: rgba(9, 105, 218, 0.35); background: #ddf4ff; }
 .badge-neutral { color: var(--muted); background: #f6f8fa; }
+
+/* Two-segment dashboard status pill: segment 1 = recent-trend health (the color that answers
+   "is it working now?"), optional segment 2 = historical completeness ("is the history whole?").
+   Recent-policy jobs render only the primary segment. */
+.status-pill {
+  display: inline-flex;
+  align-items: stretch;
+  border-radius: 999px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  font-size: 12px;
+  line-height: 1;
+  vertical-align: middle;
+  max-width: 100%;
+}
+.status-seg {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  white-space: nowrap;
+}
+.status-seg-label { overflow: hidden; text-overflow: ellipsis; }
+.status-seg-primary { font-weight: 600; }
+.status-seg-completeness { border-left: 1px solid var(--border); font-weight: 500; }
+
+.status-seg.status-healthy { color: var(--success); background: #dafbe1; }
+.status-seg.status-borderline { color: var(--warning); background: #fff8c5; }
+.status-seg.status-attention { color: var(--danger); background: #ffebe9; }
+.status-seg.status-paused { color: var(--muted); background: #f6f8fa; }
+.status-seg.status-completed { color: var(--muted); background: #f6f8fa; }
+.status-seg.status-softdeleted { color: var(--muted); background: #f6f8fa; }
+.status-seg.status-dependencyblocked { color: var(--warning); background: #fff8c5; }
+.status-seg.status-waitingonupstream { color: var(--success); background: #dafbe1; }
+
+.status-seg-completeness.status-complete { color: var(--muted); background: #fff; }
+.status-seg-completeness.status-gaps { color: var(--warning); background: #fff8c5; font-weight: 600; }
+
+/* Subtle "work in progress" pulse on the primary segment for running/queued jobs. */
+.status-inprogress {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: none;
+  animation: status-pulse 1.6s ease-out infinite;
+}
+@keyframes status-pulse { 0% { opacity: 1; } 50% { opacity: 0.35; } 100% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .status-inprogress { animation: none; } }
 .paused-job-indicator {
   align-items: center;
   align-self: center;
@@ -984,7 +1033,11 @@ h3 { font-size: 16px; margin-bottom: 10px; }
 .dependency-graph-node.status-dependencyblocked .dependency-graph-node-box,
 .dependency-graph-swatch.status-dependencyblocked,
 .dependency-graph-node.status-paused .dependency-graph-node-box,
-.dependency-graph-swatch.status-paused { fill: #fff8c5; background: #fff8c5; stroke: var(--warning); border-color: var(--warning); }
+.dependency-graph-swatch.status-paused { fill: #f6f8fa; background: #f6f8fa; stroke: #8c959f; border-color: #8c959f; }
+.dependency-graph-node.status-borderline .dependency-graph-node-box,
+.dependency-graph-swatch.status-borderline { fill: #fff8c5; background: #fff8c5; stroke: var(--warning); border-color: var(--warning); }
+.dependency-graph-node.status-attention .dependency-graph-node-box,
+.dependency-graph-swatch.status-attention,
 .dependency-graph-node.status-failed .dependency-graph-node-box,
 .dependency-graph-swatch.status-failed { fill: #ffebe9; background: #ffebe9; stroke: var(--danger); border-color: var(--danger); }
 .dependency-graph-node.status-completed .dependency-graph-node-box,

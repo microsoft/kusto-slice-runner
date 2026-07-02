@@ -11,16 +11,22 @@ namespace KoLite.LocalApp.Pages.Jobs
         private readonly JobChartQuery chartQuery;
         private readonly SqliteJobCatalogRepository catalog;
         private readonly DependencyGraphQuery dependencyGraphQuery;
+        private readonly DashboardPageQuery dashboard;
 
-        public DetailsModel(JobDetailsPageQuery query, JobChartQuery chartQuery, SqliteJobCatalogRepository catalog, DependencyGraphQuery dependencyGraphQuery)
+        public DetailsModel(JobDetailsPageQuery query, JobChartQuery chartQuery, SqliteJobCatalogRepository catalog, DependencyGraphQuery dependencyGraphQuery, DashboardPageQuery dashboard)
         {
             this.query = query;
             this.chartQuery = chartQuery;
             this.catalog = catalog;
             this.dependencyGraphQuery = dependencyGraphQuery;
+            this.dashboard = dashboard;
         }
 
         public JobDetailsPageData? Data { get; private set; }
+
+        // The same JobListItem the dashboard renders, so the details header shows the identical
+        // recent-health + completeness status without duplicating the derivation.
+        public JobListItem? Status { get; private set; }
         public ScheduleEditorViewModel? Editor { get; private set; }
         public JobDetailsCharts? Charts { get; private set; }
         public DependencyGraphViewModel DependencyGraph { get; private set; } = DependencyGraphViewModel.Empty;
@@ -37,6 +43,7 @@ namespace KoLite.LocalApp.Pages.Jobs
                 return Page();
             }
 
+            Status = dashboard.GetJob(jobId);
             Charts = chartQuery.GetJobDetailsCharts(jobId, ChartRangeOptions.Parse(Range));
             DependencyGraph = dependencyGraphQuery.Build(new[] { Data.Job.JobId });
             Editor = new ScheduleEditorViewModel(

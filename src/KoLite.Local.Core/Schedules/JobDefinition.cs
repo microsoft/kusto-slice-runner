@@ -24,6 +24,21 @@ namespace KoLite.Local.Core.Schedules
         public IReadOnlyList<string> Tags { get; init; } = Array.Empty<string>();
         public IReadOnlyList<DependentJob> DependsOn { get; init; } = Array.Empty<DependentJob>();
         public JsonElement? JobSettings { get; init; }
+
+        // Determines how the dashboard scores this job's health. Complete (default, strict)
+        // additionally flags unaddressed historical gaps (terminal dead-letters) even when
+        // recent slices are healthy; Recent ignores old gaps and colors purely by the recent
+        // slice trend. Immutable identity/timing rules are unaffected by this field.
+        public JobHealthPolicy HealthPolicy { get; init; } = JobHealthPolicy.Complete;
+    }
+
+    // Per-job dashboard health policy. Complete is the strict default: the job wants every
+    // slice eventually filled, so unaddressed terminal gaps are surfaced. Recent means the
+    // operator only cares about the recent trend and old gaps should not raise attention.
+    public enum JobHealthPolicy
+    {
+        Complete = 0,
+        Recent = 1
     }
 
     public sealed record JobTarget
