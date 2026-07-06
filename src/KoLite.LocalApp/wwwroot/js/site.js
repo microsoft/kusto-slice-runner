@@ -258,13 +258,14 @@
     });
   }
 
-  // Shared Chart.js container bootstrap: for every [data-chartjs-<attr>] figure, resolve its
-  // canvas + JSON payload script, parse it, and hand both to onPayload. Parse/build failures
-  // surface a uniform in-figure error message (and rethrow). The per-chart build* functions own
-  // all chart-specific behavior; this only removes the repeated plumbing/error handling.
+  // Shared Chart.js container bootstrap: for every [attr] figure (attr is the full
+  // data-chartjs-* attribute name), resolve its canvas + JSON payload script, parse it, and hand
+  // both to onPayload. Parse/build failures surface a uniform in-figure error message (and
+  // rethrow). The per-chart build* functions own all chart-specific behavior; this only removes
+  // the repeated plumbing/error handling.
   function initCharts(attr, onPayload) {
-    document.querySelectorAll("[data-chartjs-" + attr + "]").forEach(function (container) {
-      var chartId = container.getAttribute("data-chartjs-" + attr);
+    document.querySelectorAll("[" + attr + "]").forEach(function (container) {
+      var chartId = container.getAttribute(attr);
       var canvas = document.getElementById(chartId);
       var payloadNode = document.getElementById(chartId + "-data");
       if (!canvas || !payloadNode) return;
@@ -1712,15 +1713,15 @@
   window.initDependencyGraphs = initDependencyGraphs;
   window.initDependencyPickers = initDependencyPickers;
   window.initBulkSelect = initBulkSelect;
-  initCharts("success", function (canvas, payload) {
+  initCharts("data-chartjs-success", function (canvas, payload) {
     var chart = buildSuccessRateChart(canvas, payload);
     if (chart) {
       successRateChartEntries.push({ chart: chart, datasets: chart.data.datasets.slice() });
     }
   });
-  initCharts("throttle", buildThrottleSeverityChart);
-  initCharts("activity", buildSlicesProcessedChart);
-  initCharts("job", buildJobDetailChart);
+  initCharts("data-chartjs-throttle", buildThrottleSeverityChart);
+  initCharts("data-chartjs-activity", buildSlicesProcessedChart);
+  initCharts("data-chartjs-job", buildJobDetailChart);
   initJobDetailTabs();
   initDashboardJobFilter();
   initDashboardColumnResize();
