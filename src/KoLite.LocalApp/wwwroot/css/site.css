@@ -519,7 +519,7 @@ h3 { font-size: 16px; margin-bottom: 10px; }
 .status-seg.status-softdeleted { background: #8c959f; }
 
 .status-seg-completeness.status-complete { background: var(--slice-stat-green); }
-.status-seg-completeness.status-gaps { background: var(--slice-stat-yellow); }
+.status-seg-completeness.status-gaps { background: var(--slice-stat-red); }
 .paused-job-indicator {
   align-items: center;
   align-self: center;

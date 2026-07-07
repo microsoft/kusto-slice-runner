@@ -199,10 +199,10 @@ Running or queued work is noted in the health half's hover tooltip (the pill its
 
 **Right half — historical completeness.** Controlled per job by `healthPolicy` (see [schedule-json.md](schedule-json.md)):
 
-- `complete` (default, strict) — the job wants every slice eventually filled, so the right half is **amber** when there are **unaddressed terminal gaps** (dead-lettered slices) and **green** when there are none. Gaps show even when recent health is green, so "working now but the backfill is incomplete" is unambiguous; hover the half for the count. Rerun or repair the dead-lettered slices to close the gaps.
+- `complete` (default, strict) — the job wants every slice eventually filled, so the right half is **red** when there are **unaddressed terminal gaps** (dead-lettered slices) and **green** when there are none. It is binary: any gap breaks the "every slice must pass" contract, so there is no in-between amber state. Gaps show even when recent health is green, so "working now but the backfill is incomplete" is unambiguous; hover the half for the count. Rerun or repair the dead-lettered slices to close the gaps.
 - `recent` — the operator only cares about the recent trend, so there is no completeness half: the pill is a **single solid capsule** in the health color. Use this for jobs where backfilling the past is impossible or unnecessary.
 
-Because old dead-lettered slices no longer force a broadly-healthy job to show red, a job that "did well over the last few days but failed a while back" now reads **green** (with an amber completeness half under the strict policy) instead of a blanket red **Failed**. The dependency-graph node colors use the same recent-health tiers.
+Because old dead-lettered slices no longer force a broadly-healthy job to show red, a job that "did well over the last few days but failed a while back" now reads **green** (with a red completeness half under the strict policy) instead of a blanket red **Failed**. The dependency-graph node colors use the same recent-health tiers.
 
 ## Dependency graph
 
