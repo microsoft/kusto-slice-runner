@@ -3,11 +3,22 @@ name: KO Lite CI
 on:
   push:
   pull_request:
+  schedule:
+    - cron: "17 8 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   build-test:
     name: Build and test
     runs-on: windows-latest
+    timeout-minutes: 30
 
     steps:
       - name: Checkout
