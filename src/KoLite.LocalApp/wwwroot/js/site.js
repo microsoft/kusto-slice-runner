@@ -1713,6 +1713,160 @@
   window.initDependencyGraphs = initDependencyGraphs;
   window.initDependencyPickers = initDependencyPickers;
   window.initBulkSelect = initBulkSelect;
+
+  // "Analyze failures with Copilot" on the job Operations tab: trigger the loopback analysis endpoint,
+  // poll for the ephemeral result, and render the returned Markdown. Nothing runs until the operator
+  // clicks; the antiforgery token is sent as the X-CSRF-TOKEN header like the dashboard toggle.
+  function renderAnalysisMarkdown(target, markdown) {
+    var text = markdown || "";
+    var html;
+    if (window.marked && typeof window.marked.parse === "function") {
+      html = window.marked.parse(text);
+    } else {
+      html = "<pre></pre>";
+    }
+    target.innerHTML = sanitizeAnalysisHtml(html);
+    if (!window.marked || typeof window.marked.parse !== "function") {
+      var pre = target.querySelector("pre");
+      if (pre) pre.textContent = text;
+    }
+    target.hidden = false;
+  }
+
+  // Minimal client-side hardening for model-produced HTML: drop script/style/iframe-like nodes and any
+  // event-handler or javascript: attributes. This is a local single-user tool, but the analysis text can
+  // echo Kusto error strings, so we never trust raw HTML.
+  function sanitizeAnalysisHtml(html) {
+    var template = document.createElement("template");
+    template.innerHTML = html;
+    var blocked = template.content.querySelectorAll("script, style, iframe, object, embed, link, meta");
+    blocked.forEach(function (node) { node.remove(); });
+    template.content.querySelectorAll("*").forEach(function (element) {
+      Array.prototype.slice.call(element.attributes).forEach(function (attr) {
+        var name = attr.name.toLowerCase();
+        var value = (attr.value || "").replace(/\s/g, "").toLowerCase();
+        if (name.indexOf("on") === 0 || ((name === "href" || name === "src") && value.indexOf("javascript:") === 0)) {
+          element.removeAttribute(attr.name);
+        }
+      });
+    });
+    return template.innerHTML;
+  }
+
+  function initFailureAnalysis() {
+    var card = document.querySelector("[data-analyze-card]");
+    if (!card) return;
+
+    var button = card.querySelector("[data-analyze-failures]");
+    var statusEl = card.querySelector("[data-analyze-status]");
+    var outputEl = card.querySelector("[data-analyze-output]");
+    var tokenInput = card.querySelector("input[name='__RequestVerificationToken']");
+    var jobId = card.getAttribute("data-job-id");
+    if (!button || !statusEl || !outputEl || !jobId) return;
+
+    var baseUrl = "/api/jobs/" + encodeURIComponent(jobId) + "/analyze-failures";
+    var maxPolls = 90;
+
+    function setStatus(text, kind) {
+      statusEl.textContent = text;
+      statusEl.className = "analyze-status" + (kind ? " analyze-status-" + kind : "");
+      statusEl.hidden = false;
+    }
+
+    function finish() {
+      button.disabled = false;
+      card.removeAttribute("data-analyze-inflight");
+    }
+
+    function showResult(run) {
+      if (!run || !run.status) {
+        setStatus("The analysis response could not be read.", "error");
+        finish();
+        return;
+      }
+      if (run.status === "Completed") {
+        setStatus("Analysis complete.", "done");
+        renderAnalysisMarkdown(outputEl, run.markdown);
+        finish();
+        return;
+      }
+      if (run.status === "Failed") {
+        setStatus(run.error || "The analysis failed.", "error");
+        finish();
+        return;
+      }
+      // Still running - keep the spinner state; the poller will call again.
+    }
+
+    function poll(runId, attempt) {
+      if (attempt > maxPolls) {
+        setStatus("The analysis is taking longer than expected. Please try again.", "error");
+        finish();
+        return;
+      }
+      window.setTimeout(function () {
+        fetch(baseUrl + "/" + encodeURIComponent(runId), {
+          headers: { "Accept": "application/json" }
+        }).then(function (response) {
+          return response.json().then(function (data) {
+            return { ok: response.ok, data: data };
+          }).catch(function () {
+            return { ok: response.ok, data: null };
+          });
+        }).then(function (result) {
+          if (!result.ok || !result.data) {
+            setStatus((result.data && result.data.error) || "Could not read the analysis status.", "error");
+            finish();
+            return;
+          }
+          if (result.data.status === "Running") {
+            poll(runId, attempt + 1);
+          } else {
+            showResult(result.data);
+          }
+        }).catch(function () {
+          setStatus("Could not reach the analysis endpoint. Is the app still running?", "error");
+          finish();
+        });
+      }, 2000);
+    }
+
+    button.addEventListener("click", function () {
+      if (card.getAttribute("data-analyze-inflight") === "true") return;
+      card.setAttribute("data-analyze-inflight", "true");
+      button.disabled = true;
+      outputEl.hidden = true;
+      outputEl.innerHTML = "";
+      setStatus("Analyzing recent failures with Copilot… this can take up to a minute.", "running");
+
+      var headers = { "X-Requested-With": "XMLHttpRequest", "Accept": "application/json" };
+      if (tokenInput) headers["X-CSRF-TOKEN"] = tokenInput.value;
+
+      fetch(baseUrl, { method: "POST", headers: headers }).then(function (response) {
+        return response.json().then(function (data) {
+          return { ok: response.ok, status: response.status, data: data };
+        }).catch(function () {
+          return { ok: response.ok, status: response.status, data: null };
+        });
+      }).then(function (result) {
+        if (!result.ok || !result.data) {
+          setStatus((result.data && result.data.error) || ("Request failed (" + result.status + ")."), "error");
+          finish();
+          return;
+        }
+        if (result.data.status === "Running") {
+          poll(result.data.runId, 0);
+        } else {
+          showResult(result.data);
+        }
+      }).catch(function () {
+        setStatus("Could not reach the analysis endpoint. Is the app still running?", "error");
+        finish();
+      });
+    });
+  }
+
+  window.initFailureAnalysis = initFailureAnalysis;
   initCharts("data-chartjs-success", function (canvas, payload) {
     var chart = buildSuccessRateChart(canvas, payload);
     if (chart) {
@@ -1730,4 +1884,5 @@
   initUpdateBadge();
   initDependencyPickers();
   initDependencyGraphs();
+  initFailureAnalysis();
 })();

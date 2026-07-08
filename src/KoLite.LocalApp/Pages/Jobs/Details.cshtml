@@ -157,6 +157,16 @@ else
                 <h2>Operations</h2>
                 <p class="muted">Recent execution attempts, state events, and logs for this job.</p>
             </div>
+            <div class="card analyze-failures-card" data-analyze-card data-job-id="@data.Job.JobId">
+                <div class="card-header">
+                    <h3>Analyze failures with Copilot</h3>
+                    <button type="button" class="btn primary" data-analyze-failures>Analyze failures</button>
+                </div>
+                @Html.AntiForgeryToken()
+                <p class="muted">Sends this job's recent failure evidence (secret-sanitized) to Copilot via GitHub Models, using your GitHub CLI sign-in (<code>gh auth login</code>), and shows a root-cause analysis. Nothing is sent until you select <em>Analyze failures</em>.</p>
+                <div class="analyze-status" data-analyze-status hidden></div>
+                <div class="analyze-output markdown-body" data-analyze-output hidden></div>
+            </div>
             <div class="grid-two">
             <div class="card">
                 <div class="card-header">

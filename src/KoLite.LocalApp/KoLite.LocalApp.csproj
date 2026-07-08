@@ -6,6 +6,18 @@
     <ProjectReference Include="..\KoLite.Local.Kusto\KoLite.Local.Kusto.csproj" />
   </ItemGroup>
 
+  <!--
+    Failure-analysis ("Analyze failures with Copilot") talks to an OpenAI-compatible
+    inference endpoint (GitHub Models by default) through the Microsoft.Extensions.AI
+    IChatClient abstraction. All-stable packages: the Azure.AI.Inference adapter is still
+    preview, so we use the OpenAI provider which reaches any OpenAI-compatible endpoint.
+  -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.AI" Version="10.7.0" />
+    <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="10.7.0" />
+    <PackageReference Include="OpenAI" Version="2.12.0" />
+  </ItemGroup>
+
   <ItemGroup>
     <!-- Tests construct the internal hosted background services to verify they survive transient
          faults instead of stopping the host. -->

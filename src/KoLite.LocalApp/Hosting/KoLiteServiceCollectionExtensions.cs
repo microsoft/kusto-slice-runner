@@ -1,5 +1,6 @@
 using System.Globalization;
 using KoLite.Local.Core.Orchestration;
+using KoLite.Local.Core.FailureSummaries;
 using KoLite.Local.Core.Throttling;
 using KoLite.Local.Core.Time;
 using KoLite.Local.Kusto.Execution;
@@ -14,6 +15,7 @@ using KoLite.Local.Sqlite.Rerun;
 using KoLite.Local.Sqlite.Schema;
 using KoLite.Local.Sqlite.State;
 using KoLite.Local.Sqlite.Throttling;
+using KoLite.LocalApp.FailureAnalysis;
 using KoLite.LocalApp.Retention;
 using KoLite.LocalApp.Ui;
 using KoLite.LocalApp.Updates;
@@ -32,6 +34,7 @@ namespace KoLite.LocalApp
             AddWorkerHost(services);
             AddRetention(services);
             AddUpdates(services);
+            AddFailureAnalysis(services, configuration);
             return services;
         }
 
@@ -120,6 +123,22 @@ namespace KoLite.LocalApp
             services.AddSingleton<IRepositoryUpdateChecker, GhCliRepositoryUpdateChecker>();
             services.AddScoped<UpdateBadgeReadModel>();
             services.AddHostedService<LocalUpdateCheckBackgroundService>();
+        }
+
+        // "Analyze failures with Copilot": an OpenAI-compatible IChatClient (GitHub Models by default)
+        // behind the existing IFailureSummaryRunner seam, plus the ephemeral in-memory run registry and
+        // the background orchestrator. Nothing here contacts the model until an operator triggers a run.
+        // Authentication is automatic: the token is resolved on demand from the operator's GitHub CLI
+        // sign-in (gh auth token) via ICopilotAnalysisTokenProvider, so no personal access token is stored.
+        private static void AddFailureAnalysis(IServiceCollection services, IConfiguration configuration)
+        {
+            services.AddSingleton(_ => CopilotAnalysisOptions.From(configuration));
+            services.AddSingleton<ICopilotAnalysisTokenProvider, GhCliCopilotAnalysisTokenProvider>();
+            services.AddSingleton<ICopilotAnalysisChatClientFactory, OpenAiChatClientFactory>();
+            services.AddSingleton<IFailureSummaryRunner, ChatClientFailureSummaryRunner>();
+            services.AddSingleton<FailureAnalysisRunRegistry>();
+            services.AddSingleton<FailureAnalysisOrchestrator>();
+            services.AddScoped<FailureAnalysisPromptBuilder>();
         }
 
         static string ResolveDatabasePath(IConfiguration configuration)

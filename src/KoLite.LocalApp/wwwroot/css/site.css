@@ -1147,3 +1147,53 @@ h3 { font-size: 16px; margin-bottom: 10px; }
   border-top: 2px solid #afb8c1;
 }
 .dependency-graph-legend-line.is-implicit { border-top-style: dashed; border-top-color: var(--warning); }
+
+/* Analyze failures with Copilot (job Operations tab) */
+.analyze-failures-card { margin-bottom: 16px; }
+.analyze-status {
+  margin: 8px 0 0;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.analyze-status-running { color: var(--muted); }
+.analyze-status-running::before {
+  content: "";
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--border);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: analyze-spin 0.8s linear infinite;
+  flex: none;
+}
+.analyze-status-error { color: var(--danger); }
+.analyze-status-done { color: var(--success); }
+@keyframes analyze-spin { to { transform: rotate(360deg); } }
+.analyze-output {
+  margin-top: 12px;
+  padding: 12px 16px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+}
+.analyze-output > :first-child { margin-top: 0; }
+.analyze-output > :last-child { margin-bottom: 0; }
+.analyze-output h1, .analyze-output h2, .analyze-output h3, .analyze-output h4 {
+  margin: 14px 0 6px;
+  font-size: 15px;
+}
+.analyze-output p, .analyze-output ul, .analyze-output ol { margin: 6px 0; }
+.analyze-output ul, .analyze-output ol { padding-left: 22px; }
+.analyze-output pre {
+  background: #f6f8fa;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  overflow-x: auto;
+  white-space: pre-wrap;
+}
+@media (prefers-reduced-motion: reduce) {
+  .analyze-status-running::before { animation: none; }
+}

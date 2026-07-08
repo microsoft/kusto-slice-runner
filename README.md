@@ -15,6 +15,7 @@ If you're familiar with [scheduled Kusto jobs](https://learn.microsoft.com/kusto
 - You can rerun slices! Click on any slice in the colorful window history view and then click "Rerun this slice" to get into that experience. This will properly handle dependent jobs too, but you'll need to make sure the Kusto tables are ready to accept the new data. KO Lite only reruns the jobs, it doesn't delete old data.
 - You can both soft delete a job (keep the history to be resurrected in the future) or hard delete a job (permanently remove it and its history). Hard-delete avoids any problems around re-creating a job with the same id as a previous one.
 - Pause immediately blocks any future scheduling from happening. This includes retry loops! So when you pause a job, it will continue any in-flight set-or-append command but if that fails, it won't retry. After you unpause, it will pick up where it left off in the retry logic.
+- Inside any job, click on the Operations tab and then click "Analyze failures" to get detailed AI analysis of recent issues.
 
 ## What it does
 
