@@ -328,6 +328,24 @@ ORDER BY recorded_at_utc DESC
 LIMIT 30;
 ```
 
+## Analyze failures with Copilot
+
+From a job's **Operations** tab, **Analyze failures** asks Copilot to explain the job's recent failures. KO Lite sends secret-sanitized failure evidence (error codes and messages, attempts, and recent slice states) to an OpenAI-compatible endpoint — **GitHub Models** by default — through the `Microsoft.Extensions.AI` `IChatClient`, then renders the returned Markdown in the panel. It writes nothing to Kusto and persists no analysis remotely.
+
+Like the update check, authentication reuses the **GitHub CLI (`gh`)** sign-in: the token is fetched on demand via `gh auth token`, so there is no token to configure. When `gh` is missing or signed out, the panel shows `gh auth login` guidance. The feature requires **GitHub Models** to be enabled for your account or organization.
+
+Configure it under `KoLite:CopilotAnalysis`:
+
+| Key | Default | Purpose |
+| --- | --- | --- |
+| `Enabled` | `true` | Set `false` to disable the feature. |
+| `Endpoint` | `https://models.github.ai/inference` | Any OpenAI-compatible inference endpoint. |
+| `Model` | `openai/gpt-4.1` | Model id served by the endpoint. |
+| `TimeoutSeconds` | `120` | Per-request timeout. |
+| `MaxOutputTokens` | (unset) | Optional cap on response length. |
+
+Point `Endpoint`/`Model` at any OpenAI-compatible gateway to use a different or stronger model without a code change.
+
 ## Rerun and cleanup
 
 From a slice detail page, use **Rerun this slice** to open the rerun planner. The planner also accepts a UTC start/end range and shows every root and downstream slice whose local state will be reset.

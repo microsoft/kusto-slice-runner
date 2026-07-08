@@ -35,8 +35,8 @@ Keep `dotnet format` at the default severity. Info-level analyzer cleanup is int
 ## Dependency and notice validation
 
 - Confirm `package-lock.json` matches `package.json`.
-- Confirm Chart.js assets under `src\KoLite.LocalApp\wwwroot\lib\chartjs` and Cytoscape.js assets under `src\KoLite.LocalApp\wwwroot\lib\cytoscape` match the restored npm packages when intentionally refreshed.
-- Confirm `THIRD-PARTY-NOTICES.md` includes Chart.js, `@kurkle/color`, Cytoscape.js, and cytoscape-dagre.
+- Confirm Chart.js assets under `src\KoLite.LocalApp\wwwroot\lib\chartjs`, Cytoscape.js assets under `src\KoLite.LocalApp\wwwroot\lib\cytoscape`, and marked assets under `src\KoLite.LocalApp\wwwroot\lib\marked` match the restored npm packages when intentionally refreshed.
+- Confirm `THIRD-PARTY-NOTICES.md` includes Chart.js, `@kurkle/color`, Cytoscape.js, cytoscape-dagre, and marked.
 - Confirm internal owner/support/security metadata is present and current.
 
 ## Publish smoke
