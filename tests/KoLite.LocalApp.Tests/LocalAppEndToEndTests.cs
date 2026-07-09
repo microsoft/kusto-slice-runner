@@ -52,7 +52,14 @@ namespace KoLite.LocalApp.Tests
                     config.AddInMemoryCollection(new Dictionary<string, string?>
                     {
                         ["ConnectionStrings:KoLiteSqlite"] = databasePath,
-                        ["KoLite:Scheduler:Enabled"] = "false"
+                        ["KoLite:Scheduler:Enabled"] = "false",
+                        // Silence the background services that perform their own network I/O and
+                        // concurrent SQLite writes. They are unrelated to what this end-to-end test
+                        // verifies, and their nondeterministic activity against the shared file-backed
+                        // database was an intermittent source of transient read failures (a 500 from
+                        // the history page). LocalAppWebTests disables UpdateCheck for the same reason.
+                        ["KoLite:UpdateCheck:Enabled"] = "false",
+                        ["KoLite:Retention:Enabled"] = "false"
                     });
                 });
                 builder.ConfigureServices(services => services.AddLogging(logging => logging.ClearProviders()));
