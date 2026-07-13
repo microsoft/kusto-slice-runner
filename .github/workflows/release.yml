@@ -684,7 +684,7 @@ jobs:
       - name: Generate optional AI highlights
         id: ai-highlights
         continue-on-error: true
-        uses: actions/ai-inference@v1
+        uses: actions/ai-inference@v2
         with:
           prompt-file: ${{ steps.ai-prompt.outputs.prompt-file }}
           system-prompt-file: ./.github/prompts/release-notes-system.txt
