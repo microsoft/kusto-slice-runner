@@ -782,7 +782,7 @@ jobs:
               [System.Text.UTF8Encoding]::new($false))
 
       - name: Upload release-note grounding
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ko-lite-release-grounding-${{ steps.validate.outputs.version }}
           path: ${{ steps.generated-notes.outputs.grounding-dir }}
