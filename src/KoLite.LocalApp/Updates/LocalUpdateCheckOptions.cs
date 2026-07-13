@@ -3,10 +3,9 @@ using Microsoft.Extensions.Configuration;
 
 namespace KoLite.LocalApp.Updates
 {
-    public sealed record LocalUpdateCheckOptions(bool Enabled, TimeSpan Interval, string Repository, string Branch)
+    public sealed record LocalUpdateCheckOptions(bool Enabled, TimeSpan Interval, string Repository)
     {
         public const string DefaultRepository = "microsoft/kusto-slice-runner";
-        public const string DefaultBranch = "main";
         public static TimeSpan DefaultInterval { get; } = TimeSpan.FromHours(1);
 
         public static LocalUpdateCheckOptions From(IConfiguration configuration)
@@ -23,10 +22,7 @@ namespace KoLite.LocalApp.Updates
             var repository = configuration["KoLite:UpdateCheck:Repository"];
             if (string.IsNullOrWhiteSpace(repository)) repository = DefaultRepository;
 
-            var branch = configuration["KoLite:UpdateCheck:Branch"];
-            if (string.IsNullOrWhiteSpace(branch)) branch = DefaultBranch;
-
-            return new LocalUpdateCheckOptions(enabled, interval, repository.Trim(), branch.Trim());
+            return new LocalUpdateCheckOptions(enabled, interval, repository.Trim());
         }
     }
 }

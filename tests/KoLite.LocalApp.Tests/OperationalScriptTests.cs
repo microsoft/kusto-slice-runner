@@ -1,3 +1,5 @@
+using System.Diagnostics;
+
 namespace KoLite.LocalApp.Tests
 {
     public sealed class OperationalScriptTests
@@ -46,16 +48,56 @@ namespace KoLite.LocalApp.Tests
         }
 
         [Fact]
-        public void Start_script_runs_published_dll_from_deployed_folder()
+        public void Start_script_prefers_published_executable_and_falls_back_to_dotnet()
         {
             var script = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "scripts", "Start-KoLiteApp.ps1"));
 
             Assert.Contains("[switch]$DryRun", script, StringComparison.Ordinal);
             Assert.Contains("if ($DryRun)", script, StringComparison.Ordinal);
+            Assert.Contains("KoLite.LocalApp.exe", script, StringComparison.Ordinal);
             Assert.Contains("KoLite.LocalApp.dll", script, StringComparison.Ordinal);
             Assert.Contains("$PSScriptRoot", script, StringComparison.Ordinal);
             Assert.Contains("run-app", script, StringComparison.Ordinal);
+            Assert.Contains("& $exePath", script, StringComparison.Ordinal);
             Assert.Contains("& dotnet", script, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void Start_script_dry_run_prefers_self_contained_executable()
+        {
+            var packageDirectory = CreatePackageDirectory();
+            try
+            {
+                File.WriteAllText(Path.Combine(packageDirectory, "KoLite.LocalApp.exe"), string.Empty);
+                File.WriteAllText(Path.Combine(packageDirectory, "KoLite.LocalApp.dll"), string.Empty);
+
+                var output = RunStartScriptDryRun(packageDirectory);
+
+                Assert.Contains(Path.Combine(packageDirectory, "KoLite.LocalApp.exe"), output, StringComparison.OrdinalIgnoreCase);
+                Assert.DoesNotContain($"dotnet \"{Path.Combine(packageDirectory, "KoLite.LocalApp.dll")}\"", output, StringComparison.OrdinalIgnoreCase);
+            }
+            finally
+            {
+                Directory.Delete(packageDirectory, recursive: true);
+            }
+        }
+
+        [Fact]
+        public void Start_script_dry_run_uses_dotnet_for_dll_only_package()
+        {
+            var packageDirectory = CreatePackageDirectory();
+            try
+            {
+                File.WriteAllText(Path.Combine(packageDirectory, "KoLite.LocalApp.dll"), string.Empty);
+
+                var output = RunStartScriptDryRun(packageDirectory);
+
+                Assert.Contains($"dotnet \"{Path.Combine(packageDirectory, "KoLite.LocalApp.dll")}\"", output, StringComparison.OrdinalIgnoreCase);
+            }
+            finally
+            {
+                Directory.Delete(packageDirectory, recursive: true);
+            }
         }
 
         public static IEnumerable<object[]> OperationalScripts()
@@ -80,6 +122,39 @@ namespace KoLite.LocalApp.Tests
             }
 
             throw new DirectoryNotFoundException("Could not find ko-lite repository root.");
+        }
+
+        private static string CreatePackageDirectory()
+        {
+            var path = Path.Combine(Path.GetTempPath(), "ko-lite-start-script-tests", Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(path);
+            return path;
+        }
+
+        private static string RunStartScriptDryRun(string packageDirectory)
+        {
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = "powershell.exe",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+            startInfo.ArgumentList.Add("-NoProfile");
+            startInfo.ArgumentList.Add("-File");
+            startInfo.ArgumentList.Add(Path.Combine(FindRepositoryRoot(), "scripts", "Start-KoLiteApp.ps1"));
+            startInfo.ArgumentList.Add("-AppDirectory");
+            startInfo.ArgumentList.Add(packageDirectory);
+            startInfo.ArgumentList.Add("-DryRun");
+
+            using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("Could not start powershell.exe.");
+            var standardOutput = process.StandardOutput.ReadToEnd();
+            var standardError = process.StandardError.ReadToEnd();
+            process.WaitForExit();
+
+            Assert.True(process.ExitCode == 0, $"Start-KoLiteApp.ps1 failed with exit code {process.ExitCode}: {standardError}");
+            return standardOutput;
         }
     }
 }

@@ -17,14 +17,37 @@ namespace KoLite.LocalApp.Updates
 
         public async Task<RepositoryUpdateCheckResult> CheckAsync(
             string repository,
-            string branch,
             string? builtSha,
             CancellationToken cancellationToken)
         {
-            var shaResult = await RunGhAsync(
-                $"api repos/{repository}/commits/{branch} --jq .sha",
+            var releaseResult = await RunGhAsync(
+                $"api repos/{repository}/releases/latest --jq \"[.tag_name, .html_url] | @tsv\"",
                 cancellationToken).ConfigureAwait(false);
 
+            if (!releaseResult.Completed)
+            {
+                if (LooksLikeNotFound(releaseResult.ErrorMessage) &&
+                    await RepositoryExistsAsync(repository, cancellationToken).ConfigureAwait(false))
+                {
+                    return RepositoryUpdateCheckResult.Failure(
+                        UpdateCheckUnavailableReason.NoPublishedRelease,
+                        $"No published release is available for {repository}.");
+                }
+
+                return RepositoryUpdateCheckResult.Failure(releaseResult.Reason, releaseResult.ErrorMessage);
+            }
+
+            if (!TryParseLatestRelease(releaseResult.StandardOutput, out var latestVersion, out var releaseUrl))
+            {
+                return RepositoryUpdateCheckResult.Failure(
+                    UpdateCheckUnavailableReason.Unknown,
+                    "GitHub returned incomplete latest release metadata.");
+            }
+
+            var encodedVersion = Uri.EscapeDataString(latestVersion);
+            var shaResult = await RunGhAsync(
+                $"api repos/{repository}/commits/{encodedVersion} --jq .sha",
+                cancellationToken).ConfigureAwait(false);
             if (!shaResult.Completed)
             {
                 return RepositoryUpdateCheckResult.Failure(shaResult.Reason, shaResult.ErrorMessage);
@@ -41,38 +64,77 @@ namespace KoLite.LocalApp.Updates
             if (string.IsNullOrWhiteSpace(builtSha) ||
                 string.Equals(builtSha, latestSha, StringComparison.OrdinalIgnoreCase))
             {
-                return RepositoryUpdateCheckResult.Success(latestSha, RepositoryComparison.Identical, commitsBehind: 0, commitsAhead: 0);
+                return RepositoryUpdateCheckResult.Success(
+                    latestSha,
+                    RepositoryComparison.Identical,
+                    commitsBehind: 0,
+                    commitsAhead: 0,
+                    latestVersion,
+                    releaseUrl);
             }
 
-            return await CompareAsync(repository, branch, builtSha!, latestSha, cancellationToken).ConfigureAwait(false);
+            return await CompareAsync(
+                repository,
+                builtSha!,
+                latestSha,
+                latestVersion,
+                releaseUrl,
+                cancellationToken).ConfigureAwait(false);
         }
 
         private async Task<RepositoryUpdateCheckResult> CompareAsync(
             string repository,
-            string branch,
             string builtSha,
             string latestSha,
+            string latestVersion,
+            string releaseUrl,
             CancellationToken cancellationToken)
         {
             var compareResult = await RunGhAsync(
-                $"api repos/{repository}/compare/{builtSha}...{branch} --jq \"[.status, .ahead_by, .behind_by] | @tsv\"",
+                $"api repos/{repository}/compare/{builtSha}...{latestSha} --jq \"[.status, .ahead_by, .behind_by] | @tsv\"",
                 cancellationToken).ConfigureAwait(false);
 
             if (compareResult.Completed &&
                 TryParseComparison(compareResult.StandardOutput, out var status, out var aheadBy, out var behindBy))
             {
                 var (comparison, commitsBehind, commitsAhead) = MapComparison(status, aheadBy, behindBy);
-                return RepositoryUpdateCheckResult.Success(latestSha, comparison, commitsBehind, commitsAhead);
+                return RepositoryUpdateCheckResult.Success(
+                    latestSha,
+                    comparison,
+                    commitsBehind,
+                    commitsAhead,
+                    latestVersion,
+                    releaseUrl);
             }
 
             // The remote HEAD is known, so the overall check still succeeds; the comparison is best-effort.
             if (!compareResult.Completed && LooksLikeUnknownCommit(compareResult.ErrorMessage))
             {
                 // The built commit is not on the remote (e.g. an unpushed local build): treat as ahead.
-                return RepositoryUpdateCheckResult.Success(latestSha, RepositoryComparison.LocalAhead, commitsBehind: null, commitsAhead: null);
+                return RepositoryUpdateCheckResult.Success(
+                    latestSha,
+                    RepositoryComparison.LocalAhead,
+                    commitsBehind: null,
+                    commitsAhead: null,
+                    latestVersion,
+                    releaseUrl);
             }
 
-            return RepositoryUpdateCheckResult.Success(latestSha, RepositoryComparison.Unknown, commitsBehind: null, commitsAhead: null);
+            return RepositoryUpdateCheckResult.Success(
+                latestSha,
+                RepositoryComparison.Unknown,
+                commitsBehind: null,
+                commitsAhead: null,
+                latestVersion,
+                releaseUrl);
+        }
+
+        private async Task<bool> RepositoryExistsAsync(string repository, CancellationToken cancellationToken)
+        {
+            var result = await RunGhAsync(
+                $"api repos/{repository} --jq .full_name",
+                cancellationToken).ConfigureAwait(false);
+            return result.Completed && !string.IsNullOrWhiteSpace(result.StandardOutput);
         }
 
         public static (RepositoryComparison Comparison, int? CommitsBehind, int? CommitsAhead) MapComparison(
@@ -91,6 +153,25 @@ namespace KoLite.LocalApp.Updates
                 "diverged" => (RepositoryComparison.Diverged, aheadBy, behindBy),
                 _ => (RepositoryComparison.Unknown, null, null)
             };
+        }
+
+        public static bool TryParseLatestRelease(string output, out string version, out string releaseUrl)
+        {
+            version = string.Empty;
+            releaseUrl = string.Empty;
+
+            var line = output.Replace("\r", string.Empty, StringComparison.Ordinal)
+                .Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                .FirstOrDefault();
+            if (string.IsNullOrWhiteSpace(line)) return false;
+
+            var parts = line.Split('\t');
+            if (parts.Length < 2) return false;
+
+            version = parts[0].Trim();
+            releaseUrl = parts[1].Trim();
+            return !string.IsNullOrWhiteSpace(version) &&
+                Uri.TryCreate(releaseUrl, UriKind.Absolute, out _);
         }
 
         private static bool TryParseComparison(string output, out string status, out int aheadBy, out int behindBy)
@@ -122,6 +203,13 @@ namespace KoLite.LocalApp.Updates
             return text.Contains("404") ||
                 text.Contains("no commit found") ||
                 text.Contains("not found");
+        }
+
+        private static bool LooksLikeNotFound(string? errorText)
+        {
+            if (string.IsNullOrWhiteSpace(errorText)) return false;
+            var text = errorText.ToLowerInvariant();
+            return text.Contains("404") || text.Contains("not found");
         }
 
         private async Task<GhProcessResult> RunGhAsync(string arguments, CancellationToken cancellationToken)

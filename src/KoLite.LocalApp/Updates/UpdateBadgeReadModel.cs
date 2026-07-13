@@ -11,7 +11,7 @@ namespace KoLite.LocalApp.Updates
         bool ShowLink,
         string LinkUrl,
         string Repository,
-        string Branch,
+        string LatestVersion,
         string BuiltShaShort,
         string RemoteShaShort,
         int? CommitsBehind,
@@ -40,27 +40,29 @@ namespace KoLite.LocalApp.Updates
         {
             var snapshot = runtimeState.GetSnapshot();
             var repository = options.Repository;
-            var branch = options.Branch;
             var builtShort = BuildInfo.ShortSha(snapshot.BuiltSha);
             var remoteShort = BuildInfo.ShortSha(snapshot.RemoteSha);
             var repoUrl = $"https://github.com/{repository}";
+            var releaseDescription = string.IsNullOrWhiteSpace(snapshot.LatestVersion)
+                ? "the latest published release"
+                : $"published release {snapshot.LatestVersion}";
 
             var (statusKey, label, title) = snapshot.Status switch
             {
-                UpdateCheckStatus.UpToDate => ("uptodate", "Up to date", $"KO Lite is up to date with {repository} ({branch})."),
-                UpdateCheckStatus.UpdateAvailable => ("update", BuildUpdateLabel(snapshot.CommitsBehind), $"A newer version of KO Lite is available on {repository} ({branch})."),
-                UpdateCheckStatus.Ahead => ("ahead", BuildAheadLabel(snapshot.CommitsAhead), $"This build is ahead of {repository} ({branch})."),
-                UpdateCheckStatus.Diverged => ("diverged", BuildDivergedLabel(snapshot.CommitsAhead, snapshot.CommitsBehind), $"This build has diverged from {repository} ({branch})."),
+                UpdateCheckStatus.UpToDate => ("uptodate", "Up to date", $"KO Lite is up to date with {releaseDescription}."),
+                UpdateCheckStatus.UpdateAvailable => ("update", BuildUpdateLabel(snapshot.LatestVersion, snapshot.CommitsBehind), $"A newer KO Lite release is available: {releaseDescription}."),
+                UpdateCheckStatus.Ahead => ("ahead", BuildAheadLabel(snapshot.CommitsAhead), $"This build is ahead of {releaseDescription}."),
+                UpdateCheckStatus.Diverged => ("diverged", BuildDivergedLabel(snapshot.CommitsAhead, snapshot.CommitsBehind), $"This build has diverged from {releaseDescription}."),
                 UpdateCheckStatus.Checking => ("checking", "Checking\u2026", "Checking for updates\u2026"),
                 _ => ("unavailable", "Updates: unavailable", "Update checks are unavailable.")
             };
 
             var showLink = snapshot.Status == UpdateCheckStatus.UpdateAvailable;
-            var linkUrl = showLink && !string.IsNullOrWhiteSpace(snapshot.BuiltSha)
-                ? $"{repoUrl}/compare/{snapshot.BuiltSha}...{branch}"
-                : $"{repoUrl}/commits/{branch}";
+            var linkUrl = showLink && !string.IsNullOrWhiteSpace(snapshot.ReleaseUrl)
+                ? snapshot.ReleaseUrl
+                : $"{repoUrl}/releases/latest";
 
-            var detailLines = BuildDetailLines(snapshot, repository, branch, builtShort, remoteShort);
+            var detailLines = BuildDetailLines(snapshot, repository, builtShort, remoteShort);
             var (remediationTitle, remediationSteps) = BuildRemediation(snapshot, repository);
 
             return new UpdateBadgeViewModel(
@@ -71,7 +73,7 @@ namespace KoLite.LocalApp.Updates
                 showLink,
                 linkUrl,
                 repository,
-                branch,
+                snapshot.LatestVersion ?? string.Empty,
                 builtShort,
                 remoteShort,
                 snapshot.CommitsBehind,
@@ -81,8 +83,13 @@ namespace KoLite.LocalApp.Updates
                 remediationSteps);
         }
 
-        private static string BuildUpdateLabel(int? commitsBehind)
+        private static string BuildUpdateLabel(string? latestVersion, int? commitsBehind)
         {
+            if (!string.IsNullOrWhiteSpace(latestVersion))
+            {
+                return $"Update available ({latestVersion})";
+            }
+
             if (commitsBehind is > 0)
             {
                 return commitsBehind == 1 ? "Update available (1 behind)" : $"Update available ({commitsBehind} behind)";
@@ -114,19 +121,23 @@ namespace KoLite.LocalApp.Updates
         private IReadOnlyList<string> BuildDetailLines(
             UpdateCheckSnapshot snapshot,
             string repository,
-            string branch,
             string builtShort,
             string remoteShort)
         {
             var lines = new List<string>
             {
-                $"Repository: {repository} ({branch})",
+                $"Repository: {repository}",
                 $"This build: {(string.IsNullOrEmpty(builtShort) ? "unknown" : builtShort)}"
             };
 
+            if (!string.IsNullOrWhiteSpace(snapshot.LatestVersion))
+            {
+                lines.Add($"Latest release: {snapshot.LatestVersion}");
+            }
+
             if (!string.IsNullOrEmpty(remoteShort))
             {
-                lines.Add($"Latest remote: {remoteShort}");
+                lines.Add($"Release commit: {remoteShort}");
             }
 
             if (snapshot.CommitsBehind is > 0)
@@ -169,6 +180,10 @@ namespace KoLite.LocalApp.Updates
                 {
                     "This build wasn't stamped with a git commit, so it can't be compared.",
                     "Build KO Lite from a git checkout to enable update checks."
+                },
+                UpdateCheckUnavailableReason.NoPublishedRelease => new List<string>
+                {
+                    $"No published release is available for {repository} yet."
                 },
                 UpdateCheckUnavailableReason.GhMissing => new List<string>
                 {

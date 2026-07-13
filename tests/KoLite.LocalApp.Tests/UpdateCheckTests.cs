@@ -34,7 +34,6 @@ namespace KoLite.LocalApp.Tests
             Assert.True(options.Enabled);
             Assert.Equal(TimeSpan.FromHours(1), options.Interval);
             Assert.Equal("microsoft/kusto-slice-runner", options.Repository);
-            Assert.Equal("main", options.Branch);
         }
 
         [Fact]
@@ -45,8 +44,7 @@ namespace KoLite.LocalApp.Tests
                 {
                     ["KoLite:UpdateCheck:Enabled"] = "false",
                     ["KoLite:UpdateCheck:Interval"] = "00:15:00",
-                    ["KoLite:UpdateCheck:Repository"] = "azure-core/other",
-                    ["KoLite:UpdateCheck:Branch"] = "release"
+                    ["KoLite:UpdateCheck:Repository"] = "azure-core/other"
                 })
                 .Build();
             var options = LocalUpdateCheckOptions.From(configuration);
@@ -54,7 +52,6 @@ namespace KoLite.LocalApp.Tests
             Assert.False(options.Enabled);
             Assert.Equal(TimeSpan.FromMinutes(15), options.Interval);
             Assert.Equal("azure-core/other", options.Repository);
-            Assert.Equal("release", options.Branch);
         }
 
         [Fact]
@@ -98,7 +95,7 @@ namespace KoLite.LocalApp.Tests
         }
 
         [Fact]
-        public void Badge_for_update_available_links_to_the_compare_view_and_shows_commits_behind()
+        public void Badge_for_update_available_links_to_the_published_release()
         {
             var snapshot = new UpdateCheckSnapshot(
                 UpdateCheckStatus.UpdateAvailable,
@@ -108,13 +105,16 @@ namespace KoLite.LocalApp.Tests
                 CommitsBehind: 3,
                 CommitsAhead: null,
                 LastCheckedUtc: DateTimeOffset.Parse("2026-06-05T16:00:00Z"),
-                ErrorMessage: null);
+                ErrorMessage: null,
+                LatestVersion: "v1.2.0",
+                ReleaseUrl: "https://github.com/microsoft/kusto-slice-runner/releases/tag/v1.2.0");
             var badge = BuildBadge(snapshot, DateTimeOffset.Parse("2026-06-05T16:01:00Z"));
 
             Assert.Equal("update", badge.StatusKey);
-            Assert.Contains("3 behind", badge.Label);
+            Assert.Contains("v1.2.0", badge.Label);
             Assert.True(badge.ShowLink);
-            Assert.Contains("/compare/1111111111111111111111111111111111111111...main", badge.LinkUrl);
+            Assert.Equal("https://github.com/microsoft/kusto-slice-runner/releases/tag/v1.2.0", badge.LinkUrl);
+            Assert.Equal("v1.2.0", badge.LatestVersion);
             Assert.False(badge.HasRemediation);
         }
 
@@ -165,6 +165,46 @@ namespace KoLite.LocalApp.Tests
             Assert.Equal(RepositoryComparison.Unknown, comparison);
             Assert.Null(commitsBehind);
             Assert.Null(commitsAhead);
+        }
+
+        [Fact]
+        public void TryParseLatestRelease_reads_tag_and_release_url()
+        {
+            var parsed = GhCliRepositoryUpdateChecker.TryParseLatestRelease(
+                "v1.2.3\thttps://github.com/microsoft/kusto-slice-runner/releases/tag/v1.2.3\r\n",
+                out var version,
+                out var releaseUrl);
+
+            Assert.True(parsed);
+            Assert.Equal("v1.2.3", version);
+            Assert.Equal("https://github.com/microsoft/kusto-slice-runner/releases/tag/v1.2.3", releaseUrl);
+        }
+
+        [Theory]
+        [InlineData("")]
+        [InlineData("v1.2.3")]
+        [InlineData("v1.2.3\tnot-a-url")]
+        public void TryParseLatestRelease_rejects_incomplete_metadata(string output)
+        {
+            Assert.False(GhCliRepositoryUpdateChecker.TryParseLatestRelease(output, out _, out _));
+        }
+
+        [Fact]
+        public void Badge_for_no_published_release_explains_the_channel_state()
+        {
+            var snapshot = new UpdateCheckSnapshot(
+                UpdateCheckStatus.Unavailable,
+                UpdateCheckUnavailableReason.NoPublishedRelease,
+                BuiltSha: "1111111111111111111111111111111111111111",
+                RemoteSha: null,
+                CommitsBehind: null,
+                CommitsAhead: null,
+                LastCheckedUtc: DateTimeOffset.Parse("2026-06-05T16:00:00Z"),
+                ErrorMessage: null);
+            var badge = BuildBadge(snapshot, DateTimeOffset.Parse("2026-06-05T16:00:30Z"));
+
+            Assert.Equal("unavailable", badge.StatusKey);
+            Assert.Contains(badge.RemediationSteps, step => step.Contains("No published release", StringComparison.Ordinal));
         }
 
         [Fact]
@@ -273,7 +313,9 @@ namespace KoLite.LocalApp.Tests
                 CommitsBehind: 2,
                 CommitsAhead: null,
                 LastCheckedUtc: DateTimeOffset.Parse("2026-06-05T16:00:00Z"),
-                ErrorMessage: null);
+                ErrorMessage: null,
+                LatestVersion: "v1.2.0",
+                ReleaseUrl: "https://github.com/microsoft/kusto-slice-runner/releases/tag/v1.2.0");
 
             using var factory = CreateFactory(enableUpdateCheck: false, configureServices: services =>
             {
@@ -286,7 +328,7 @@ namespace KoLite.LocalApp.Tests
 
             Assert.Contains("update-badge-update", html);
             Assert.Contains("Update available", html);
-            Assert.Contains("View changes on GitHub", html);
+            Assert.Contains("View release on GitHub", html);
         }
 
         [Fact]
@@ -330,13 +372,19 @@ namespace KoLite.LocalApp.Tests
             Assert.Equal("Disabled", updateCheck.GetProperty("reason").GetString());
             Assert.False(updateCheck.GetProperty("enabled").GetBoolean());
             Assert.Equal("microsoft/kusto-slice-runner", updateCheck.GetProperty("repository").GetString());
-            Assert.Equal("main", updateCheck.GetProperty("branch").GetString());
+            Assert.Equal("latest-release", updateCheck.GetProperty("channel").GetString());
         }
 
         [Fact]
         public async Task Background_service_flags_update_available_when_remote_is_ahead_of_the_build()
         {
-            var fake = new FakeRepositoryUpdateChecker(RepositoryUpdateCheckResult.Success("remote-sha", RepositoryComparison.RemoteAhead, commitsBehind: 4, commitsAhead: 0));
+            var fake = new FakeRepositoryUpdateChecker(RepositoryUpdateCheckResult.Success(
+                "remote-sha",
+                RepositoryComparison.RemoteAhead,
+                commitsBehind: 4,
+                commitsAhead: 0,
+                latestVersion: "v1.2.0",
+                releaseUrl: "https://github.com/microsoft/kusto-slice-runner/releases/tag/v1.2.0"));
             using var factory = CreateFactory(enableUpdateCheck: true, builtSha: "build-sha", configureServices: services =>
             {
                 services.RemoveAll<IRepositoryUpdateChecker>();
@@ -348,6 +396,7 @@ namespace KoLite.LocalApp.Tests
 
             Assert.Equal("UpdateAvailable", status.GetProperty("status").GetString());
             Assert.Equal("remote-sha", status.GetProperty("remoteSha").GetString());
+            Assert.Equal("v1.2.0", status.GetProperty("latestVersion").GetString());
             Assert.Equal(4, status.GetProperty("commitsBehind").GetInt32());
         }
 
@@ -466,7 +515,6 @@ namespace KoLite.LocalApp.Tests
 
             public Task<RepositoryUpdateCheckResult> CheckAsync(
                 string repository,
-                string branch,
                 string? builtSha,
                 CancellationToken cancellationToken) => Task.FromResult(result);
         }

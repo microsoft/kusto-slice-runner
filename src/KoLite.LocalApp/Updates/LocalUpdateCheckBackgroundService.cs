@@ -71,7 +71,7 @@ namespace KoLite.LocalApp.Updates
             try
             {
                 result = await checker
-                    .CheckAsync(options.Repository, options.Branch, buildVersion.CommitSha, cancellationToken)
+                    .CheckAsync(options.Repository, buildVersion.CommitSha, cancellationToken)
                     .ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -132,16 +132,19 @@ namespace KoLite.LocalApp.Updates
                 CommitsBehind: status == UpdateCheckStatus.UpToDate ? null : result.CommitsBehind,
                 CommitsAhead: result.CommitsAhead,
                 LastCheckedUtc: nowUtc,
-                ErrorMessage: null);
+                ErrorMessage: null,
+                LatestVersion: result.LatestVersion,
+                ReleaseUrl: result.ReleaseUrl);
         }
 
         private void RecordTransition(UpdateCheckSnapshot snapshot)
         {
             logger.LogInformation(
-                "Update check status is now {Status} (reason {Reason}). Built {BuiltSha}, remote {RemoteSha}.",
+                "Update check status is now {Status} (reason {Reason}). Built {BuiltSha}, release {LatestVersion} at {RemoteSha}.",
                 snapshot.Status,
                 snapshot.Reason,
                 BuildInfo.ShortSha(snapshot.BuiltSha),
+                snapshot.LatestVersion,
                 BuildInfo.ShortSha(snapshot.RemoteSha));
 
             try
@@ -153,9 +156,11 @@ namespace KoLite.LocalApp.Updates
                     status = snapshot.Status.ToString(),
                     reason = snapshot.Reason.ToString(),
                     repository = options.Repository,
-                    branch = options.Branch,
+                    channel = "latest-release",
                     builtSha = snapshot.BuiltSha,
                     remoteSha = snapshot.RemoteSha,
+                    latestVersion = snapshot.LatestVersion,
+                    releaseUrl = snapshot.ReleaseUrl,
                     commitsBehind = snapshot.CommitsBehind,
                     commitsAhead = snapshot.CommitsAhead,
                     lastCheckedUtc = snapshot.LastCheckedUtc?.ToString("O", CultureInfo.InvariantCulture)

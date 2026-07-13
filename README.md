@@ -35,9 +35,27 @@ If you're familiar with [scheduled Kusto jobs](https://learn.microsoft.com/kusto
 - Plans historical reruns and local state repair while leaving destructive Kusto cleanup to the operator.
 - Exposes a localhost-only JSON API so a same-machine agent can read jobs, create/update schedules (via the same validated import path as the dashboard), and soft-delete/restore a job — plus a read-only **diagnostics** API for slice states, leases, throughput, history, logs, and audit.
 - Ships **Copilot skills** in `.github/skills`: `ko-lite-job-manager` drives that API (import/upsert, pause/resume, soft-delete/restore, diagnostics), `ko-lite-schedule-json` authors and validates schedule JSON locally, and a `kusto` query helper.
-- Periodically checks GitHub (via the `gh` CLI) for newer KO Lite commits and shows an update badge in the top bar.
+- Periodically checks GitHub (via the `gh` CLI) for a newer published KO Lite release and shows an update badge in the top bar.
 
-## Quick start
+## Quick start from a release
+
+Open the [latest GitHub Release](https://github.com/microsoft/kusto-slice-runner/releases/latest) and download one of these Windows x64 packages:
+
+- `ko-lite-<version>-win-x64-self-contained.zip` includes the .NET runtime and is the easiest option.
+- `ko-lite-<version>-win-x64-framework-dependent.zip` is smaller but requires the .NET 10 runtime.
+
+Extract the ZIP to a stable folder. Sign in with Azure CLI for Kusto access, then make the first start with scheduling disabled:
+
+```powershell
+az login
+.\Start-KoLiteApp.ps1 -AppArguments '--KoLite:Scheduler:Enabled=false'
+```
+
+Open `http://127.0.0.1:5057` and check `http://127.0.0.1:5057/status/health`. Review the configured jobs and Kusto targets before restarting without the scheduler override. The local catalog and execution history remain in `%LOCALAPPDATA%\KoLite\ko-lite.db`, outside the extracted application folder, so replacing the application folder does not replace your runtime state.
+
+GitHub CLI is optional for basic execution but is required for the update badge and Copilot-powered failure analysis. Run `gh auth login` once to enable those features.
+
+## Quick start from source
 
 From the repository root:
 
@@ -82,6 +100,7 @@ Analyze failures with Copilot:
 | Localhost API for agent-driven job management | [Local management API](docs/local-api.md) |
 | Safe local runs, configuration, diagnostics, and reruns | [Operations runbook](docs/operations-runbook.md) |
 | Repository layout, restore, build, and test commands | [Development guide](DEVELOPMENT.md) |
+| Creating and reviewing GitHub Releases | [Release guide](docs/releasing.md) |
 | Standalone repo validation checklist | [Release readiness checklist](docs/release-readiness-checklist.md) |
 
 ## Support and security

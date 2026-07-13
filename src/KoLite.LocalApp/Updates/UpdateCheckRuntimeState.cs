@@ -8,7 +8,9 @@ namespace KoLite.LocalApp.Updates
         int? CommitsBehind,
         int? CommitsAhead,
         DateTimeOffset? LastCheckedUtc,
-        string? ErrorMessage)
+        string? ErrorMessage,
+        string? LatestVersion = null,
+        string? ReleaseUrl = null)
     {
         public static UpdateCheckSnapshot Initial(bool enabled, string? builtSha)
         {

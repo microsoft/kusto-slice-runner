@@ -64,10 +64,9 @@ dotnet run --project .\src\KoLite.LocalApp\KoLite.LocalApp.csproj -- --Connectio
 | `KoLite:Throttling:MinDurationSamples` | `5` | Minimum successful samples before a keep-up floor is estimated. |
 | `KoLite:Throttling:DurationPercentile` | `0.75` | Percentile of successful slice durations used as the robust duration estimate. |
 | `KoLite:Throttling:KeepUpSafetyFactor` | `1.5` | Margin above the bare keep-up parallelism (`1.0` = exactly keep up). |
-| `KoLite:UpdateCheck:Enabled` | `true` | Periodically checks GitHub for newer KO Lite commits. Set `false` to disable. |
+| `KoLite:UpdateCheck:Enabled` | `true` | Periodically checks GitHub for a newer published KO Lite release. Set `false` to disable. |
 | `KoLite:UpdateCheck:Interval` | `01:00:00` | How often to poll GitHub. Must be greater than zero. |
-| `KoLite:UpdateCheck:Repository` | `microsoft/kusto-slice-runner` | `owner/repo` to compare against. |
-| `KoLite:UpdateCheck:Branch` | `main` | Branch whose HEAD is compared to the running build. |
+| `KoLite:UpdateCheck:Repository` | `microsoft/kusto-slice-runner` | `owner/repo` whose latest published release is compared to the running build. |
 | `KoLite:Retention:Enabled` | `true` | Periodically prunes old operational telemetry so the local database stops growing without bound. Set `false` to disable (the database then grows unbounded). |
 | `KoLite:Retention:WindowDays` | `30` | Operational telemetry older than this is eligible for pruning. Must be greater than zero. The slice window-history is never pruned. |
 | `KoLite:Retention:Interval` | `06:00:00` | How often the retention pass runs. Must be greater than zero. |
@@ -251,6 +250,10 @@ cd "$env:LOCALAPPDATA\KoLite\run-app"
 ```powershell
 .\Start-KoLiteApp.ps1 -AppArguments '--ConnectionStrings:KoLiteSqlite=...','--KoLite:Scheduler:Enabled=false','--KoLite:Kusto:AuthMode=AzureCli'
 ```
+
+The same script is included in GitHub Release downloads. It prefers `KoLite.LocalApp.exe` in the self-contained Windows x64 package and falls back to `dotnet KoLite.LocalApp.dll` in the framework-dependent package. The framework-dependent package requires the .NET 10 runtime.
+
+Release ZIPs are replaceable application files; the default durable SQLite database remains at `%LOCALAPPDATA%\KoLite\ko-lite.db`. Extract a new release to a new or cleaned application folder rather than copying it over a running version. Gracefully drain the old instance first, then start the new release with scheduling disabled to inspect `/status/health` and the configured targets before enabling live scheduling.
 
 The equivalent manual commands are:
 

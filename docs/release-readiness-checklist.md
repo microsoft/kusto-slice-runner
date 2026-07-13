@@ -54,3 +54,17 @@ dotnet "$publishDir\KoLite.LocalApp.dll" --ConnectionStrings:KoLiteSqlite="$db" 
 ```
 
 Open `http://127.0.0.1:5057/status/health`, confirm the database path and scheduler-disabled state, then stop the process before deleting the disposable database.
+
+## GitHub Release draft
+
+- Run the **KO Lite Release** workflow manually from `main` with an unused `vMAJOR.MINOR.PATCH` version.
+- Confirm the workflow source SHA is the intended `main` commit and all normal quality gates passed.
+- Confirm both Windows x64 packages passed scheduler-disabled smoke tests:
+  - self-contained executable;
+  - framework-dependent DLL through .NET 10.
+- Confirm both ZIPs contain the start/stop scripts, required notices/docs, and `.github\skills`, but no SQLite databases, logs, credentials, `bin`, or `obj` directories.
+- Download `SHA256SUMS.txt` and verify both ZIP hashes.
+- Review the AI-written highlights against the complete GitHub-generated change list. Correct unsupported claims before publishing.
+- If GitHub Models was unavailable, confirm the draft still contains usable GitHub-generated notes.
+- Confirm the draft tag targets the intended commit and the update badge will not see the version until the draft is published.
+- Download and run the self-contained package on a clean Windows x64 environment before publishing the draft.

@@ -121,7 +121,13 @@ foreach ($helper in $helperScripts) {
 }
 
 $resolvedOutput = (Resolve-Path -LiteralPath $OutputDirectory).Path
-$deployedEntrypoint = Join-Path $resolvedOutput $('KoLite.LocalApp.dll')
+$deployedExecutable = Join-Path $resolvedOutput 'KoLite.LocalApp.exe'
+$deployedDll = Join-Path $resolvedOutput 'KoLite.LocalApp.dll'
+$deployedEntrypoint = if (Test-Path -LiteralPath $deployedExecutable) {
+    $deployedExecutable
+} else {
+    $deployedDll
+}
 
 Write-Host ''
 Write-Host 'KO Lite deployed successfully.'

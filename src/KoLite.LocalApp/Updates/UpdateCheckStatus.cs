@@ -15,6 +15,7 @@ namespace KoLite.LocalApp.Updates
         None,
         Disabled,
         NoBuildSha,
+        NoPublishedRelease,
         GhMissing,
         GhNotAuthenticated,
         RepoAccessDenied,

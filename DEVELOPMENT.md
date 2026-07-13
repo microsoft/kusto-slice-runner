@@ -78,3 +78,9 @@ cd "$env:LOCALAPPDATA\KoLite\run-app"
 ```
 
 `Publish-KoLiteApp.ps1` copies `Start-KoLiteApp.ps1` and `Stop-KoLiteApp.ps1` into the deployed folder and prints the full deployed path. Pass `-StopRunning` to gracefully drain an instance already running from the target folder before re-publishing. See the [operations runbook](operations-runbook.md#published-output) for all options.
+
+## Create a GitHub Release
+
+Versioned downloads are created only when a maintainer manually runs the **KO Lite Release** workflow from `main`. Supply an unused `vMAJOR.MINOR.PATCH` version. The workflow repeats the quality gates, publishes and smoke-tests both Windows x64 packages, generates checksums and grounded release notes, and creates a draft release.
+
+Review the draft, notes, assets, and checksums before publishing it. GitHub Models improves the highlights when available, but GitHub-generated notes remain the deterministic fallback. See the [release guide](docs/releasing.md) for the complete procedure.

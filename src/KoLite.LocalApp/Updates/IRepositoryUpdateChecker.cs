@@ -16,24 +16,36 @@ namespace KoLite.LocalApp.Updates
         int? CommitsBehind,
         int? CommitsAhead,
         UpdateCheckUnavailableReason FailureReason,
-        string? ErrorMessage)
+        string? ErrorMessage,
+        string? LatestVersion,
+        string? ReleaseUrl)
     {
         public static RepositoryUpdateCheckResult Success(
             string latestSha,
             RepositoryComparison comparison,
             int? commitsBehind,
-            int? commitsAhead) =>
-            new(true, latestSha, comparison, commitsBehind, commitsAhead, UpdateCheckUnavailableReason.None, null);
+            int? commitsAhead,
+            string? latestVersion = null,
+            string? releaseUrl = null) =>
+            new(
+                true,
+                latestSha,
+                comparison,
+                commitsBehind,
+                commitsAhead,
+                UpdateCheckUnavailableReason.None,
+                null,
+                latestVersion,
+                releaseUrl);
 
         public static RepositoryUpdateCheckResult Failure(UpdateCheckUnavailableReason reason, string? errorMessage) =>
-            new(false, null, RepositoryComparison.Unknown, null, null, reason, errorMessage);
+            new(false, null, RepositoryComparison.Unknown, null, null, reason, errorMessage, null, null);
     }
 
     public interface IRepositoryUpdateChecker
     {
         Task<RepositoryUpdateCheckResult> CheckAsync(
             string repository,
-            string branch,
             string? builtSha,
             CancellationToken cancellationToken);
     }

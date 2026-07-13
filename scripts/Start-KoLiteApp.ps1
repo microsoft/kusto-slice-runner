@@ -3,16 +3,16 @@
 Runs a published KO Lite local app from a deployed folder.
 
 .DESCRIPTION
-Starts the published KoLite.LocalApp.dll in the foreground (Ctrl+C to stop), the same way
-'dotnet run' behaves during development, but from an isolated deployed copy instead of the
-repository build output. Running from a deployed folder keeps the repository bin/obj output
-free, so 'dotnet build' and 'dotnet test' are not blocked by the running app holding
-KoLite.LocalApp.dll/.exe.
+Starts the published KO Lite app in the foreground (Ctrl+C to stop) from an isolated deployed
+copy instead of the repository build output. A self-contained KoLite.LocalApp.exe is preferred
+when present; otherwise the script runs KoLite.LocalApp.dll through dotnet. Running from a
+deployed folder keeps the repository bin/obj output free, so 'dotnet build' and 'dotnet test'
+are not blocked by the running app holding KoLite.LocalApp.dll/.exe.
 
 The app directory is resolved automatically:
 
-1. If KoLite.LocalApp.dll exists next to this script (the script was copied into the deployed
-   folder by Publish-KoLiteApp.ps1), that folder is used.
+1. If KoLite.LocalApp.exe or KoLite.LocalApp.dll exists next to this script (the script was
+   copied into the deployed folder by Publish-KoLiteApp.ps1), that folder is used.
 2. Otherwise the default deploy directory %LOCALAPPDATA%\KoLite\run-app is used.
 
 By default no extra configuration flags are passed, so the deployed run behaves exactly like
@@ -24,8 +24,9 @@ disabled:
   -AppArguments '--ConnectionStrings:KoLiteSqlite=...','--KoLite:Scheduler:Enabled=false'
 
 .PARAMETER AppDirectory
-Folder that contains the published KoLite.LocalApp.dll. Defaults to the script folder when a
-published DLL is present there, otherwise %LOCALAPPDATA%\KoLite\run-app.
+Folder that contains the published KoLite.LocalApp.exe or KoLite.LocalApp.dll. Defaults to the
+script folder when either entry point is present there, otherwise
+%LOCALAPPDATA%\KoLite\run-app.
 
 .PARAMETER AppArguments
 Additional arguments passed through to the app (configuration overrides). Defaults to none,
@@ -49,27 +50,38 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+$exeName = 'KoLite.LocalApp.exe'
 $dllName = 'KoLite.LocalApp.dll'
 $defaultDeployDirectory = Join-Path (Join-Path $env:LOCALAPPDATA 'KoLite') 'run-app'
 
 if ([string]::IsNullOrWhiteSpace($AppDirectory)) {
-    if (Test-Path -LiteralPath (Join-Path $PSScriptRoot $dllName)) {
+    if ((Test-Path -LiteralPath (Join-Path $PSScriptRoot $exeName)) -or
+        (Test-Path -LiteralPath (Join-Path $PSScriptRoot $dllName))) {
         $AppDirectory = $PSScriptRoot
     } else {
         $AppDirectory = $defaultDeployDirectory
     }
 }
 
+$exePath = Join-Path $AppDirectory $exeName
 $dllPath = Join-Path $AppDirectory $dllName
+$useExecutable = Test-Path -LiteralPath $exePath
 
-$commandPreview = "dotnet `"$dllPath`""
+if ($useExecutable) {
+    $entrypoint = $exePath
+    $commandPreview = "`"$exePath`""
+} else {
+    $entrypoint = $dllPath
+    $commandPreview = "dotnet `"$dllPath`""
+}
+
 if (@($AppArguments).Count -gt 0) {
     $commandPreview += ' ' + ($AppArguments -join ' ')
 }
 
 Write-Host 'KO Lite start (deployed copy)'
 Write-Host "AppDirectory: $AppDirectory"
-Write-Host "Entrypoint  : $dllPath"
+Write-Host "Entrypoint  : $entrypoint"
 Write-Host "Command     : $commandPreview"
 
 if ($DryRun) {
@@ -77,10 +89,14 @@ if ($DryRun) {
     return
 }
 
-if (-not (Test-Path -LiteralPath $dllPath)) {
-    throw "Could not find $dllName in '$AppDirectory'. Publish first with scripts\Publish-KoLiteApp.ps1, or pass -AppDirectory."
+if (-not $useExecutable -and -not (Test-Path -LiteralPath $dllPath)) {
+    throw "Could not find $exeName or $dllName in '$AppDirectory'. Publish first with scripts\Publish-KoLiteApp.ps1, or pass -AppDirectory."
 }
 
 Write-Host 'Starting the deployed app (press Ctrl+C to stop)...'
-& dotnet $dllPath @AppArguments
+if ($useExecutable) {
+    & $exePath @AppArguments
+} else {
+    & dotnet $dllPath @AppArguments
+}
 exit $LASTEXITCODE
