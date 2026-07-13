@@ -51,7 +51,7 @@ namespace KoLite.Local.Sqlite.Catalog
             using var connection = connectionFactory.OpenConnection();
             using var transaction = connection.BeginTransaction();
             var current = Get(connection, transaction, jobId) ?? throw new InvalidOperationException($"Job '{jobId}' does not exist.");
-            if (current.CatalogVersion != expectedVersion) throw new InvalidOperationException($"Catalog version conflict for '{jobId}'. Expected {expectedVersion}, found {current.CatalogVersion}.");
+            if (current.CatalogVersion != expectedVersion) throw new CatalogVersionConflictException(jobId, expectedVersion, current.CatalogVersion);
             var proposed = definition with { Id = jobId };
             EnsureMutationAllowed(current, proposed, HasStarted(connection, transaction, jobId));
             if (!StringComparer.Ordinal.Equals(current.ActivityId, proposed.ActivityId)) EnsureActivityIdAvailable(connection, transaction, proposed.ActivityId, excludingJobId: jobId);
@@ -69,7 +69,7 @@ namespace KoLite.Local.Sqlite.Catalog
             using var connection = connectionFactory.OpenConnection();
             using var transaction = connection.BeginTransaction();
             var current = Get(connection, transaction, jobId) ?? throw new InvalidOperationException($"Job '{jobId}' does not exist.");
-            if (current.CatalogVersion != expectedVersion) throw new InvalidOperationException($"Catalog version conflict for '{jobId}'. Expected {expectedVersion}, found {current.CatalogVersion}.");
+            if (current.CatalogVersion != expectedVersion) throw new CatalogVersionConflictException(jobId, expectedVersion, current.CatalogVersion);
             var newVersion = current.CatalogVersion + 1;
             using (var update = SqliteStorage.Command(connection, transaction, "UPDATE job_definitions SET is_enabled = $enabled, catalog_version = $version, updated_at_utc = $updated_at WHERE job_id = $job_id AND catalog_version = $expected;"))
             {
@@ -78,7 +78,7 @@ namespace KoLite.Local.Sqlite.Catalog
                 update.Add("$updated_at", SqliteStorage.Utc(DateTimeOffset.UtcNow));
                 update.Add("$job_id", jobId);
                 update.Add("$expected", expectedVersion);
-                if (update.ExecuteNonQuery() != 1) throw new InvalidOperationException($"Catalog version conflict for '{jobId}'.");
+                if (update.ExecuteNonQuery() != 1) throw new CatalogVersionConflictException(jobId, expectedVersion, actualVersion: null);
             }
 
             InsertEvent(connection, transaction, eventId ?? Guid.NewGuid().ToString("N"), jobId, newVersion, enabled ? "Enabled" : "Disabled", current.ScheduleJson, actor);
@@ -543,7 +543,7 @@ namespace KoLite.Local.Sqlite.Catalog
             update.Add("$updated_at", SqliteStorage.Utc(updatedAt));
             update.Add("$job_id", jobId);
             update.Add("$expected_version", expectedVersion);
-            if (update.ExecuteNonQuery() != 1) throw new InvalidOperationException($"Catalog version conflict for '{jobId}'.");
+            if (update.ExecuteNonQuery() != 1) throw new CatalogVersionConflictException(jobId, expectedVersion, actualVersion: null);
         }
 
         private static string ParametersJson(JobDefinition definition) =>

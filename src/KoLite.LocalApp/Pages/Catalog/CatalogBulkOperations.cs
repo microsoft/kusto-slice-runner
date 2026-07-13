@@ -16,7 +16,7 @@ namespace KoLite.LocalApp.Pages.Catalog
 
             if (Conflicted > 0)
             {
-                message += $" {Conflicted} skipped because they changed since the page loaded.";
+                message += $" {Conflicted} skipped because they changed since the page loaded. Review the refreshed jobs and try again.";
             }
 
             if (BlockedByDependents is { Count: > 0 } blocked)
@@ -89,6 +89,23 @@ namespace KoLite.LocalApp.Pages.Catalog
             }
 
             return new BulkOperationResult(changed, skipped, conflicted);
+        }
+
+        public static BulkOperationResult SetAllEnabled(
+            SqliteJobCatalogRepository catalog,
+            LifecycleReadModel lifecycle,
+            bool targetEnabled)
+        {
+            var softDeleted = SoftDeletedJobIds(lifecycle);
+            var candidates = catalog.List()
+                .Where(job => !softDeleted.Contains(job.JobId) && job.IsEnabled != targetEnabled)
+                .ToArray();
+            return SetEnabled(
+                catalog,
+                lifecycle,
+                candidates.Select(job => job.JobId).ToArray(),
+                candidates.Select(job => job.CatalogVersion).ToArray(),
+                targetEnabled);
         }
 
         public static BulkOperationResult SoftDelete(

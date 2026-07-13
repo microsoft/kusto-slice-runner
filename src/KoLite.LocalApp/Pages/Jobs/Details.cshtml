@@ -71,6 +71,11 @@ else
         </div>
     </div>
 
+    @if (!string.IsNullOrWhiteSpace(Model.CatalogConflictMessage))
+    {
+        <div class="alert warning" role="alert">@Model.CatalogConflictMessage</div>
+    }
+
     @if (Model.Status is { ShowCompleteness: true, GapCount: > 0 } gapStatus)
     {
         <div class="alert warning" role="alert">

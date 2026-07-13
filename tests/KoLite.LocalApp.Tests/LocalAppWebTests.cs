@@ -1020,6 +1020,96 @@ namespace KoLite.LocalApp.Tests
         }
 
         [Fact]
+        public async Task Stale_detail_actions_redirect_to_fresh_job_with_guidance()
+        {
+            var catalog = new SqliteJobCatalogRepository(sqlite);
+            var pauseJob = catalog.Create(Schedule("job.stale.pause", "PauseFunction", isPaused: false));
+            var lifecycleJob = catalog.Create(Schedule("job.stale.lifecycle", "LifecycleFunction", isPaused: false));
+            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+
+            var pauseToken = await ReadFormToken(client, $"/jobs/{pauseJob.JobId}");
+            var currentPause = catalog.Update(
+                pauseJob.JobId,
+                Schedule("job.stale.pause", "PauseFunction", isPaused: false, maxParallelism: 2),
+                pauseJob.CatalogVersion);
+            using var pause = await PostForm(client, $"/catalog/{pauseJob.JobId}/disable", pauseToken, new Dictionary<string, string>
+            {
+                ["expectedVersion"] = pauseJob.CatalogVersion.ToString()
+            });
+
+            Assert.Equal(HttpStatusCode.Redirect, pause.StatusCode);
+            Assert.Equal($"/jobs/{pauseJob.JobId}", pause.Headers.Location?.OriginalString);
+            Assert.True(catalog.Get(pauseJob.JobId)!.IsEnabled);
+            Assert.Equal(currentPause.CatalogVersion, catalog.Get(pauseJob.JobId)!.CatalogVersion);
+            var pauseDetails = await client.GetStringAsync(pause.Headers.Location!.OriginalString);
+            Assert.Contains("This job changed after the page loaded", pauseDetails);
+            Assert.Contains("your request was not applied", pauseDetails);
+            Assert.Contains("Review it and try again", pauseDetails);
+
+            var softDeleteToken = await ReadFormToken(client, $"/jobs/{lifecycleJob.JobId}");
+            var currentLifecycle = catalog.Update(
+                lifecycleJob.JobId,
+                Schedule("job.stale.lifecycle", "LifecycleFunction", isPaused: false, maxParallelism: 2),
+                lifecycleJob.CatalogVersion);
+            using var softDelete = await PostForm(client, $"/catalog/{lifecycleJob.JobId}/soft-delete", softDeleteToken, new Dictionary<string, string>
+            {
+                ["expectedVersion"] = lifecycleJob.CatalogVersion.ToString(),
+                ["reason"] = "stale soft delete"
+            });
+
+            Assert.Equal(HttpStatusCode.Redirect, softDelete.StatusCode);
+            Assert.Equal($"/jobs/{lifecycleJob.JobId}", softDelete.Headers.Location?.OriginalString);
+            Assert.True(catalog.Get(lifecycleJob.JobId)!.IsEnabled);
+            Assert.Contains("This job changed after the page loaded", await client.GetStringAsync(softDelete.Headers.Location!.OriginalString));
+
+            var lifecycle = new SqliteJobLifecycleService(sqlite, catalog);
+            var softDeleted = lifecycle.SoftDelete(lifecycleJob.JobId, currentLifecycle.CatalogVersion, "test", "prepare restore conflict");
+            var currentSoftDeleted = catalog.SetEnabled(lifecycleJob.JobId, enabled: false, expectedVersion: softDeleted.CatalogVersion);
+            var restoreToken = await ReadFormToken(client, $"/jobs/{lifecycleJob.JobId}");
+            using var restore = await PostForm(client, $"/catalog/{lifecycleJob.JobId}/restore", restoreToken, new Dictionary<string, string>
+            {
+                ["expectedVersion"] = softDeleted.CatalogVersion.ToString(),
+                ["reason"] = "stale restore"
+            });
+
+            Assert.Equal(HttpStatusCode.Redirect, restore.StatusCode);
+            Assert.Equal($"/jobs/{lifecycleJob.JobId}", restore.Headers.Location?.OriginalString);
+            Assert.False(catalog.Get(lifecycleJob.JobId)!.IsEnabled);
+            Assert.Equal(currentSoftDeleted.CatalogVersion, catalog.Get(lifecycleJob.JobId)!.CatalogVersion);
+            Assert.Contains("This job changed after the page loaded", await client.GetStringAsync(restore.Headers.Location!.OriginalString));
+        }
+
+        [Fact]
+        public async Task Stale_edit_redirects_to_latest_definition_and_discards_submitted_values()
+        {
+            var catalog = new SqliteJobCatalogRepository(sqlite);
+            var created = catalog.Create(Schedule("job.stale.edit", "OriginalFunction", isPaused: false));
+            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+            var token = await ReadFormToken(client, $"/catalog/{created.JobId}/edit");
+            var current = catalog.Update(
+                created.JobId,
+                Schedule("job.stale.edit", "CurrentFunction", isPaused: false),
+                created.CatalogVersion);
+
+            using var response = await PostForm(client, $"/catalog/{created.JobId}/update", token, new Dictionary<string, string>
+            {
+                ["expectedVersion"] = created.CatalogVersion.ToString(),
+                ["scheduleJson"] = Schedule("job.stale.edit", "StaleSubmittedFunction", isPaused: false)
+            });
+
+            Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
+            Assert.Equal($"/catalog/{created.JobId}/edit", response.Headers.Location?.OriginalString);
+            Assert.Equal("CurrentFunction", catalog.Get(created.JobId)!.QueryRef);
+            Assert.Equal(current.CatalogVersion, catalog.Get(created.JobId)!.CatalogVersion);
+
+            var edit = await client.GetStringAsync(response.Headers.Location!.OriginalString);
+            Assert.Contains("This job changed after the page loaded", edit);
+            Assert.Contains($"Catalog version {current.CatalogVersion}", edit);
+            Assert.Contains("CurrentFunction", edit);
+            Assert.DoesNotContain("StaleSubmittedFunction", edit);
+        }
+
+        [Fact]
         public async Task Dashboard_inline_pause_toggle_returns_json_state_without_redirecting()
         {
             new SqliteJobCatalogRepository(sqlite).Create(Schedule("job.toggle", "ToggleFunction", isPaused: false));
@@ -1075,6 +1165,8 @@ namespace KoLite.LocalApp.Tests
                 Assert.True(root.GetProperty("conflict").GetBoolean());
                 Assert.True(root.GetProperty("enabled").GetBoolean());
                 Assert.Equal(3, root.GetProperty("version").GetInt64());
+                Assert.Contains("your request was not applied", root.GetProperty("error").GetString());
+                Assert.Contains("Review it and try again", root.GetProperty("error").GetString());
             }
             Assert.True(catalog.Get(JobId("job.toggle"))?.IsEnabled);
         }
@@ -1338,7 +1430,7 @@ namespace KoLite.LocalApp.Tests
             Assert.Contains("bulk-summary-banner", dashboard);
             Assert.Contains("Paused 1 job(s).", dashboard);
             Assert.Contains("1 already in the requested state or no longer eligible.", dashboard);
-            Assert.Contains("1 skipped because they changed since the page loaded.", dashboard);
+            Assert.Contains("1 skipped because they changed since the page loaded. Review the refreshed jobs and try again.", dashboard);
         }
 
         [Fact]
@@ -2134,6 +2226,33 @@ namespace KoLite.LocalApp.Tests
             });
             applied.EnsureSuccessStatusCode();
             Assert.Equal(4, new SqliteJobCatalogRepository(sqlite).Get(jobId)!.Definition.MaxParallelism);
+        }
+
+        [Fact]
+        public async Task Throttling_advisor_redirects_stale_recommendations_with_guidance()
+        {
+            var jobId = SeedThrottledJob("job.throttled.stale", maxParallelism: 8, durationMinutes: 12);
+            var catalog = new SqliteJobCatalogRepository(sqlite);
+            var rendered = catalog.Get(jobId)!;
+            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+            var token = await ReadFormToken(client, "/throttling");
+            var current = catalog.Update(jobId, rendered.ScheduleJson, rendered.CatalogVersion, actor: "concurrent-test");
+
+            using var response = await PostFormValues(client, "/throttling/apply", token, new[]
+            {
+                new KeyValuePair<string, string>("jobId", jobId),
+                new KeyValuePair<string, string>("expectedVersion", rendered.CatalogVersion.ToString()),
+                new KeyValuePair<string, string>("newMaxParallelism", "4")
+            });
+
+            Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
+            Assert.Equal("/throttling", response.Headers.Location?.OriginalString);
+            Assert.Equal(8, catalog.Get(jobId)!.Definition.MaxParallelism);
+            Assert.Equal(current.CatalogVersion, catalog.Get(jobId)!.CatalogVersion);
+
+            var page = await client.GetStringAsync(response.Headers.Location!.OriginalString);
+            Assert.Contains("This job changed after the page loaded", page);
+            Assert.Contains("your request was not applied", page);
         }
 
         private string SeedThrottledJob(string activityId, int maxParallelism, int durationMinutes)

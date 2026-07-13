@@ -32,20 +32,23 @@ namespace KoLite.LocalApp.Api
                 HttpContext http,
                 string jobId,
                 SqliteJobCatalogRepository catalog,
-                DashboardPageQuery dashboard) =>
-                CatalogEnabledToggle.Execute(http, catalog, dashboard, jobId, enabled: true, ReadVersion(http)));
+                DashboardPageQuery dashboard,
+                ITempDataDictionaryFactory tempDataFactory) =>
+                CatalogEnabledToggle.Execute(http, catalog, dashboard, jobId, enabled: true, ReadVersion(http), tempDataFactory));
 
             actions.MapPost("/{jobId}/disable", (
                 HttpContext http,
                 string jobId,
                 SqliteJobCatalogRepository catalog,
-                DashboardPageQuery dashboard) =>
-                CatalogEnabledToggle.Execute(http, catalog, dashboard, jobId, enabled: false, ReadVersion(http)));
+                DashboardPageQuery dashboard,
+                ITempDataDictionaryFactory tempDataFactory) =>
+                CatalogEnabledToggle.Execute(http, catalog, dashboard, jobId, enabled: false, ReadVersion(http), tempDataFactory));
 
             actions.MapPost("/{jobId}/soft-delete", (
                 HttpContext http,
                 string jobId,
-                SqliteJobLifecycleService lifecycle) =>
+                SqliteJobLifecycleService lifecycle,
+                ITempDataDictionaryFactory tempDataFactory) =>
             {
                 try
                 {
@@ -58,38 +61,56 @@ namespace KoLite.LocalApp.Api
                     // dependents and offers an explicit force ("Soft delete anyway") override.
                     return Results.Redirect($"/catalog/{Uri.EscapeDataString(jobId)}/soft-delete-confirm");
                 }
+                catch (CatalogVersionConflictException)
+                {
+                    CatalogConflictFeedback.Save(http, tempDataFactory);
+                    return Results.Redirect($"/jobs/{Uri.EscapeDataString(jobId)}");
+                }
             });
 
             actions.MapPost("/{jobId}/restore", (
                 HttpContext http,
                 string jobId,
-                SqliteJobLifecycleService lifecycle) =>
+                SqliteJobLifecycleService lifecycle,
+                ITempDataDictionaryFactory tempDataFactory) =>
             {
-                lifecycle.Restore(jobId, ReadVersion(http), actor: Actor, reason: ReadReason(http, "Restored from web UI"));
-                return Results.Redirect($"/jobs/{Uri.EscapeDataString(jobId)}");
+                try
+                {
+                    lifecycle.Restore(jobId, ReadVersion(http), actor: Actor, reason: ReadReason(http, "Restored from web UI"));
+                    return Results.Redirect($"/jobs/{Uri.EscapeDataString(jobId)}");
+                }
+                catch (CatalogVersionConflictException)
+                {
+                    CatalogConflictFeedback.Save(http, tempDataFactory);
+                    return Results.Redirect($"/jobs/{Uri.EscapeDataString(jobId)}");
+                }
             });
 
             actions.MapPost("/pause-all", (
+                HttpContext http,
                 SqliteJobCatalogRepository catalog,
-                LifecycleReadModel lifecycle) =>
+                LifecycleReadModel lifecycle,
+                ITempDataDictionaryFactory tempDataFactory) =>
             {
-                var deleted = SoftDeletedJobIds(lifecycle);
-                foreach (var job in catalog.List().Where(j => j.IsEnabled && !deleted.Contains(j.JobId)))
+                var result = CatalogBulkOperations.SetAllEnabled(catalog, lifecycle, targetEnabled: false);
+                if (result.Conflicted > 0)
                 {
-                    catalog.SetEnabled(job.JobId, false, job.CatalogVersion, actor: Actor);
+                    SaveBulkSummary(http, tempDataFactory, result.ToMessage("Paused"));
                 }
 
                 return Results.Redirect("/");
             });
 
             actions.MapPost("/resume-all", (
+                HttpContext http,
                 SqliteJobCatalogRepository catalog,
-                LifecycleReadModel lifecycle) =>
+                LifecycleReadModel lifecycle,
+                ITempDataDictionaryFactory tempDataFactory) =>
             {
-                var deleted = SoftDeletedJobIds(lifecycle);
-                foreach (var job in catalog.List().Where(j => !j.IsEnabled && !deleted.Contains(j.JobId)))
+                var result = CatalogBulkOperations.SetAllEnabled(catalog, lifecycle, targetEnabled: true);
+                if (result.Conflicted > 0)
                 {
-                    catalog.SetEnabled(job.JobId, true, job.CatalogVersion, actor: Actor);
+                    SaveBulkSummary(http, tempDataFactory, result.ToMessage("Resumed"));
                 }
 
                 return Results.Redirect("/");

@@ -1,6 +1,7 @@
 using KoLite.Local.Sqlite.Catalog;
 using KoLite.LocalApp.Ui;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc.ViewFeatures;
 
 namespace KoLite.LocalApp.Pages.Catalog
 {
@@ -12,25 +13,40 @@ namespace KoLite.LocalApp.Pages.Catalog
             DashboardPageQuery dashboard,
             string jobId,
             bool enabled,
-            long expectedVersion)
+            long expectedVersion,
+            ITempDataDictionaryFactory tempDataFactory)
         {
-            if (!IsAjaxRequest(http.Request))
-            {
-                catalog.SetEnabled(jobId, enabled, expectedVersion, actor: "local-web");
-                return Results.Redirect($"/jobs/{Uri.EscapeDataString(jobId)}");
-            }
-
+            var ajax = IsAjaxRequest(http.Request);
             JobCatalogRecord updated;
             try
             {
                 updated = catalog.SetEnabled(jobId, enabled, expectedVersion, actor: "local-web");
             }
+            catch (CatalogVersionConflictException)
+            {
+                if (!ajax)
+                {
+                    CatalogConflictFeedback.Save(http, tempDataFactory);
+                    return Results.Redirect($"/jobs/{Uri.EscapeDataString(jobId)}");
+                }
+
+                return Json(StatusCodes.Status409Conflict, jobId, dashboard.GetJob(jobId), fallback: null, conflict: true, error: CatalogConflictFeedback.Message);
+            }
             catch (InvalidOperationException ex)
             {
-                // Optimistic-concurrency conflict (or the job changed/was removed). Resync the row from the
-                // current projection so the dashboard button stays actionable instead of being stuck on a
-                // stale catalog version.
+                if (!ajax)
+                {
+                    throw;
+                }
+
+                // The job changed or was removed. Resync the row so the dashboard button does not remain
+                // stuck on state that no longer exists.
                 return Json(StatusCodes.Status409Conflict, jobId, dashboard.GetJob(jobId), fallback: null, conflict: true, error: ex.Message);
+            }
+
+            if (!ajax)
+            {
+                return Results.Redirect($"/jobs/{Uri.EscapeDataString(jobId)}");
             }
 
             return Json(StatusCodes.Status200OK, jobId, dashboard.GetJob(jobId), fallback: updated, conflict: false, error: null);

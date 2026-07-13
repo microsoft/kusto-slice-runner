@@ -92,6 +92,36 @@ namespace KoLite.LocalApp.Tests
         }
 
         [Fact]
+        public async Task Stale_forced_soft_delete_redirects_to_fresh_details_without_deleting()
+        {
+            var catalog = new SqliteJobCatalogRepository(sqlite);
+            var upstream = catalog.Create(Schedule("dep.upstream"));
+            catalog.Create(Schedule("dep.downstream", dependsOn: "dep.upstream"));
+            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+            var token = await ReadFormToken(client, $"/catalog/{upstream.JobId}/soft-delete-confirm");
+            var disabled = catalog.SetEnabled(upstream.JobId, enabled: false, expectedVersion: upstream.CatalogVersion);
+            var current = catalog.SetEnabled(upstream.JobId, enabled: true, expectedVersion: disabled.CatalogVersion);
+
+            var response = await PostForm(client, $"/catalog/{upstream.JobId}/soft-delete", token, new Dictionary<string, string>
+            {
+                ["expectedVersion"] = upstream.CatalogVersion.ToString(),
+                ["reason"] = "stale forced soft delete",
+                ["force"] = "true"
+            });
+
+            Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
+            Assert.Equal($"/jobs/{upstream.JobId}", response.Headers.Location?.OriginalString);
+            Assert.True(catalog.Get(upstream.JobId)!.IsEnabled);
+            Assert.Equal(current.CatalogVersion, catalog.Get(upstream.JobId)!.CatalogVersion);
+            Assert.False(new LifecycleReadModel(new SqliteLifecycleReadModelRepository(sqlite)).GetLatestStates()
+                .TryGetValue(upstream.JobId, out var state) && state.IsSoftDeleted);
+
+            var html = await client.GetStringAsync(response.Headers.Location!.OriginalString);
+            Assert.Contains("This job changed after the page loaded", html);
+            Assert.Contains("your request was not applied", html);
+        }
+
+        [Fact]
         public async Task Bulk_soft_delete_skips_blocked_job_and_reports_it()
         {
             var catalog = new SqliteJobCatalogRepository(sqlite);

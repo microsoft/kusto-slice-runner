@@ -61,7 +61,25 @@ namespace KoLite.Local.Sqlite.Tests
             Assert.Equal(updated.ScheduleJson, Compact(repository.Export(created.JobId)));
             Assert.Contains("\n", repository.Export(created.JobId), StringComparison.Ordinal);
             Assert.Equal(["Created", "Disabled", "Updated"], repository.History(created.JobId).Select(e => e.EventType).ToArray());
-            Assert.Throws<InvalidOperationException>(() => repository.SetEnabled(created.JobId, enabled: true, expectedVersion: created.CatalogVersion));
+            var conflict = Assert.Throws<CatalogVersionConflictException>(() =>
+                repository.SetEnabled(created.JobId, enabled: true, expectedVersion: created.CatalogVersion));
+            Assert.Equal(created.JobId, conflict.JobId);
+            Assert.Equal(created.CatalogVersion, conflict.ExpectedVersion);
+            Assert.Equal(updated.CatalogVersion, conflict.ActualVersion);
+        }
+
+        [Fact]
+        public void Update_reports_structured_catalog_version_conflicts()
+        {
+            var created = repository.Create(Schedule("job.conflict", paused: false));
+            var disabled = repository.SetEnabled(created.JobId, enabled: false, expectedVersion: created.CatalogVersion);
+
+            var conflict = Assert.Throws<CatalogVersionConflictException>(() =>
+                repository.Update(created.JobId, Schedule("job.conflict", paused: true), expectedVersion: created.CatalogVersion));
+
+            Assert.Equal(created.JobId, conflict.JobId);
+            Assert.Equal(created.CatalogVersion, conflict.ExpectedVersion);
+            Assert.Equal(disabled.CatalogVersion, conflict.ActualVersion);
         }
 
         [Fact]

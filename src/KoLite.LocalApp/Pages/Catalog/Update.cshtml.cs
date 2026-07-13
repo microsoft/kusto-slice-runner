@@ -20,10 +20,13 @@ namespace KoLite.LocalApp.Pages.Catalog
         [BindProperty(Name = "expectedVersion")] public long ExpectedVersion { get; set; }
         public string JobId { get; private set; } = string.Empty;
         public string? ErrorMessage { get; private set; }
+        public string? CatalogConflictMessage { get; private set; }
         public ScheduleEditorViewModel? Editor { get; private set; }
 
         public IActionResult OnGet(string jobId)
         {
+            CatalogConflictMessage = CatalogConflictFeedback.Read(TempData);
+
             // /catalog/{jobId}/update is POST-only; the GET entry point is the /catalog/{jobId}/edit alias.
             if (!IsEditRoute())
             {
@@ -69,6 +72,11 @@ namespace KoLite.LocalApp.Pages.Catalog
             {
                 catalog.Update(jobId, scheduleJson, ExpectedVersion, actor: "local-web");
                 return Redirect($"/jobs/{Uri.EscapeDataString(jobId)}");
+            }
+            catch (CatalogVersionConflictException)
+            {
+                TempData[CatalogConflictFeedback.TempDataKey] = CatalogConflictFeedback.Message;
+                return Redirect($"/catalog/{Uri.EscapeDataString(jobId)}/edit");
             }
             catch (Exception ex) when (ex is InvalidOperationException or System.Text.Json.JsonException)
             {

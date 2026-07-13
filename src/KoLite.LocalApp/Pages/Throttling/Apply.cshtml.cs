@@ -1,6 +1,7 @@
 using System.Text.Json.Nodes;
 using KoLite.Local.Sqlite.Catalog;
 using KoLite.Local.Sqlite.Throttling;
+using KoLite.LocalApp.Pages.Catalog;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
@@ -67,6 +68,10 @@ namespace KoLite.LocalApp.Pages.Throttling
                 var node = JsonNode.Parse(record.ScheduleJson)!.AsObject();
                 node["maxParallelism"] = NewMaxParallelism;
                 catalog.Update(JobId, node.ToJsonString(), ExpectedVersion, actor: "throttle-advisor");
+            }
+            catch (CatalogVersionConflictException)
+            {
+                return Fail(CatalogConflictFeedback.Message);
             }
             catch (InvalidOperationException ex)
             {

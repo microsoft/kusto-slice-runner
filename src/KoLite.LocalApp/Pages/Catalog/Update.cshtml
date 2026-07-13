@@ -32,5 +32,10 @@ else
         <div class="alert danger">@Model.ErrorMessage</div>
     }
 
+    @if (!string.IsNullOrWhiteSpace(Model.CatalogConflictMessage))
+    {
+        <div class="alert warning" role="alert">@Model.CatalogConflictMessage</div>
+    }
+
     <partial name="_ScheduleEditor" model="Model.Editor" />
 }

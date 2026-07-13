@@ -1,4 +1,5 @@
 using KoLite.Local.Sqlite.Catalog;
+using KoLite.LocalApp.Pages.Catalog;
 using KoLite.LocalApp.Ui;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
@@ -30,11 +31,13 @@ namespace KoLite.LocalApp.Pages.Jobs
         public ScheduleEditorViewModel? Editor { get; private set; }
         public JobDetailsCharts? Charts { get; private set; }
         public DependencyGraphViewModel DependencyGraph { get; private set; } = DependencyGraphViewModel.Empty;
+        public string? CatalogConflictMessage { get; private set; }
         public string Range { get; private set; } = "1d";
         public IReadOnlyList<ChartRangeLink> RangeLinks => ChartRangeOptions.Links;
 
         public IActionResult OnGet(string jobId, string? range)
         {
+            CatalogConflictMessage = CatalogConflictFeedback.Read(TempData);
             Range = ChartRangeOptions.Normalize(range);
             Data = query.Get(jobId);
             if (Data is null)
