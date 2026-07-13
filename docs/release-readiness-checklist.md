@@ -66,5 +66,5 @@ Open `http://127.0.0.1:5057/status/health`, confirm the database path and schedu
 - Download `SHA256SUMS.txt` and verify both ZIP hashes.
 - Review the AI-written highlights against the complete GitHub-generated change list. Correct unsupported claims before publishing.
 - If GitHub Models was unavailable, confirm the draft still contains usable GitHub-generated notes.
-- Confirm the draft tag targets the intended commit and the update badge will not see the version until the draft is published.
+- Confirm the draft targets the intended commit. GitHub may create the Git tag only when the draft is published, and the update badge will not see the version before publication.
 - Download and run the self-contained package on a clean Windows x64 environment before publishing the draft.

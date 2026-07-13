@@ -73,7 +73,7 @@ jobs:
           }
 
           $releaseMarker = "ko-lite-release-workflow:$version@$env:GITHUB_SHA"
-          $releaseFilter = '.[] | select(.tag_name == "' + $version + '") | [.id, .draft, (.body // "" | contains("' + $releaseMarker + '"))] | @tsv'
+          $releaseFilter = '.[] | select(.tag_name == "' + $version + '") | [.id, .draft, (.body // "" | contains("' + $releaseMarker + '")), .target_commitish] | @tsv'
           $releaseStates = @(
               @(
                   & gh api --paginate "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" --jq $releaseFilter
@@ -88,12 +88,12 @@ jobs:
 
           $releaseId = ''
           $releaseMode = if ($releaseStates.Count -eq 1) {
-              $parts = $releaseStates[0] -split "`t", 3
-              if ($parts.Count -ne 3 -or $parts[1] -ne 'true' -or $parts[2] -ne 'true') {
+              $parts = $releaseStates[0] -split "`t", 4
+              if ($parts.Count -ne 4 -or $parts[1] -ne 'true' -or $parts[2] -ne 'true') {
                   throw "Release '$version' already exists and is not a resumable draft created for this exact workflow run."
               }
-              if (-not $tagExists) {
-                  throw "Draft release '$version' exists without its expected tag."
+              if (-not $tagExists -and $parts[3] -ne $env:GITHUB_SHA) {
+                  throw "Untagged draft release '$version' targets '$($parts[3])', not this run's exact SHA '$env:GITHUB_SHA'."
               }
               $releaseId = $parts[0]
               'resume-draft'
@@ -820,7 +820,7 @@ jobs:
               }
           }
 
-          $releaseFilter = '.[] | select(.tag_name == "' + $env:RELEASE_VERSION + '") | [.id, .draft, (.body // "" | contains("' + $env:RELEASE_MARKER + '"))] | @tsv'
+          $releaseFilter = '.[] | select(.tag_name == "' + $env:RELEASE_VERSION + '") | [.id, .draft, (.body // "" | contains("' + $env:RELEASE_MARKER + '")), .target_commitish] | @tsv'
           $releaseStates = @(
               @(
                   & gh api --paginate "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" --jq $releaseFilter
@@ -845,15 +845,18 @@ jobs:
                   }
               }
               'resume-draft' {
-                  if (-not $tagExists -or $releaseStates.Count -ne 1) {
+                  if ($releaseStates.Count -ne 1) {
                       throw "Draft release '$env:RELEASE_VERSION' is no longer resumable."
                   }
-                  $parts = $releaseStates[0] -split "`t", 3
-                  if ($parts.Count -ne 3 -or $parts[1] -ne 'true' -or $parts[2] -ne 'true') {
+                  $parts = $releaseStates[0] -split "`t", 4
+                  if ($parts.Count -ne 4 -or $parts[1] -ne 'true' -or $parts[2] -ne 'true') {
                       throw "Release '$env:RELEASE_VERSION' is no longer the workflow-owned draft."
                   }
                   if ($parts[0] -ne $env:RELEASE_ID) {
                       throw "Release '$env:RELEASE_VERSION' no longer has the expected release id '$env:RELEASE_ID'."
+                  }
+                  if (-not $tagExists -and $parts[3] -ne $env:RELEASE_SHA) {
+                      throw "Untagged draft release '$env:RELEASE_VERSION' no longer targets this run's exact SHA."
                   }
               }
               default {
@@ -874,7 +877,7 @@ jobs:
 
           if ($env:RELEASE_MODE -eq 'resume-draft') {
               function Assert-OwnedDraft {
-                  $ownedDraftFilter = '[.id, .tag_name, .draft, (.body // "" | contains("' + $env:RELEASE_MARKER + '"))] | @tsv'
+                  $ownedDraftFilter = '[.id, .tag_name, .draft, (.body // "" | contains("' + $env:RELEASE_MARKER + '")), .target_commitish] | @tsv'
                   $state = @(
                       & gh api `
                           "repos/$env:GITHUB_REPOSITORY/releases/$env:RELEASE_ID" `
@@ -883,13 +886,30 @@ jobs:
                   if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($state)) {
                       throw "Could not verify resumable draft release id '$env:RELEASE_ID'."
                   }
-                  $stateParts = $state -split "`t", 4
-                  if ($stateParts.Count -ne 4 -or
+                  $stateParts = $state -split "`t", 5
+                  if ($stateParts.Count -ne 5 -or
                       $stateParts[0] -ne $env:RELEASE_ID -or
                       $stateParts[1] -ne $env:RELEASE_VERSION -or
                       $stateParts[2] -ne 'true' -or
                       $stateParts[3] -ne 'true') {
                       throw "Release '$env:RELEASE_VERSION' is no longer the workflow-owned draft; no assets were changed."
+                  }
+
+                  $currentTagLine = @(
+                      & git ls-remote --exit-code --tags origin "refs/tags/$env:RELEASE_VERSION"
+                  ) | Select-Object -First 1
+                  $currentTagLookupExit = $LASTEXITCODE
+                  if ($currentTagLookupExit -eq 0) {
+                      $currentTagSha = ($currentTagLine -split '\s+', 2)[0]
+                      if ($currentTagSha -ne $env:RELEASE_SHA) {
+                          throw "Tag '$env:RELEASE_VERSION' no longer targets this run's exact SHA; no assets were changed."
+                      }
+                  } elseif ($currentTagLookupExit -eq 2) {
+                      if ($stateParts[4] -ne $env:RELEASE_SHA) {
+                          throw "Untagged draft release '$env:RELEASE_VERSION' no longer targets this run's exact SHA; no assets were changed."
+                      }
+                  } else {
+                      throw "Could not verify tag state for draft release '$env:RELEASE_VERSION'; no assets were changed."
                   }
               }
 
@@ -982,24 +1002,33 @@ jobs:
               }
           }
 
-          $draftState = (& gh release view $env:RELEASE_VERSION `
-              --repo $env:GITHUB_REPOSITORY `
-              --json isDraft `
-              --jq '.isDraft').Trim()
-          if ($LASTEXITCODE -ne 0) {
-              throw "Release '$env:RELEASE_VERSION' exists but could not be verified. Re-run the workflow to resume it."
+          $finalReleaseFilter = '.[] | select(.tag_name == "' + $env:RELEASE_VERSION + '") | [.id, .draft, (.body // "" | contains("' + $env:RELEASE_MARKER + '")), .target_commitish] | @tsv'
+          $finalReleaseStates = @(
+              @(
+                  & gh api --paginate "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" --jq $finalReleaseFilter
+              ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+          )
+          if ($LASTEXITCODE -ne 0 -or $finalReleaseStates.Count -ne 1) {
+              throw "Draft release '$env:RELEASE_VERSION' exists but could not be verified."
           }
-          if ($draftState -ne 'true') {
-              throw "Release '$env:RELEASE_VERSION' exists but is not a draft."
+          $finalParts = $finalReleaseStates[0] -split "`t", 4
+          if ($finalParts.Count -ne 4 -or $finalParts[1] -ne 'true' -or $finalParts[2] -ne 'true') {
+              throw "Release '$env:RELEASE_VERSION' exists but is not the expected workflow-owned draft."
           }
 
           $remoteTagLine = @(
               & git ls-remote --exit-code --tags origin "refs/tags/$env:RELEASE_VERSION"
           ) | Select-Object -First 1
-          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($remoteTagLine)) {
-              throw "Tag '$env:RELEASE_VERSION' exists but could not be verified."
-          }
-          $remoteTagSha = ($remoteTagLine -split '\s+', 2)[0]
-          if ($remoteTagSha -ne $env:RELEASE_SHA) {
-              throw "Remote tag '$env:RELEASE_VERSION' resolves to '$remoteTagSha' instead of exact SHA '$env:RELEASE_SHA'."
+          $tagLookupExit = $LASTEXITCODE
+          if ($tagLookupExit -eq 0) {
+              $remoteTagSha = ($remoteTagLine -split '\s+', 2)[0]
+              if ($remoteTagSha -ne $env:RELEASE_SHA) {
+                  throw "Remote tag '$env:RELEASE_VERSION' resolves to '$remoteTagSha' instead of exact SHA '$env:RELEASE_SHA'."
+              }
+          } elseif ($tagLookupExit -eq 2) {
+              if ($finalParts[3] -ne $env:RELEASE_SHA) {
+                  throw "Untagged draft release '$env:RELEASE_VERSION' targets '$($finalParts[3])' instead of exact SHA '$env:RELEASE_SHA'."
+              }
+          } else {
+              throw "Could not verify whether draft release '$env:RELEASE_VERSION' already has a Git tag."
           }

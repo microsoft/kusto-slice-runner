@@ -24,7 +24,7 @@ The release-note source is GitHub's generated change list since the previous pub
 
 Before publishing:
 
-1. Confirm the tag and target commit are correct.
+1. Confirm the version and target commit are correct. GitHub may leave a draft untagged and create the Git tag only when the draft is published.
 2. Compare the highlights with the full change list and edit any unclear or unsupported wording.
 3. Confirm these assets are present:
    - `ko-lite-<version>-win-x64-self-contained.zip`;
