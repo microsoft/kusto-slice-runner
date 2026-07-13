@@ -3,7 +3,7 @@ name: ko-lite-job-manager
 description: "Use when the user wants an agent to read KO Lite jobs, inspect read-only operational diagnostics (slice states, leases, throughput, catalog history, logs, audit), or create/update job schedules directly in a running KO Lite app (instead of clicking through the dashboard). Drives the KO Lite localhost JSON API; it reads state, upserts schedules - including pausing or resuming a job via the schedule's isPaused field - and can soft-delete or restore a job (reversible); it never hard-deletes jobs, runs Kusto, reruns, or repairs. Requires the KO Lite app to be running locally."
 metadata:
   author: Azure Core Team
-  version: "1.3.0"
+  version: "1.3.1"
 ---
 
 # KO Lite job manager
@@ -76,6 +76,22 @@ concurrency; a mismatch is a `409`). Soft-delete is reversible — it flips
 `is_enabled` off and records a lifecycle event, purging nothing — and is **blocked by
 default** when active downstream jobs depend on the target (a `409` listing them);
 pass `force: true` to override. Hard-delete is not exposed.
+
+**Definition update vs. historical replay:** importing an updated definition keeps
+the job's permanent `id` and completed slice history. Future or otherwise-missing
+slices use the new definition, but slices that already completed do not run again.
+Soft-delete/restore also preserves that identity and history. Before updating a
+started job, ask whether the user expects previously completed slices to be
+recomputed. If yes, use the replacement workflow below; do not present an upsert as
+replay.
+
+Dependencies make replacement a coordinated operation. Soft-delete is blocked by
+active downstream dependents unless explicitly forced; hard-delete has **no**
+dependency check — it only requires the job to be disabled and have no actively
+leased or running work. Inert queued retries and expired leases do not block it. If
+an upstream is force-soft-deleted or hard-deleted, downstream jobs keep referencing
+its old permanent GUID and their future work becomes `DependencyBlocked` until the
+edge is rebound.
 
 The **diagnostics** endpoints are strictly **read-only**: they perform no writes,
 no Kusto, and no scheduler/rerun/repair mutation — they only surface existing
@@ -186,8 +202,9 @@ detailed field-by-field guide. Key points:
 ## Workflow (create or update a schedule)
 
 1. **Confirm intent and scope.** Is this a create or an update? Confirm the
-   target `activityId` and the specific fields to change. If the request implies a
-   "will not" action, stop.
+   target `activityId` and the specific fields to change. For a started job, ask
+   whether completed slices must run under the new definition. If the request implies
+   a "will not" action, stop.
 2. **Confirm the app is reachable.** Run the `Health` action; note `databasePath`
    so the user knows which instance you are changing.
 3. **Read current state.** For an update, run `Get-Job -JobId <id>` and edit the
@@ -201,6 +218,46 @@ detailed field-by-field guide. Key points:
    returned `created`/`updated`/`total` counts and remind the user nothing was
    deleted.
 7. **Verify.** Re-read with `Get-Job` (or `Get-Jobs`) and confirm the change.
+
+## Replacing a job to replay completed history
+
+Use this workflow only when completed slices must be planned again under a new
+definition. Hard-delete is permanently destructive local state and is always a
+manual dashboard action.
+
+1. **Scope the replacement.** Read the current job, its permanent GUID, the desired
+   replay floor/range, and its direct/transitive downstream dependents. Decide which
+   downstream jobs also need their completed slices replayed. Separately call out
+   how existing Kusto output will be cleaned up, replaced, or deduplicated; this skill
+   never performs that Kusto work.
+2. **Pause and drain.** With approval, import the root and every affected downstream
+   schedule with `isPaused: true`. Use `Get-JobStatus`, `Get-Slices`, and
+   `Get-JobQueue` to verify no actively leased or running work remains. Inert queued
+   retries may remain after pause and will be purged by hard-delete.
+3. **Choose a safe dependency path.**
+   - Replacing only the upstream: keep downstream jobs paused. Warn that soft-delete
+     is initially blocked by active dependents, while hard-delete will not warn and
+     will leave their GUID edges stale.
+   - Replacing the whole closure: delete manually in reverse topological order
+     (downstream first) and recreate in topological order (upstream first).
+4. **Stop for the user.** Show the exact job names and permanent GUIDs. Ask the user
+   to use the KO Lite dashboard to soft-delete each job (choosing **Soft delete
+   anyway** where blocked) so it is disabled, then hard-delete it in the stated
+   order. Never call or invent a hard-delete API, automate the dashboard, script the
+   action, or edit SQLite directly. Do not continue until the user explicitly
+   confirms completion.
+5. **Create new identities while paused.** Remove each deleted job's old `id` from
+   its schedule, keep its `activityId` unless the user wants a new logical name, and
+   import it with `isPaused: true`. Verify the response reports `created`, then
+   `Get-Job` and record the newly minted permanent GUID.
+6. **Rebind every dependency.** Before resuming anything, update each paused
+   downstream schedule so `dependsOn.id` references the replacement GUID. Re-read
+   the live definitions and search the maintained schedule artifact for every old
+   GUID. Recreating an upstream with the same `activityId` does not automatically
+   repair an existing edge that is stored by GUID.
+7. **Resume and verify.** Recreate/replay downstream jobs whose completed history
+   must also run again, resume in dependency order, and verify new slices are
+   progressing without failed, dead-lettered, or `DependencyBlocked` work.
 
 ## Using the helper script
 
@@ -264,9 +321,12 @@ unreachable it tells you to start it.
   *triggering* those actions is not.
 - **Validate before writing.** Always validate the JSON locally before POSTing
   (the Import action does this by default).
-- **Respect the identity model.** Never change the permanent `id`. `queryWindowSize`
-  and `startFrom` are read-only on started jobs. `activityId` is a mutable display
-  label and may be renamed (keep the same `id`).
+- **Respect the identity model.** For a normal update, never change the permanent
+  `id`; `queryWindowSize` and `startFrom` are read-only on started jobs, while
+  `activityId` may be renamed with the same `id`. A replacement is a separate
+  delete-then-create boundary: only after the user confirms manual hard-delete,
+  omit the old `id` so KO Lite mints a new one. Never reuse or invent the deleted
+  GUID.
 - **No secrets.** The JSON describes a job, not credentials.
 - **Confirm before writing.** Summarize the exact create/update you will apply and
   get the user's go-ahead before importing.
@@ -277,6 +337,10 @@ unreachable it tells you to start it.
 - The requested action is outside scope (hard-delete, generic enable/disable of a
   job's `isEnabled` lifecycle, Kusto, rerun, repair). Pausing/resuming via `isPaused`,
   and soft-delete/restore, are in scope.
+- A started-job update is requested but it is unclear whether completed slices
+  should remain completed or be replayed under the new definition.
+- A replacement is waiting on the user's manual hard-delete confirmation, or an
+  affected downstream job is not paused/rebound to the replacement GUID.
 - An update would change the permanent `id`, or change `queryWindowSize`/`startFrom`
   on a started job.
 - `activityId` collides with an existing job. A **rename** (same `id`, new
