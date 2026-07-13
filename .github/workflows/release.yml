@@ -743,15 +743,15 @@ jobs:
 
           - **Framework-dependent:** `ko-lite-{{version}}-win-x64-framework-dependent.zip` requires the .NET 10 ASP.NET Core Runtime (x64).
 
-          Both archives extract with `Start-KoLiteApp.ps1` at the package root. From that root, start a scheduler-disabled review instance with:
+          Both archives extract with `Start-KoLiteApp.ps1` at the package root:
 
           ```powershell
-          .\Start-KoLiteApp.ps1 -AppArguments '--KoLite:Scheduler:Enabled=false'
+          .\Start-KoLiteApp.ps1'
           ```
 
-          Open `http://127.0.0.1:5057` and verify `http://127.0.0.1:5057/status/health`.
+          Open `http://127.0.0.1:5057`.
 
-          The scheduler is enabled when KO Lite is started without overrides and can execute live Kusto work. Keep it disabled until the local catalog, database path, identity, and Kusto targets have been reviewed. Stop either package gracefully with:
+          Stop either package gracefully with:
 
           ```powershell
           .\Stop-KoLiteApp.ps1
