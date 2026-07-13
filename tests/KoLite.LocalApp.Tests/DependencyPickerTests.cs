@@ -157,13 +157,7 @@ namespace KoLite.LocalApp.Tests
         public void Dispose()
         {
             factory.Dispose();
-            try
-            {
-                Directory.Delete(testDirectory, recursive: true);
-            }
-            catch (IOException)
-            {
-            }
+            TestCleanup.DeleteDirectoryBestEffort(testDirectory);
         }
 
         private WebApplicationFactory<Program> CreateFactory() =>

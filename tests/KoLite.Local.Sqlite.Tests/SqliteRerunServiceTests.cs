@@ -123,8 +123,7 @@ namespace KoLite.Local.Sqlite.Tests
 
         public void Dispose()
         {
-            SqliteConnection.ClearAllPools();
-            if (Directory.Exists(testDirectory)) Directory.Delete(testDirectory, recursive: true);
+            TestCleanup.DeleteDirectoryWithRetry(testDirectory);
         }
 
         private SqliteRerunService Service() => new(factory, catalog, clock);

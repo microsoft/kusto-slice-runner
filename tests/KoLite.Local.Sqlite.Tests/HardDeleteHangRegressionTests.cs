@@ -29,8 +29,7 @@ namespace KoLite.Local.Sqlite.Tests
 
         public void Dispose()
         {
-            SqliteConnection.ClearAllPools();
-            if (Directory.Exists(testDirectory)) Directory.Delete(testDirectory, recursive: true);
+            TestCleanup.DeleteDirectoryWithRetry(testDirectory);
         }
 
         // A concurrent reader holds a table read lock for the whole window. Shared cache makes that

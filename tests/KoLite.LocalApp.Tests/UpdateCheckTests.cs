@@ -495,7 +495,7 @@ namespace KoLite.LocalApp.Tests
 
         public void Dispose()
         {
-            TestCleanup.DeleteDirectoryWithRetry(testDirectory);
+            TestCleanup.DeleteDirectoryBestEffort(testDirectory);
         }
 
         private sealed class FixedClock : IClock

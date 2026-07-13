@@ -10,24 +10,7 @@ namespace KoLite.Local.Sqlite.Tests
 
         public void Dispose()
         {
-            SqliteConnection.ClearAllPools();
-            if (!Directory.Exists(testDirectory))
-            {
-                return;
-            }
-
-            for (var attempt = 0; attempt < 3; attempt++)
-            {
-                try
-                {
-                    Directory.Delete(testDirectory, recursive: true);
-                    return;
-                }
-                catch (IOException) when (attempt < 2)
-                {
-                    Thread.Sleep(50);
-                }
-            }
+            TestCleanup.DeleteDirectoryWithRetry(testDirectory);
         }
 
         [Fact]

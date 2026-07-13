@@ -1,21 +1,10 @@
 using Microsoft.Data.Sqlite;
 
-namespace KoLite.LocalApp.Tests
+namespace KoLite.Local.Sqlite.Tests
 {
     internal static class TestCleanup
     {
-        // Some LocalApp tests (notably the /status/shutdown/drain endpoint) trigger a real app
-        // shutdown whose detached stop task briefly opens a SQLite connection (RecordLog) after the
-        // HTTP response has been sent. Under parallel load that connection can still hold the
-        // fixture's temporary web.db when Dispose() deletes its directory, which surfaces as
-        // "The process cannot access the file 'web.db' because it is being used by another process."
-        // Retry the delete for a short bounded window so pooled or briefly active connections can
-        // release the fixture's ephemeral GUID-named temp directory.
-        public static void DeleteDirectoryWithRetry(string path) => DeleteDirectory(path, bestEffort: false);
-
-        public static void DeleteDirectoryBestEffort(string path) => DeleteDirectory(path, bestEffort: true);
-
-        private static void DeleteDirectory(string path, bool bestEffort)
+        public static void DeleteDirectoryWithRetry(string path)
         {
             if (!Directory.Exists(path))
             {
@@ -33,14 +22,9 @@ namespace KoLite.LocalApp.Tests
                     Directory.Delete(path, recursive: true);
                     return;
                 }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                catch (Exception ex) when (attempt < 19 && ex is IOException or UnauthorizedAccessException)
                 {
-                    if (attempt == 19 && !bestEffort)
-                    {
-                        throw;
-                    }
-
-                    Thread.Sleep(100);
+                    Thread.Sleep(50);
                 }
             }
         }

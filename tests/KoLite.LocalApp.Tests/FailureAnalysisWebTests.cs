@@ -165,15 +165,7 @@ namespace KoLite.LocalApp.Tests
         public void Dispose()
         {
             factory.Dispose();
-            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
-            try
-            {
-                Directory.Delete(testDirectory, recursive: true);
-            }
-            catch (IOException)
-            {
-                // Best-effort cleanup of the temp database directory.
-            }
+            TestCleanup.DeleteDirectoryBestEffort(testDirectory);
         }
 
         private sealed record FormToken(string Value, string Cookie);

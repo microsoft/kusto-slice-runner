@@ -16,8 +16,7 @@ namespace KoLite.Local.Sqlite.Tests
 
         public void Dispose()
         {
-            SqliteConnection.ClearAllPools();
-            if (Directory.Exists(testDirectory)) Directory.Delete(testDirectory, recursive: true);
+            TestCleanup.DeleteDirectoryWithRetry(testDirectory);
         }
 
         // A prior owner can hand a pooled connection back still inside a transaction (for example an

@@ -341,7 +341,7 @@ namespace KoLite.LocalApp.Tests
         public void Dispose()
         {
             factory.Dispose();
-            TestCleanup.DeleteDirectoryWithRetry(testDirectory);
+            TestCleanup.DeleteDirectoryBestEffort(testDirectory);
         }
 
         private DependencyGraphViewModel BuildGraph(params string[] focalJobIds)
