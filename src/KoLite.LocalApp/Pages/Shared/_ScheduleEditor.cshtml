@@ -29,7 +29,24 @@
             <label>Start from<input name="Input.StartFrom" value="@Model.Input.StartFrom" placeholder="2026-01-01T00:00:00Z" @(Model.StartedFieldsReadOnly ? "readonly" : null) /></label>
             <label>End on<input name="Input.EndOn" value="@Model.Input.EndOn" placeholder="optional" /></label>
             <label>Folder<input name="Input.Folder" value="@Model.Input.Folder" placeholder="optional" /></label>
-            <label>Tags<input name="Input.Tags" value="@Model.Input.Tags" placeholder="prod, daily, security" /></label>
+            <div class="form-field tag-picker" data-tag-picker>
+                <label class="tag-picker-label" for="schedule-tags-input">Tags</label>
+                <div class="tag-picker-controls">
+                    <input id="schedule-tags-input" class="tag-picker-input" type="text" data-tag-input autocomplete="off" placeholder="prod, daily, security" aria-describedby="schedule-tags-help" />
+                    <button type="button" class="btn small" data-tag-add>Add tag</button>
+                </div>
+                <div class="tag-editor-chips" data-tag-chips aria-live="polite">
+                    @foreach (var tag in Model.Input.NormalizedTags)
+                    {
+                        <span class="tag-chip tag-editor-chip" data-tag-chip data-tag-value="@tag">
+                            <span class="tag-editor-chip-label">@tag</span>
+                            <button type="button" class="tag-editor-chip-remove" data-tag-remove aria-label="Remove tag @tag">&times;</button>
+                        </span>
+                    }
+                </div>
+                <input type="hidden" name="Input.Tags" data-tag-hidden value="@string.Join("\n", Model.Input.NormalizedTags)" />
+                <p id="schedule-tags-help" class="muted tag-picker-help">Type or paste tags, then press Enter, comma, semicolon, or Add tag.</p>
+            </div>
             <label>Target cluster URI<input name="Input.ClusterUri" value="@Model.Input.ClusterUri" /></label>
             <label>Target database<input name="Input.Database" value="@Model.Input.Database" /></label>
             <label>Health policy

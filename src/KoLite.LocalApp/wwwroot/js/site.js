@@ -1228,6 +1228,112 @@
     });
   }
 
+  function tagChipValues(chips) {
+    return Array.prototype.map.call(chips.querySelectorAll("[data-tag-chip]"), function (chip) {
+      return chip.getAttribute("data-tag-value");
+    });
+  }
+
+  function splitTagValues(value) {
+    return (value || "")
+      .split(/[\r\n,;]+/)
+      .map(function (tag) { return tag.trim().toLowerCase(); })
+      .filter(function (tag) { return tag.length > 0; });
+  }
+
+  function makeTagChip(value) {
+    var chip = document.createElement("span");
+    chip.className = "tag-chip tag-editor-chip";
+    chip.setAttribute("data-tag-chip", "");
+    chip.setAttribute("data-tag-value", value);
+
+    var label = document.createElement("span");
+    label.className = "tag-editor-chip-label";
+    label.textContent = value;
+    chip.appendChild(label);
+
+    var remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "tag-editor-chip-remove";
+    remove.setAttribute("data-tag-remove", "");
+    remove.setAttribute("aria-label", "Remove tag " + value);
+    remove.innerHTML = "&times;";
+    chip.appendChild(remove);
+
+    return chip;
+  }
+
+  function syncTagHidden(picker) {
+    var chips = picker.querySelector("[data-tag-chips]");
+    var hidden = picker.querySelector("[data-tag-hidden]");
+    if (!chips || !hidden) return;
+    hidden.value = tagChipValues(chips).join("\n");
+  }
+
+  function addTagValues(picker, value) {
+    var chips = picker.querySelector("[data-tag-chips]");
+    if (!chips) return;
+
+    var existing = tagChipValues(chips);
+    splitTagValues(value).forEach(function (tag) {
+      if (existing.indexOf(tag) !== -1) return;
+      chips.appendChild(makeTagChip(tag));
+      existing.push(tag);
+    });
+    syncTagHidden(picker);
+  }
+
+  function initTagPickers() {
+    document.querySelectorAll("[data-tag-picker]").forEach(function (picker) {
+      var input = picker.querySelector("[data-tag-input]");
+      var addButton = picker.querySelector("[data-tag-add]");
+      var chips = picker.querySelector("[data-tag-chips]");
+      var hidden = picker.querySelector("[data-tag-hidden]");
+      if (!input || !chips || !hidden) return;
+
+      syncTagHidden(picker);
+
+      function commit(focusInput) {
+        addTagValues(picker, input.value);
+        input.value = "";
+        if (focusInput) input.focus();
+      }
+
+      if (addButton) {
+        addButton.addEventListener("click", function () {
+          commit(true);
+        });
+      }
+
+      input.addEventListener("keydown", function (event) {
+        if (event.isComposing) return;
+        if (event.key !== "Enter" && event.key !== "," && event.key !== ";") return;
+        event.preventDefault();
+        commit(true);
+      });
+
+      chips.addEventListener("click", function (event) {
+        var target = event.target;
+        if (!(target instanceof HTMLElement)) return;
+        var remove = target.closest("[data-tag-remove]");
+        if (!remove) return;
+        var chip = remove.closest("[data-tag-chip]");
+        if (chip && chip.parentNode) {
+          chip.parentNode.removeChild(chip);
+          syncTagHidden(picker);
+          input.focus();
+        }
+      });
+
+      var form = picker.closest("form");
+      if (form) {
+        form.addEventListener("submit", function () {
+          commit(false);
+        });
+      }
+    });
+  }
+
   function dependencyChipValues(chips) {
     return Array.prototype.map.call(chips.querySelectorAll("[data-dependency-chip]"), function (chip) {
       return chip.getAttribute("data-dep-value");
@@ -1712,6 +1818,7 @@
 
   window.initDependencyGraphs = initDependencyGraphs;
   window.initDependencyPickers = initDependencyPickers;
+  window.initTagPickers = initTagPickers;
   window.initBulkSelect = initBulkSelect;
 
   // "Analyze failures with Copilot" on the job Operations tab: trigger the loopback analysis endpoint,
@@ -1882,6 +1989,7 @@
   initDashboardJobToggle();
   initBulkSelect();
   initUpdateBadge();
+  initTagPickers();
   initDependencyPickers();
   initDependencyGraphs();
   initFailureAnalysis();

@@ -28,6 +28,11 @@ namespace KoLite.LocalApp.Ui
         public string? DependsOn { get; set; }
         public string JobSettingsJson { get; set; } = "{}";
 
+        public IReadOnlyList<string> NormalizedTags =>
+            ScheduleTags.NormalizeDistinct(
+                (Tags ?? string.Empty)
+                    .Split(['\r', '\n', ',', ';'], StringSplitOptions.RemoveEmptyEntries));
+
         public static ScheduleFormInput Default() => FromJson(SampleScheduleFactory.CreateJson());
 
         public static ScheduleFormInput FromJson(string json)
@@ -102,8 +107,8 @@ namespace KoLite.LocalApp.Ui
                 root["folder"] = Folder.Trim();
             }
 
-            var tags = SplitTags().ToArray();
-            if (tags.Length > 0)
+            var tags = NormalizedTags;
+            if (tags.Count > 0)
             {
                 var array = new JsonArray();
                 foreach (var tag in tags)
@@ -138,11 +143,6 @@ namespace KoLite.LocalApp.Ui
             (DependsOn ?? string.Empty)
                 .Split(['\r', '\n', ',', ';'], StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
                 .Distinct(StringComparer.Ordinal);
-
-        private IEnumerable<string> SplitTags() =>
-            ScheduleTags.NormalizeDistinct(
-                (Tags ?? string.Empty)
-                    .Split(['\r', '\n', ',', ';'], StringSplitOptions.RemoveEmptyEntries));
 
         private static ScheduleFormInput DefaultWithoutParsing() => new()
         {

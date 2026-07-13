@@ -765,15 +765,82 @@ namespace KoLite.LocalApp.Tests
             var input = ScheduleFormInput.FromJson(Schedule("job.tags", "TagFunction", isPaused: false, tags: ["Prod", " daily ", "PROD"]));
 
             Assert.Equal("prod" + Environment.NewLine + "daily", input.Tags);
+            Assert.Equal(["prod", "daily"], input.NormalizedTags);
 
             input.Tags = "Security; PROD\nsecurity";
             var outputJson = input.ToScheduleJson();
             var parsed = ScheduleParser.Parse(outputJson);
 
             Assert.True(parsed.IsValid, string.Join(Environment.NewLine, parsed.Errors.Select(e => $"{e.Field}: {e.Message}")));
+            Assert.Equal(["security", "prod"], input.NormalizedTags);
             Assert.Equal(["security", "prod"], parsed.Definition!.Tags);
             using var document = JsonDocument.Parse(outputJson);
             Assert.Equal(["security", "prod"], document.RootElement.GetProperty("tags").EnumerateArray().Select(tag => tag.GetString() ?? string.Empty).ToArray());
+        }
+
+        [Fact]
+        public async Task Shared_schedule_editor_renders_multiple_tags_as_separate_chips()
+        {
+            var catalog = new SqliteJobCatalogRepository(sqlite);
+            var record = catalog.Create(Schedule("job.tag.editor", "TagEditorFunction", isPaused: false, tags: ["Harvest", "v2"]));
+            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+
+            var taggedPages = new[]
+            {
+                $"/jobs/{record.JobId}",
+                $"/catalog/{record.JobId}/edit",
+                $"/catalog/{record.JobId}/copy"
+            };
+            foreach (var path in taggedPages)
+            {
+                var html = await client.GetStringAsync(path);
+                Assert.Contains("data-tag-picker", html, StringComparison.Ordinal);
+                Assert.Contains("data-tag-chip data-tag-value=\"harvest\"", html, StringComparison.Ordinal);
+                Assert.Contains("data-tag-chip data-tag-value=\"v2\"", html, StringComparison.Ordinal);
+                Assert.Contains("aria-label=\"Remove tag harvest\"", html, StringComparison.Ordinal);
+                Assert.Contains("aria-label=\"Remove tag v2\"", html, StringComparison.Ordinal);
+                Assert.DoesNotContain("<label>Tags<input", html, StringComparison.Ordinal);
+            }
+
+            var newJobHtml = await client.GetStringAsync("/catalog/new");
+            Assert.Contains("data-tag-picker", newJobHtml, StringComparison.Ordinal);
+            Assert.Contains("name=\"Input.Tags\" data-tag-hidden", newJobHtml, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public async Task Schedule_editor_posts_multiple_normalized_tags()
+        {
+            var catalog = new SqliteJobCatalogRepository(sqlite);
+            var record = catalog.Create(Schedule("job.tag.post", "TagPostFunction", isPaused: false, tags: ["old"]));
+            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+            var editPath = $"/catalog/{record.JobId}/edit";
+            var token = await ReadFormToken(client, editPath);
+
+            var form = new Dictionary<string, string>
+            {
+                ["formMode"] = "fields",
+                ["expectedVersion"] = record.CatalogVersion.ToString(),
+                ["Input.Id"] = record.JobId,
+                ["Input.ActivityId"] = "job.tag.post",
+                ["Input.FunctionName"] = "TagPostFunction",
+                ["Input.OutputTable"] = "Output",
+                ["Input.QueryWindowSize"] = "00:05:00",
+                ["Input.DelayFromUtcNow"] = "00:00:00",
+                ["Input.MaxParallelism"] = "1",
+                ["Input.QueryTimeout"] = "00:01:00",
+                ["Input.IsPaused"] = "false",
+                ["Input.HealthPolicy"] = "complete",
+                ["Input.StartFrom"] = "2026-01-01T00:00:00Z",
+                ["Input.ClusterUri"] = "https://kolite-example.invalid",
+                ["Input.Database"] = "DemoDb",
+                ["Input.Tags"] = "Harvest\nv2;HARVEST",
+                ["Input.JobSettingsJson"] = "{}"
+            };
+
+            using var response = await PostForm(client, $"/catalog/{record.JobId}/update", token, form);
+
+            Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
+            Assert.Equal(["harvest", "v2"], catalog.Get(record.JobId)!.Definition.Tags);
         }
 
         [Fact]

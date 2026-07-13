@@ -600,6 +600,27 @@ h3 { font-size: 16px; margin-bottom: 10px; }
   margin-top: 3px;
 }
 .form-card textarea { font-family: Consolas, "Courier New", monospace; }
+.tag-picker { margin-bottom: 10px; }
+.tag-picker-label { margin-bottom: 6px !important; }
+.tag-picker-controls { align-items: center; display: flex; gap: 8px; margin-bottom: 8px; }
+.tag-picker-input { flex: 1 1 auto; margin-top: 0 !important; min-width: 0; }
+.tag-picker-controls .btn { flex: 0 0 auto; }
+.tag-editor-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.tag-editor-chips:empty { display: none; }
+.tag-editor-chip { padding: 2px 4px 2px 8px; }
+.tag-editor-chip-label { font-weight: 600; }
+.tag-editor-chip-remove {
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  color: inherit;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 4px;
+}
+.tag-editor-chip-remove:hover { background: rgba(0, 0, 0, 0.08); }
+.tag-picker-help { margin: 6px 0 0; }
 .dependency-picker { margin-bottom: 10px; }
 .dependency-picker-label { display: block; font-weight: 600; margin-bottom: 6px; }
 .dependency-picker-controls { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
