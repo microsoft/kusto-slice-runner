@@ -1002,33 +1002,70 @@ jobs:
               }
           }
 
-          $finalReleaseFilter = '.[] | select(.tag_name == "' + $env:RELEASE_VERSION + '") | [.id, .draft, (.body // "" | contains("' + $env:RELEASE_MARKER + '")), .target_commitish] | @tsv'
-          $finalReleaseStates = @(
-              @(
-                  & gh api --paginate "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" --jq $finalReleaseFilter
-              ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
-          )
-          if ($LASTEXITCODE -ne 0 -or $finalReleaseStates.Count -ne 1) {
-              throw "Draft release '$env:RELEASE_VERSION' exists but could not be verified."
+          $releaseView = $null
+          $lastReleaseViewError = 'No response was returned.'
+          foreach ($attempt in 1..6) {
+              $releaseViewOutput = @(
+                  & gh release view $env:RELEASE_VERSION `
+                      --repo $env:GITHUB_REPOSITORY `
+                      --json databaseId,isDraft,tagName,targetCommitish,body,url 2>&1
+              ) -join "`n"
+              $releaseViewExit = $LASTEXITCODE
+
+              if ($releaseViewExit -eq 0) {
+                  try {
+                      $releaseView = $releaseViewOutput | ConvertFrom-Json
+                      break
+                  } catch {
+                      $lastReleaseViewError = "GitHub returned invalid release JSON: $($_.Exception.Message)"
+                  }
+              } else {
+                  $lastReleaseViewError = if ([string]::IsNullOrWhiteSpace($releaseViewOutput)) {
+                      "gh release view exited with code $releaseViewExit."
+                  } else {
+                      $releaseViewOutput.Trim()
+                  }
+              }
+
+              if ($attempt -lt 6) {
+                  Start-Sleep -Seconds 2
+              }
           }
-          $finalParts = $finalReleaseStates[0] -split "`t", 4
-          if ($finalParts.Count -ne 4 -or $finalParts[1] -ne 'true' -or $finalParts[2] -ne 'true') {
-              throw "Release '$env:RELEASE_VERSION' exists but is not the expected workflow-owned draft."
+
+          if ($null -eq $releaseView) {
+              throw "Draft release '$env:RELEASE_VERSION' could not be read after six attempts. Last error: $lastReleaseViewError"
+          }
+          if ([string]$releaseView.tagName -ne $env:RELEASE_VERSION) {
+              throw "Release lookup returned tag '$($releaseView.tagName)' instead of '$env:RELEASE_VERSION'."
+          }
+          if ($releaseView.isDraft -ne $true) {
+              throw "Release '$env:RELEASE_VERSION' exists but is not a draft."
+          }
+          if (-not ([string]$releaseView.body).Contains($env:RELEASE_MARKER, [System.StringComparison]::Ordinal)) {
+              throw "Release '$env:RELEASE_VERSION' is not the expected workflow-owned draft."
+          }
+          if (-not [string]::IsNullOrWhiteSpace($env:RELEASE_ID) -and
+              [string]$releaseView.databaseId -ne $env:RELEASE_ID) {
+              throw "Release '$env:RELEASE_VERSION' no longer has the expected release id '$env:RELEASE_ID'."
           }
 
           $remoteTagLine = @(
-              & git ls-remote --exit-code --tags origin "refs/tags/$env:RELEASE_VERSION"
+              & git ls-remote --tags origin "refs/tags/$env:RELEASE_VERSION"
           ) | Select-Object -First 1
           $tagLookupExit = $LASTEXITCODE
-          if ($tagLookupExit -eq 0) {
+          if ($tagLookupExit -ne 0) {
+              throw "Could not verify whether draft release '$env:RELEASE_VERSION' already has a Git tag."
+          }
+          if (-not [string]::IsNullOrWhiteSpace($remoteTagLine)) {
               $remoteTagSha = ($remoteTagLine -split '\s+', 2)[0]
               if ($remoteTagSha -ne $env:RELEASE_SHA) {
                   throw "Remote tag '$env:RELEASE_VERSION' resolves to '$remoteTagSha' instead of exact SHA '$env:RELEASE_SHA'."
               }
-          } elseif ($tagLookupExit -eq 2) {
-              if ($finalParts[3] -ne $env:RELEASE_SHA) {
-                  throw "Untagged draft release '$env:RELEASE_VERSION' targets '$($finalParts[3])' instead of exact SHA '$env:RELEASE_SHA'."
-              }
           } else {
-              throw "Could not verify whether draft release '$env:RELEASE_VERSION' already has a Git tag."
+              if ([string]$releaseView.targetCommitish -ne $env:RELEASE_SHA) {
+                  throw "Untagged draft release '$env:RELEASE_VERSION' targets '$($releaseView.targetCommitish)' instead of exact SHA '$env:RELEASE_SHA'."
+              }
           }
+
+          Write-Host "Verified draft release '$env:RELEASE_VERSION' at exact SHA '$env:RELEASE_SHA'."
+          exit 0
