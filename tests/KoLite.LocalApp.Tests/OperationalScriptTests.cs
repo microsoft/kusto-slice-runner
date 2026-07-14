@@ -100,6 +100,40 @@ namespace KoLite.LocalApp.Tests
             }
         }
 
+        [Fact]
+        public void Release_highlights_script_is_read_only_toward_github()
+        {
+            var script = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "scripts", "New-KoLiteReleaseHighlights.ps1"));
+
+            Assert.Contains("[switch]$DryRun", script, StringComparison.Ordinal);
+            Assert.Contains("[switch]$SelfTest", script, StringComparison.Ordinal);
+            Assert.Contains("[switch]$Force", script, StringComparison.Ordinal);
+            Assert.Contains("--no-custom-instructions", script, StringComparison.Ordinal);
+            Assert.Contains("--disable-builtin-mcps", script, StringComparison.Ordinal);
+            Assert.Contains("--available-tools=", script, StringComparison.Ordinal);
+            Assert.Contains("--no-remote", script, StringComparison.Ordinal);
+            Assert.Contains("Assert-Highlights", script, StringComparison.Ordinal);
+            Assert.DoesNotContain("gh auth token", script, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("workflow run", script, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("release edit", script, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("release delete", script, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("release publish", script, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("git tag", script, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("--allow-all", script, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("--allow-tool", script, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("secrets.", script, StringComparison.OrdinalIgnoreCase);
+        }
+
+        [Fact]
+        public void Release_highlights_script_self_tests_pass()
+        {
+            var result = RunPowerShell(
+                Path.Combine(FindRepositoryRoot(), "scripts", "New-KoLiteReleaseHighlights.ps1"),
+                "-SelfTest");
+
+            Assert.Contains("self-tests passed", result, StringComparison.OrdinalIgnoreCase);
+        }
+
         public static IEnumerable<object[]> OperationalScripts()
         {
             var scriptsDirectory = Path.Combine(FindRepositoryRoot(), "scripts");
@@ -154,6 +188,33 @@ namespace KoLite.LocalApp.Tests
             process.WaitForExit();
 
             Assert.True(process.ExitCode == 0, $"Start-KoLiteApp.ps1 failed with exit code {process.ExitCode}: {standardError}");
+            return standardOutput;
+        }
+
+        private static string RunPowerShell(string scriptPath, params string[] arguments)
+        {
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = "pwsh",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+            startInfo.ArgumentList.Add("-NoProfile");
+            startInfo.ArgumentList.Add("-File");
+            startInfo.ArgumentList.Add(scriptPath);
+            foreach (var argument in arguments)
+            {
+                startInfo.ArgumentList.Add(argument);
+            }
+
+            using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("Could not start pwsh.");
+            var standardOutput = process.StandardOutput.ReadToEnd();
+            var standardError = process.StandardError.ReadToEnd();
+            process.WaitForExit();
+
+            Assert.True(process.ExitCode == 0, $"{Path.GetFileName(scriptPath)} failed with exit code {process.ExitCode}: {standardError}");
             return standardOutput;
         }
     }

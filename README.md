@@ -34,7 +34,7 @@ If you're familiar with [scheduled Kusto jobs](https://learn.microsoft.com/kusto
 - Detects Kusto ingestion-capacity throttling (429), shows how bad it is (the % of attempts throttled, with a trend chart), highlights slices lost to throttling, and recommends per-job `maxParallelism` reductions that never starve a job below the parallelism it needs to keep up (and only trim a backfilling job to what still clears its backlog in time); operators apply them explicitly.
 - Plans historical reruns and local state repair while leaving destructive Kusto cleanup to the operator.
 - Exposes a localhost-only JSON API so a same-machine agent can read jobs, create/update schedules (via the same validated import path as the dashboard), and soft-delete/restore a job — plus a read-only **diagnostics** API for slice states, leases, throughput, history, logs, and audit.
-- Ships **Copilot skills** in `.github/skills`: `ko-lite-job-manager` drives that API (import/upsert, pause/resume, soft-delete/restore, diagnostics), `ko-lite-schedule-json` authors and validates schedule JSON locally, and a `kusto` query helper.
+- Ships **Copilot skills** in `.github/skills`: `ko-lite-job-manager` drives that API (import/upsert, pause/resume, soft-delete/restore, diagnostics), `ko-lite-schedule-json` authors and validates schedule JSON locally, `ko-lite-release-highlights` writes AI highlights for an existing release draft to a local Markdown file, and a `kusto` query helper.
 - Periodically checks GitHub (via the `gh` CLI) for a newer published KO Lite release and shows an update badge in the top bar.
 
 ## Quick start from a release
@@ -90,6 +90,19 @@ Activity:
 Analyze failures with Copilot:
 
 ![KO Lite Copilot failure analysis](docs/images/copilot-failure-analysis.png)
+
+## Release highlights (maintainers)
+
+After the GitHub Release workflow creates a draft, generate local AI highlights:
+
+```powershell
+pwsh -File .\scripts\New-KoLiteReleaseHighlights.ps1 -Version v1.1.0
+```
+
+The read-only script uses authenticated `gh` and Copilot CLI sessions, validates
+the model response, and writes a Markdown file. Review and paste that file into
+the draft manually. It never changes GitHub and requires no PAT, repository
+secret, or organization-setting change. See the [release guide](docs/releasing.md).
 
 ## Documentation
 

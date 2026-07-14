@@ -81,6 +81,19 @@ cd "$env:LOCALAPPDATA\KoLite\run-app"
 
 ## Create a GitHub Release
 
-Versioned downloads are created only when a maintainer manually runs the **KO Lite Release** workflow from `main`. Supply an unused `vMAJOR.MINOR.PATCH` version. The workflow repeats the quality gates, publishes and smoke-tests both Windows x64 packages, generates checksums and grounded release notes, and creates a draft release.
+Run the **KO Lite Release** workflow from GitHub Actions with an unused
+`vMAJOR.MINOR.PATCH` version. The hosted workflow runs the quality gates,
+publishes and smoke-tests both Windows x64 packages, generates checksums and
+complete release notes, and creates a draft.
 
-Review the draft, notes, assets, and checksums before publishing it. GitHub Models improves the highlights when available, but GitHub-generated notes remain the deterministic fallback. See the [release guide](docs/releasing.md) for the complete procedure.
+After the draft exists, generate optional local highlights:
+
+```powershell
+pwsh -File .\scripts\New-KoLiteReleaseHighlights.ps1 -Version v1.1.0
+```
+
+The script reads the deterministic notes from the draft, runs local Copilot with
+no tools, validates the result, and writes a Markdown file under `%TEMP%`.
+Review and paste it above `## Complete generated notes`, then review the draft
+and publish manually. The script never edits GitHub. See the
+[release guide](docs/releasing.md).
