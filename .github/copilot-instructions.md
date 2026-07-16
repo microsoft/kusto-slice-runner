@@ -35,6 +35,7 @@ For targeted changes, run the narrow relevant test project first, then decide wh
 ## Key conventions
 
 - Keep `.github\copilot-instructions.md` as the single repo-level Copilot instruction file. Do not add duplicate root-level instruction files.
+- Do not invoke the ADO or Bluebird MCP servers for work in this repository, even when they are available; they do not provide useful KO Lite context. Use local workspace tools and local `git` for repository discovery and history, and use the `gh` CLI for GitHub operations. This restriction applies only to those two servers; use other task-relevant tooling, including Kusto tooling, when appropriate.
 - For branch, worktree, and pull request conventions, see the "Git workflow (feature branches and worktrees)" section below. By default, commit on the current branch (normally `main`) and do not create a branch, worktree, or pull request unless the user explicitly asks for one.
 - Prefer Windows paths and PowerShell examples. Existing scripts use `Set-StrictMode -Version Latest` and `$ErrorActionPreference = 'Stop'`; preserve that style in new PowerShell scripts.
 - Use the .NET SDK from `global.json`. When writing C#, use block-scoped namespace declarations (`namespace Name { ... }`) instead of file-scoped namespaces, keep app entry points inside an explicit `Program` class instead of top-level statements, and use conventional class declarations with explicit constructors instead of class primary constructors.

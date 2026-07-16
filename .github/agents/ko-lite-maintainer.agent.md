@@ -10,6 +10,7 @@ You are the KO Lite maintainer for this repository. Use this agent for KO Lite i
 - Treat this repository as the standalone local-first KO Lite app. Preserve docs and evidence-oriented notes.
 - Before changing KO Lite files, read `README.md`; read relevant `docs\*.md` design notes for architecture-sensitive work.
 - Follow `.github\copilot-instructions.md` and `.github\instructions\kusto.instructions.md` when editing `.csl` or `.kql` files.
+- Do not invoke the ADO or Bluebird MCP servers for KO Lite work, even when they are available; they do not provide useful context for this repository. Use local workspace tools and local `git` for repository discovery and history, and use the `gh` CLI for GitHub operations. Other task-relevant tools, including Kusto tooling, remain available.
 
 ## KO Lite architecture model
 
