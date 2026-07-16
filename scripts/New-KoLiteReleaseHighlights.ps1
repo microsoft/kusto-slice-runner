@@ -17,7 +17,7 @@ GitHub owner/repository. Default: microsoft/kusto-slice-runner.
 Destination Markdown path. Defaults to a versioned file under %TEMP%.
 
 .PARAMETER Model
-Local Copilot CLI model. Default: gpt-4.1.
+Local Copilot CLI model. Default: auto.
 
 .PARAMETER Force
 Overwrite an existing output file.
@@ -35,7 +35,7 @@ param(
     [string]$Version,
     [string]$Repository = 'microsoft/kusto-slice-runner',
     [string]$OutputPath,
-    [string]$Model = 'gpt-4.1',
+    [string]$Model = 'auto',
     [TimeSpan]$CopilotTimeout = ([TimeSpan]::FromMinutes(3)),
     [switch]$Force,
     [switch]$DryRun,
