@@ -58,6 +58,8 @@ namespace KoLite.LocalApp.Tests
             Assert.Contains("KoLite.LocalApp.dll", script, StringComparison.Ordinal);
             Assert.Contains("$PSScriptRoot", script, StringComparison.Ordinal);
             Assert.Contains("run-app", script, StringComparison.Ordinal);
+            Assert.Contains("Push-Location -LiteralPath $AppDirectory", script, StringComparison.Ordinal);
+            Assert.Contains("Pop-Location", script, StringComparison.Ordinal);
             Assert.Contains("& $exePath", script, StringComparison.Ordinal);
             Assert.Contains("& dotnet", script, StringComparison.Ordinal);
         }
@@ -93,6 +95,27 @@ namespace KoLite.LocalApp.Tests
                 var output = RunStartScriptDryRun(packageDirectory);
 
                 Assert.Contains($"dotnet \"{Path.Combine(packageDirectory, "KoLite.LocalApp.dll")}\"", output, StringComparison.OrdinalIgnoreCase);
+            }
+            finally
+            {
+                Directory.Delete(packageDirectory, recursive: true);
+            }
+        }
+
+        [Fact]
+        public void Start_script_runs_entrypoint_from_app_directory()
+        {
+            var packageDirectory = CreatePackageDirectory();
+            try
+            {
+                File.WriteAllText(Path.Combine(packageDirectory, "KoLite.LocalApp.dll"), string.Empty);
+                File.WriteAllText(
+                    Path.Combine(packageDirectory, "dotnet.cmd"),
+                    "@echo off\r\necho %CD%\r\n");
+
+                var output = RunStartScript(packageDirectory, dryRun: false, pathPrefix: packageDirectory);
+
+                Assert.Contains(packageDirectory, output, StringComparison.OrdinalIgnoreCase);
             }
             finally
             {
@@ -167,6 +190,11 @@ namespace KoLite.LocalApp.Tests
 
         private static string RunStartScriptDryRun(string packageDirectory)
         {
+            return RunStartScript(packageDirectory, dryRun: true);
+        }
+
+        private static string RunStartScript(string packageDirectory, bool dryRun, string? pathPrefix = null)
+        {
             var startInfo = new ProcessStartInfo
             {
                 FileName = "powershell.exe",
@@ -180,7 +208,14 @@ namespace KoLite.LocalApp.Tests
             startInfo.ArgumentList.Add(Path.Combine(FindRepositoryRoot(), "scripts", "Start-KoLiteApp.ps1"));
             startInfo.ArgumentList.Add("-AppDirectory");
             startInfo.ArgumentList.Add(packageDirectory);
-            startInfo.ArgumentList.Add("-DryRun");
+            if (dryRun)
+            {
+                startInfo.ArgumentList.Add("-DryRun");
+            }
+            if (pathPrefix is not null)
+            {
+                startInfo.Environment["PATH"] = $"{pathPrefix};{startInfo.Environment["PATH"]}";
+            }
 
             using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("Could not start powershell.exe.");
             var standardOutput = process.StandardOutput.ReadToEnd();

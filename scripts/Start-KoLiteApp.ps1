@@ -9,6 +9,10 @@ when present; otherwise the script runs KoLite.LocalApp.dll through dotnet. Runn
 deployed folder keeps the repository bin/obj output free, so 'dotnet build' and 'dotnet test'
 are not blocked by the running app holding KoLite.LocalApp.dll/.exe.
 
+The app is always started with AppDirectory as its working directory so ASP.NET Core resolves
+the published wwwroot files correctly, even when this script is invoked from the repository or
+another directory.
+
 The app directory is resolved automatically:
 
 1. If KoLite.LocalApp.exe or KoLite.LocalApp.dll exists next to this script (the script was
@@ -82,6 +86,7 @@ if (@($AppArguments).Count -gt 0) {
 Write-Host 'KO Lite start (deployed copy)'
 Write-Host "AppDirectory: $AppDirectory"
 Write-Host "Entrypoint  : $entrypoint"
+Write-Host "WorkingDir  : $AppDirectory"
 Write-Host "Command     : $commandPreview"
 
 if ($DryRun) {
@@ -94,9 +99,16 @@ if (-not $useExecutable -and -not (Test-Path -LiteralPath $dllPath)) {
 }
 
 Write-Host 'Starting the deployed app (press Ctrl+C to stop)...'
-if ($useExecutable) {
-    & $exePath @AppArguments
-} else {
-    & dotnet $dllPath @AppArguments
+$appExitCode = 0
+Push-Location -LiteralPath $AppDirectory
+try {
+    if ($useExecutable) {
+        & $exePath @AppArguments
+    } else {
+        & dotnet $dllPath @AppArguments
+    }
+    $appExitCode = $LASTEXITCODE
+} finally {
+    Pop-Location
 }
-exit $LASTEXITCODE
+exit $appExitCode

@@ -73,11 +73,10 @@ Startup still applies the current schema to the live database, so when your bran
 
 ```powershell
 .\scripts\Publish-KoLiteApp.ps1            # dotnet publish (Release) to %LOCALAPPDATA%\KoLite\run-app
-cd "$env:LOCALAPPDATA\KoLite\run-app"
-.\Start-KoLiteApp.ps1                      # run the deployed copy in the foreground (Ctrl+C to stop)
+.\scripts\Start-KoLiteApp.ps1              # run that deployed copy in the foreground (Ctrl+C to stop)
 ```
 
-`Publish-KoLiteApp.ps1` copies `Start-KoLiteApp.ps1` and `Stop-KoLiteApp.ps1` into the deployed folder and prints the full deployed path. Pass `-StopRunning` to gracefully drain an instance already running from the target folder before re-publishing. See the [operations runbook](operations-runbook.md#published-output) for all options.
+`Start-KoLiteApp.ps1` can be invoked from the repository as shown above or from inside the deployed folder after `Publish-KoLiteApp.ps1` copies it there. In both cases it starts the process with the deployed folder as the working directory so published static assets resolve correctly. Pass `-StopRunning` to gracefully drain an instance already running from the target folder before re-publishing. See the [operations runbook](operations-runbook.md#published-output) for all options.
 
 ## Create a GitHub Release
 

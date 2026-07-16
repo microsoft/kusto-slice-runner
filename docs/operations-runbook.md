@@ -239,13 +239,12 @@ Use the helper scripts (recommended):
 ```powershell
 .\scripts\Publish-KoLiteApp.ps1            # dotnet publish (Release) to %LOCALAPPDATA%\KoLite\run-app,
                                            # then copy Start-/Stop-KoLiteApp.ps1 into that folder
-cd "$env:LOCALAPPDATA\KoLite\run-app"
-.\Start-KoLiteApp.ps1                      # run the deployed copy in the foreground (Ctrl+C to stop)
+.\scripts\Start-KoLiteApp.ps1              # run the deployed copy in the foreground (Ctrl+C to stop)
 ```
 
 `Publish-KoLiteApp.ps1` prints the full deployed path when it finishes. Pass `-OutputDirectory` to deploy elsewhere, `-Clean` to clear the target first, and `-StopRunning` to gracefully drain a running instance (via `Stop-KoLiteApp.ps1`) before re-publishing — a published DLL cannot be overwritten while an instance is running from the same folder.
 
-`Start-KoLiteApp.ps1` runs with no extra flags by default, matching a no-parameters run (scheduler enabled/live, Kusto `AzureCli`, default database `%LOCALAPPDATA%\KoLite\ko-lite.db`). Pass overrides through `-AppArguments`, for example a disposable database with the scheduler disabled:
+`Start-KoLiteApp.ps1` can be invoked from the repository or from inside the deployed folder. It changes the child process working directory to the deployed folder so ASP.NET Core can resolve the published `wwwroot` assets in either case. It runs with no extra flags by default, matching a no-parameters run (scheduler enabled/live, Kusto `AzureCli`, default database `%LOCALAPPDATA%\KoLite\ko-lite.db`). Pass overrides through `-AppArguments`, for example a disposable database with the scheduler disabled:
 
 ```powershell
 .\Start-KoLiteApp.ps1 -AppArguments '--ConnectionStrings:KoLiteSqlite=...','--KoLite:Scheduler:Enabled=false','--KoLite:Kusto:AuthMode=AzureCli'
@@ -260,7 +259,12 @@ The equivalent manual commands are:
 ```powershell
 $publishDir = "$env:LOCALAPPDATA\KoLite\run-app"
 dotnet publish .\src\KoLite.LocalApp\KoLite.LocalApp.csproj --configuration Release --output "$publishDir" --nologo
-dotnet "$publishDir\KoLite.LocalApp.dll" --ConnectionStrings:KoLiteSqlite="$db" --KoLite:Scheduler:Enabled=false --KoLite:Kusto:AuthMode=AzureCli
+Push-Location $publishDir
+try {
+    dotnet .\KoLite.LocalApp.dll --ConnectionStrings:KoLiteSqlite="$db" --KoLite:Scheduler:Enabled=false --KoLite:Kusto:AuthMode=AzureCli
+} finally {
+    Pop-Location
+}
 ```
 
 Stop the running process before publishing again because published DLLs can be locked while the app is running. If service hosting is needed, publish first, use your service manager's normal process registration, and pass the same safety flags shown above.
