@@ -31,8 +31,8 @@ increment a version.
 3. Run `scripts\New-KoLiteReleaseHighlights.ps1` with PowerShell 7 (`pwsh`) and
    the explicit version.
 4. Return the output file path and draft URL printed by the script.
-5. Tell the user to review the file and paste it above
-   `## Complete generated notes` in the GitHub draft.
+5. Tell the user to review the file and replace the placeholder under
+   `## Changes` in the GitHub draft.
 
 For a read-only preflight, pass `-DryRun`. Use `-Force` only when the user asks
 to overwrite an existing local output file.

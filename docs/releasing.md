@@ -11,8 +11,9 @@ Pushes to `main` run CI but do not create releases.
    the branch set to `main`, and enter the version.
 
 The hosted workflow runs all quality gates, builds and smoke-tests both Windows
-x64 packages, creates `SHA256SUMS.txt`, generates complete deterministic release
-notes, and creates a draft. It does not publish the release.
+x64 packages, creates `SHA256SUMS.txt`, and creates a draft with three sections:
+`Changes`, `Install`, and `Full Changelog`. The `Changes` section initially
+contains a placeholder. The workflow does not publish the release.
 
 ## 2. Generate optional AI highlights locally
 
@@ -31,10 +32,9 @@ pwsh -File .\scripts\New-KoLiteReleaseHighlights.ps1 -Version v1.1.0
 
 The script requires PowerShell 7. It reads the draft, finds the previous
 published release, retrieves the commits in that comparison range, and gives
-their subjects plus the draft's `## Complete generated notes` section to local
-Copilot with no tools available. It writes the non-empty response to a versioned
-Markdown file under `%TEMP%` and prints the file path, draft URL, and commit
-range.
+their subjects to local Copilot with no tools available. It writes the non-empty
+response to a versioned Markdown file under `%TEMP%` and prints the file path,
+draft URL, and commit range.
 
 Use `-OutputPath` to choose another file. Existing files are protected unless
 `-Force` is supplied. `-DryRun` validates that the draft is readable without
@@ -48,10 +48,8 @@ organization change.
 ## 3. Review and publish manually
 
 1. Open the generated Markdown file.
-2. Check every statement against the listed commits and
-   `## Complete generated notes`.
-3. Paste the bullets into an `## AI highlights` section immediately above
-   `## Complete generated notes` in the draft.
+2. Check every statement against the listed commits.
+3. Replace the placeholder under `## Changes` with the reviewed output.
 4. Confirm these assets are present:
    - `ko-lite-<version>-win-x64-self-contained.zip`;
    - `ko-lite-<version>-win-x64-framework-dependent.zip`;

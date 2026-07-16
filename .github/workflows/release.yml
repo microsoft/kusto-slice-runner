@@ -676,21 +676,27 @@ jobs:
           RELEASE_MARKER: ${{ steps.validate.outputs.release-marker }}
           RELEASE_ROOT: ${{ steps.publish.outputs.release-root }}
           GROUNDING_DIRECTORY: ${{ steps.generated-notes.outputs.grounding-dir }}
-          GENERATED_BODY_FILE: ${{ steps.generated-notes.outputs.generated-body-file }}
+          PREVIOUS_TAG: ${{ steps.generated-notes.outputs.previous-tag }}
         run: |
           Set-StrictMode -Version Latest
           $ErrorActionPreference = 'Stop'
 
-          $generatedBody = Get-Content -LiteralPath $env:GENERATED_BODY_FILE -Raw
           $aiStatus = @'
           Actions AI was not attempted.
           Local Copilot post-processing is supported by scripts\New-KoLiteReleaseHighlights.ps1.
-          The hosted draft uses deterministic GitHub-generated notes unless that local post-processing succeeds.
+          The hosted draft leaves a Changes placeholder for reviewed local Copilot output.
           '@
           [System.IO.File]::WriteAllText(
               (Join-Path $env:GROUNDING_DIRECTORY 'ai-status.txt'),
               $aiStatus,
               [System.Text.UTF8Encoding]::new($false))
+
+          $changesTemplate = @'
+          ## Changes
+
+          _Replace this placeholder with the reviewed output from `pwsh -File .\scripts\New-KoLiteReleaseHighlights.ps1 -Version {{version}}`._
+          '@
+          $changes = $changesTemplate.Replace('{{version}}', $env:RELEASE_VERSION)
 
           $installTemplate = @'
           ## Install
@@ -708,20 +714,20 @@ jobs:
           ```
 
           Open `http://127.0.0.1:5057`.
-
-          Stop either package gracefully with:
-
-          ```powershell
-          .\Stop-KoLiteApp.ps1
-          ```
-
-          Verify archive integrity against `SHA256SUMS.txt` with `Get-FileHash -Algorithm SHA256`.
           '@
           $install = $installTemplate.Replace('{{version}}', $env:RELEASE_VERSION)
 
+          $fullChangelogUrl = if ([string]::IsNullOrWhiteSpace($env:PREVIOUS_TAG)) {
+              "https://github.com/$env:GITHUB_REPOSITORY/commits/$env:RELEASE_VERSION"
+          } else {
+              "https://github.com/$env:GITHUB_REPOSITORY/compare/$env:PREVIOUS_TAG...$env:RELEASE_VERSION"
+          }
+          $fullChangelog = "## Full Changelog`n`n$fullChangelogUrl"
+
           $bodyParts = [System.Collections.Generic.List[string]]::new()
+          $bodyParts.Add($changes)
           $bodyParts.Add($install)
-          $bodyParts.Add("## Complete generated notes`n`n$generatedBody")
+          $bodyParts.Add($fullChangelog)
           $bodyParts.Add("<!-- $env:RELEASE_MARKER -->")
 
           $releaseBody = $bodyParts -join "`n`n"

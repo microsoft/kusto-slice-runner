@@ -91,9 +91,10 @@ After the draft exists, generate optional local highlights:
 pwsh -File .\scripts\New-KoLiteReleaseHighlights.ps1 -Version v1.1.0
 ```
 
-The script reads the draft and the commits since the previous published release,
+The workflow creates `Changes`, `Install`, and `Full Changelog` sections. The
+script reads the draft and the commits since the previous published release,
 runs local Copilot with no tools, and writes its non-empty response to a
-Markdown file under `%TEMP%`.
-Review and paste it above `## Complete generated notes`, then review the draft
-and publish manually. The script never edits GitHub. See the
+Markdown file under `%TEMP%`. Review it, replace the placeholder under
+`## Changes`, then review the draft and publish manually. The script never edits
+GitHub. See the
 [release guide](docs/releasing.md).
