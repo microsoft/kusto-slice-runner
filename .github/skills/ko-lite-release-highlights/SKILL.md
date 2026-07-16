@@ -48,5 +48,6 @@ to overwrite an existing local output file.
   publication.
 
 The hosted release workflow remains responsible for builds, tests, packages,
-checksums, deterministic notes, and draft creation. The local script only reads
-the draft and writes a local Markdown file.
+checksums, deterministic notes, and draft creation. The local script reads the
+draft and the commits since the previous published release, then writes a local
+Markdown file.

@@ -99,10 +99,11 @@ After the GitHub Release workflow creates a draft, generate local AI highlights:
 pwsh -File .\scripts\New-KoLiteReleaseHighlights.ps1 -Version v1.1.0
 ```
 
-The read-only script uses authenticated `gh` and Copilot CLI sessions, validates
-the model response, and writes a Markdown file. Review and paste that file into
-the draft manually. It never changes GitHub and requires no PAT, repository
-secret, or organization-setting change. See the [release guide](docs/releasing.md).
+The read-only script uses authenticated `gh` and Copilot CLI sessions to
+summarize commits since the previous published release, then writes a Markdown
+file. Review and paste that file into the draft manually. It never changes
+GitHub and requires no PAT, repository secret, or organization-setting change.
+See the [release guide](docs/releasing.md).
 
 ## Documentation
 

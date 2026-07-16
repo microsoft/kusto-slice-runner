@@ -29,11 +29,12 @@ After the draft exists, run:
 pwsh -File .\scripts\New-KoLiteReleaseHighlights.ps1 -Version v1.1.0
 ```
 
-The script requires PowerShell 7. It reads the draft, gives its
-`## Complete generated notes` section to
-local Copilot with no tools available, validates the response, and writes a
-versioned Markdown file under `%TEMP%`. It prints both the file path and draft
-URL.
+The script requires PowerShell 7. It reads the draft, finds the previous
+published release, retrieves the commits in that comparison range, and gives
+their subjects plus the draft's `## Complete generated notes` section to local
+Copilot with no tools available. It writes the non-empty response to a versioned
+Markdown file under `%TEMP%` and prints the file path, draft URL, and commit
+range.
 
 Use `-OutputPath` to choose another file. Existing files are protected unless
 `-Force` is supplied. `-DryRun` validates that the draft is readable without
@@ -47,7 +48,8 @@ organization change.
 ## 3. Review and publish manually
 
 1. Open the generated Markdown file.
-2. Check every bullet against `## Complete generated notes`.
+2. Check every statement against the listed commits and
+   `## Complete generated notes`.
 3. Paste the bullets into an `## AI highlights` section immediately above
    `## Complete generated notes` in the draft.
 4. Confirm these assets are present:

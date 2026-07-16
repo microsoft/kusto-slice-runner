@@ -8,6 +8,9 @@ compatibility claims, performance claims, security claims, migration steps, or b
 changes. Do not omit or rewrite the complete generated notes; the workflow appends those
 separately.
 
-Return Markdown only: three to six concise bullets, with each bullet starting with "- ".
-Focus on the most user-relevant changes and operational impact. Do not add a heading,
-preamble, installation guidance, changelog, contributor list, or code fence.
+Summarize the commits between the previous published release and the draft, grouping related
+commits into user-relevant changes and explaining operational impact when the grounding supports
+it.
+
+Prefer Markdown with three to six concise bullets, with each bullet starting with "- ". Do not add
+installation guidance, a contributor list, or unsupported claims.
