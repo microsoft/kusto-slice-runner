@@ -19,7 +19,13 @@
 <section class="card @Model.SectionCssClass" data-dashboard-job-section="@enableDashboardFeatures.ToString().ToLowerInvariant()" data-dashboard-section-key="@Model.TableKey">
     <div class="card-header">
         <h2>@Model.Title</h2>
-        <span class="muted" data-dashboard-section-count="@Model.EnableClientFilter.ToString().ToLowerInvariant()" data-dashboard-original-count="@Model.Jobs.Count">@Model.Jobs.Count job(s)</span>
+        <div class="button-row">
+            <span class="muted" data-dashboard-section-count="@Model.EnableClientFilter.ToString().ToLowerInvariant()" data-dashboard-original-count="@Model.Jobs.Count">@Model.Jobs.Count job(s)</span>
+            @if (!string.IsNullOrWhiteSpace(Model.HeaderActionHref) && !string.IsNullOrWhiteSpace(Model.HeaderActionText))
+            {
+                <a class="btn small" href="@Model.HeaderActionHref">@Model.HeaderActionText</a>
+            }
+        </div>
     </div>
     @if (Model.Jobs.Count == 0)
     {

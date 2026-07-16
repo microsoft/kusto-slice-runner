@@ -62,7 +62,9 @@ namespace KoLite.LocalApp.Ui
         bool EnableSort = false,
         DashboardSort? Sort = null,
         string SortBaseQuery = "",
-        string? TableKey = null);
+        string? TableKey = null,
+        string? HeaderActionHref = null,
+        string? HeaderActionText = null);
 
     public sealed record JobListItem(
         JobCatalogRecord Record,

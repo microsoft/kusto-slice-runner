@@ -1134,7 +1134,6 @@
         refresh();
         return;
       }
-
       if (target.hasAttribute("data-bulk-select")) {
         refresh();
       }

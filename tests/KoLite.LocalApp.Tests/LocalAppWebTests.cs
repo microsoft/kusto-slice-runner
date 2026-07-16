@@ -1336,7 +1336,7 @@ namespace KoLite.LocalApp.Tests
         }
 
         [Fact]
-        public async Task Dashboard_renders_bulk_select_controls_only_on_active_and_completed_sections()
+        public async Task Dashboard_limits_bulk_selection_to_active_and_completed_and_links_soft_deleted_management()
         {
             var catalog = new SqliteJobCatalogRepository(sqlite);
             catalog.Create(Schedule("job.alpha", "AlphaFunction", isPaused: false));
@@ -1355,6 +1355,7 @@ namespace KoLite.LocalApp.Tests
             Assert.Contains("formaction=\"/catalog/bulk/resume\"", dashboard);
             Assert.Contains("formaction=\"/catalog/bulk/soft-delete\"", dashboard);
             Assert.Contains("formaction=\"/catalog/bulk/export\"", dashboard);
+            Assert.DoesNotContain("formaction=\"/catalog/bulk/hard-delete\"", dashboard);
             // The bulk form must carry an antiforgery token so the no-fetch POST submit is accepted.
             var bulkForm = dashboard.Substring(dashboard.IndexOf("bulk-action-form", StringComparison.Ordinal));
             bulkForm = bulkForm.Substring(0, bulkForm.IndexOf("</form>", StringComparison.Ordinal));
@@ -1363,8 +1364,9 @@ namespace KoLite.LocalApp.Tests
             Assert.True(
                 dashboard.IndexOf("data-bulk-bar", StringComparison.Ordinal) < dashboard.IndexOf("data-dashboard-filter-root", StringComparison.Ordinal),
                 "The bulk action bar should render before (outside) the jobs grid.");
-            // The soft-deleted section must not offer bulk selection.
+            Assert.DoesNotContain("data-bulk-select-all data-bulk-section=\"soft-deleted\"", dashboard);
             Assert.DoesNotContain($"data-bulk-select value=\"{JobId("job.soft")}\"", dashboard);
+            Assert.Contains("href=\"/catalog/soft-deleted\">Manage soft-deleted jobs</a>", dashboard);
             // The catalog page does not get the bulk experience at all.
             Assert.DoesNotContain("data-bulk-bar", catalogPage);
             Assert.DoesNotContain("data-bulk-select-all", catalogPage);
@@ -1530,6 +1532,158 @@ namespace KoLite.LocalApp.Tests
 
             Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
             Assert.True(catalog.Get(JobId("job.one"))?.IsEnabled);
+        }
+
+        [Fact]
+        public async Task Soft_deleted_management_page_is_the_only_bulk_hard_delete_selection_surface()
+        {
+            var catalog = new SqliteJobCatalogRepository(sqlite);
+            catalog.Create(Schedule("job.active", "ActiveFunction", isPaused: false));
+            var soft = catalog.Create(Schedule("job.soft", "SoftFunction", isPaused: false));
+            var deleted = new SqliteJobLifecycleService(sqlite, catalog).SoftDelete(soft.JobId, soft.CatalogVersion, "web-test", "bulk");
+            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+
+            var page = await client.GetStringAsync("/catalog/soft-deleted");
+
+            Assert.Contains("Manage soft-deleted jobs", page);
+            Assert.Contains("Jobs must be soft-deleted from the dashboard", page);
+            Assert.Contains("It does not delete data from Kusto.", page);
+            Assert.Contains("data-bulk-bar", page);
+            Assert.Contains("data-bulk-select-all data-bulk-section=\"managed-soft-deleted\"", page);
+            Assert.Contains($"data-bulk-select value=\"{soft.JobId}\" data-expected-version=\"{deleted.CatalogVersion}\"", page);
+            Assert.Contains("formaction=\"/catalog/bulk/hard-delete\"", page);
+            Assert.Contains("__RequestVerificationToken", page);
+            Assert.Contains($"action=\"/catalog/{soft.JobId}/restore\"", page);
+            Assert.Contains($"href=\"/catalog/{soft.JobId}/hard-delete\"", page);
+            Assert.DoesNotContain("job.active", page);
+            Assert.DoesNotContain("formaction=\"/catalog/bulk/pause\"", page);
+            Assert.DoesNotContain("formaction=\"/catalog/bulk/soft-delete\"", page);
+        }
+
+        [Fact]
+        public async Task Soft_deleted_management_page_has_no_destructive_controls_when_empty()
+        {
+            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+
+            var page = await client.GetStringAsync("/catalog/soft-deleted");
+
+            Assert.Contains("No jobs in this section.", page);
+            Assert.DoesNotContain("data-bulk-bar", page);
+            Assert.DoesNotContain("formaction=\"/catalog/bulk/hard-delete\"", page);
+            Assert.DoesNotContain("data-bulk-select-all", page);
+        }
+
+        [Fact]
+        public async Task Soft_deleted_management_bulk_hard_delete_reviews_and_atomically_purges_selected_jobs()
+        {
+            var catalog = new SqliteJobCatalogRepository(sqlite);
+            var lifecycle = new SqliteJobLifecycleService(sqlite, catalog);
+            var second = catalog.Create(Schedule("job.bulk.zulu", "ZuluFunction", isPaused: false));
+            var first = catalog.Create(Schedule("job.bulk.alpha", "AlphaFunction", isPaused: false));
+            var deletedSecond = lifecycle.SoftDelete(second.JobId, second.CatalogVersion, "web-test", "bulk");
+            var deletedFirst = lifecycle.SoftDelete(first.JobId, first.CatalogVersion, "web-test", "bulk");
+            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+            var token = await ReadFormToken(client, "/catalog/soft-deleted");
+            var selection = new[]
+            {
+                new KeyValuePair<string, string>("jobIds", second.JobId),
+                new("expectedVersions", deletedSecond.CatalogVersion.ToString(System.Globalization.CultureInfo.InvariantCulture)),
+                new("jobIds", first.JobId),
+                new("expectedVersions", deletedFirst.CatalogVersion.ToString(System.Globalization.CultureInfo.InvariantCulture))
+            };
+
+            using var preview = await PostFormValues(client, "/catalog/bulk/hard-delete", token, selection);
+            var previewBody = await preview.Content.ReadAsStringAsync();
+
+            Assert.Equal(HttpStatusCode.OK, preview.StatusCode);
+            Assert.Contains("Review permanent deletion", previewBody);
+            Assert.Contains("DELETE 2 JOBS", previewBody);
+            Assert.Contains(first.JobId, previewBody);
+            Assert.Contains(second.JobId, previewBody);
+            Assert.True(
+                previewBody.IndexOf("job.bulk.alpha", StringComparison.Ordinal) <
+                previewBody.IndexOf("job.bulk.zulu", StringComparison.Ordinal));
+
+            using var execute = await PostFormValues(client, "/catalog/bulk/hard-delete", token,
+            [
+                .. selection,
+                new("execute", "true"),
+                new("confirmation", "DELETE 2 JOBS"),
+                new("reason", "web bulk purge")
+            ]);
+            var executeBody = await execute.Content.ReadAsStringAsync();
+
+            Assert.Equal(HttpStatusCode.OK, execute.StatusCode);
+            Assert.Contains("Bulk hard delete completed", executeBody);
+            Assert.Contains("deleted 2 job row(s)", executeBody);
+            Assert.Null(catalog.Get(first.JobId));
+            Assert.Null(catalog.Get(second.JobId));
+        }
+
+        [Fact]
+        public async Task Soft_deleted_management_bulk_hard_delete_rejects_stale_selection_without_partial_deletion()
+        {
+            var catalog = new SqliteJobCatalogRepository(sqlite);
+            var lifecycle = new SqliteJobLifecycleService(sqlite, catalog);
+            var eligible = catalog.Create(Schedule("job.bulk.eligible", "EligibleFunction", isPaused: false));
+            var changed = catalog.Create(Schedule("job.bulk.changed", "ChangedFunction", isPaused: false));
+            var deletedEligible = lifecycle.SoftDelete(eligible.JobId, eligible.CatalogVersion, "web-test", "bulk");
+            var deletedChanged = lifecycle.SoftDelete(changed.JobId, changed.CatalogVersion, "web-test", "bulk");
+            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+            var token = await ReadFormToken(client, "/catalog/soft-deleted");
+
+            lifecycle.Restore(changed.JobId, deletedChanged.CatalogVersion, "web-test", "changed after selection");
+            using var response = await PostFormValues(client, "/catalog/bulk/hard-delete", token,
+            [
+                new("jobIds", eligible.JobId),
+                new("expectedVersions", deletedEligible.CatalogVersion.ToString(System.Globalization.CultureInfo.InvariantCulture)),
+                new("jobIds", changed.JobId),
+                new("expectedVersions", deletedChanged.CatalogVersion.ToString(System.Globalization.CultureInfo.InvariantCulture)),
+                new("execute", "true"),
+                new("confirmation", "DELETE 2 JOBS"),
+                new("reason", "must not partially purge")
+            ]);
+            var body = await response.Content.ReadAsStringAsync();
+
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+            Assert.Contains("No jobs were deleted", body);
+            Assert.Contains("changed since it was selected", body);
+            Assert.Contains("no longer soft-deleted", body);
+            Assert.NotNull(catalog.Get(eligible.JobId));
+            Assert.NotNull(catalog.Get(changed.JobId));
+        }
+
+        [Fact]
+        public async Task Soft_deleted_management_bulk_hard_delete_requires_post_selection_csrf_and_exact_confirmation()
+        {
+            var catalog = new SqliteJobCatalogRepository(sqlite);
+            var created = catalog.Create(Schedule("job.bulk.safe", "SafeFunction", isPaused: false));
+            var deleted = new SqliteJobLifecycleService(sqlite, catalog).SoftDelete(created.JobId, created.CatalogVersion, "web-test", "bulk");
+            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+
+            Assert.Equal(HttpStatusCode.Redirect, (await client.GetAsync("/catalog/bulk/hard-delete")).StatusCode);
+            using var noToken = await client.PostAsync(
+                "/catalog/bulk/hard-delete",
+                new FormUrlEncodedContent(
+                [
+                    new KeyValuePair<string, string>("jobIds", created.JobId),
+                    new("expectedVersions", deleted.CatalogVersion.ToString(System.Globalization.CultureInfo.InvariantCulture))
+                ]));
+            Assert.Equal(HttpStatusCode.BadRequest, noToken.StatusCode);
+
+            var token = await ReadFormToken(client, "/catalog/soft-deleted");
+            using var wrongConfirmation = await PostFormValues(client, "/catalog/bulk/hard-delete", token,
+            [
+                new("jobIds", created.JobId),
+                new("expectedVersions", deleted.CatalogVersion.ToString(System.Globalization.CultureInfo.InvariantCulture)),
+                new("execute", "true"),
+                new("confirmation", "DELETE SELECTED JOBS")
+            ]);
+            var body = await wrongConfirmation.Content.ReadAsStringAsync();
+
+            Assert.Equal(HttpStatusCode.BadRequest, wrongConfirmation.StatusCode);
+            Assert.Contains("must exactly match &#x27;DELETE 1 JOB&#x27;", body);
+            Assert.NotNull(catalog.Get(created.JobId));
         }
 
         [Fact]

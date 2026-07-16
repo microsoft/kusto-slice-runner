@@ -131,6 +131,98 @@ namespace KoLite.Local.Sqlite.Tests
             Assert.NotNull(catalog.Get(JobId("job.live.running")));
         }
 
+        [Fact]
+        public void Bulk_hard_delete_requires_count_confirmation_and_records_one_atomic_purge()
+        {
+            var first = catalog.Create(Schedule("job.bulk.first"));
+            var second = catalog.Create(Schedule("job.bulk.second"));
+            var deletedFirst = Service().SoftDelete(first.JobId, first.CatalogVersion, "tester", "bulk");
+            var deletedSecond = Service().SoftDelete(second.JobId, second.CatalogVersion, "tester", "bulk");
+            var items = new[]
+            {
+                new HardDeleteBatchItem(first.JobId, deletedFirst.CatalogVersion),
+                new HardDeleteBatchItem(second.JobId, deletedSecond.CatalogVersion)
+            };
+
+            Assert.Throws<InvalidOperationException>(() =>
+                Service().HardDeleteBatch(items, "DELETE SELECTED JOBS", "tester", "bulk purge"));
+
+            var result = Service().HardDeleteBatch(items, "DELETE 2 JOBS", "tester", "bulk purge");
+
+            Assert.Equal(2, result.DeletedJobs);
+            Assert.Null(catalog.Get(first.JobId));
+            Assert.Null(catalog.Get(second.JobId));
+            Assert.Equal(2, ReadScalarTexts("SELECT action FROM system_audit WHERE action='HardDeleted';").Count);
+            var purgeDetails = Assert.Single(ReadScalarTexts("SELECT details_json FROM purge_runs;"));
+            Assert.Contains("\"bulk\":true", purgeDetails);
+            Assert.Contains(first.JobId, purgeDetails);
+            Assert.Contains(second.JobId, purgeDetails);
+        }
+
+        [Fact]
+        public void Bulk_hard_delete_is_all_or_nothing_when_any_selected_job_changed()
+        {
+            var eligible = catalog.Create(Schedule("job.bulk.eligible"));
+            var changed = catalog.Create(Schedule("job.bulk.changed"));
+            var deletedEligible = Service().SoftDelete(eligible.JobId, eligible.CatalogVersion, "tester", "bulk");
+            var deletedChanged = Service().SoftDelete(changed.JobId, changed.CatalogVersion, "tester", "bulk");
+            Service().Restore(changed.JobId, deletedChanged.CatalogVersion, "tester", "changed after review");
+
+            var exception = Assert.Throws<HardDeleteBatchValidationException>(() =>
+                Service().HardDeleteBatch(
+                [
+                    new HardDeleteBatchItem(eligible.JobId, deletedEligible.CatalogVersion),
+                    new HardDeleteBatchItem(changed.JobId, deletedChanged.CatalogVersion)
+                ],
+                "DELETE 2 JOBS",
+                "tester",
+                "must roll back"));
+
+            Assert.Contains(exception.Issues, issue => issue.JobId == changed.JobId && issue.Message.Contains("changed since it was selected", StringComparison.Ordinal));
+            Assert.Contains(exception.Issues, issue => issue.JobId == changed.JobId && issue.Message.Contains("no longer soft-deleted", StringComparison.Ordinal));
+            Assert.NotNull(catalog.Get(eligible.JobId));
+            Assert.NotNull(catalog.Get(changed.JobId));
+            Assert.Empty(ReadScalarTexts("SELECT purge_run_id FROM purge_runs;"));
+            Assert.Empty(ReadScalarTexts("SELECT action FROM system_audit WHERE action='HardDeleted';"));
+        }
+
+        [Fact]
+        public void Bulk_hard_delete_deduplicates_selection_and_rejects_empty_or_live_work()
+        {
+            var empty = Assert.Throws<HardDeleteBatchValidationException>(() =>
+                Service().HardDeleteBatch([], "DELETE 0 JOBS", "tester", "empty"));
+            Assert.Contains(empty.Issues, issue => issue.Message.Contains("Select at least one", StringComparison.Ordinal));
+
+            var eligible = catalog.Create(Schedule("job.bulk.single"));
+            var deletedEligible = Service().SoftDelete(eligible.JobId, eligible.CatalogVersion, "tester", "bulk");
+            var duplicateResult = Service().HardDeleteBatch(
+            [
+                new HardDeleteBatchItem(eligible.JobId, deletedEligible.CatalogVersion),
+                new HardDeleteBatchItem(eligible.JobId, deletedEligible.CatalogVersion)
+            ],
+            "DELETE 1 JOB",
+            "tester",
+            "dedupe");
+            Assert.Equal(1, duplicateResult.DeletedJobs);
+
+            var live = catalog.Create(Schedule("job.bulk.live"));
+            state.Append("bulk-live", live.JobId, At(0), At(5), DurableSliceStatus.Queued, expectedVersion: 0);
+            queue.Enqueue(live.JobId, At(0), At(5), "bulk-live", DateTimeOffset.UtcNow.AddMinutes(-1));
+            Assert.NotNull(queue.Claim("default", "bulk-live-worker", TimeSpan.FromMinutes(30), DateTimeOffset.UtcNow));
+            var deletedLive = Service().SoftDelete(live.JobId, live.CatalogVersion, "tester", "bulk");
+
+            var blocked = Assert.Throws<HardDeleteBatchValidationException>(() =>
+                Service().HardDeleteBatch(
+                [
+                    new HardDeleteBatchItem(live.JobId, deletedLive.CatalogVersion)
+                ],
+                "DELETE 1 JOB",
+                "tester",
+                "live"));
+            Assert.Contains(blocked.Issues, issue => issue.Message.Contains("leased by an active worker", StringComparison.Ordinal));
+            Assert.NotNull(catalog.Get(live.JobId));
+        }
+
         public void Dispose()
         {
             TestCleanup.DeleteDirectoryWithRetry(testDirectory);

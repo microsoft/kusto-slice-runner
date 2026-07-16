@@ -8,6 +8,23 @@ namespace KoLite.Local.Sqlite.Lifecycle
 {
     public sealed record HardDeleteResult(string PurgeRunId, int DeletedJobs, int DeletedQueueRows, int DeletedStateRows, int DeletedRepairBatches);
 
+    public sealed record HardDeleteBatchItem(string JobId, long ExpectedVersion);
+
+    public sealed record HardDeleteBatchIssue(string JobId, string DisplayName, string Message);
+
+    public sealed record HardDeleteBatchResult(string PurgeRunId, int DeletedJobs, int DeletedQueueRows, int DeletedStateRows, int DeletedRepairBatches);
+
+    public sealed class HardDeleteBatchValidationException : InvalidOperationException
+    {
+        public HardDeleteBatchValidationException(IReadOnlyList<HardDeleteBatchIssue> issues)
+            : base("Bulk hard delete could not continue because one or more selected jobs are no longer eligible.")
+        {
+            Issues = issues;
+        }
+
+        public IReadOnlyList<HardDeleteBatchIssue> Issues { get; }
+    }
+
     // Thrown by SoftDelete when a job still has active downstream dependents and force was not
     // requested. Carries the blocking dependents so callers (the web confirm page, the bulk summary)
     // can name them. Derives from InvalidOperationException so existing catch sites keep behaving
@@ -110,46 +127,117 @@ namespace KoLite.Local.Sqlite.Lifecycle
             using var tx = c.BeginTransaction(deferred: false);
             EnsureHardDeletePreconditions(c, tx, jobId);
             InsertPurgeRun(c, tx, purgeRunId, jobId, actor, reason, "Running");
-            var repairBatchIds = ReadRepairBatchIds(c, tx, jobId);
-            var queueRows = Delete(c, tx, "work_queue", "job_id=$job", jobId);
-            var attemptRows = Delete(c, tx, "slice_attempts", "job_id=$job", jobId);
-            var scheduledRows = Delete(c, tx, "scheduled_slices", "job_id=$job", jobId);
-            var logRows = Delete(c, tx, "operational_logs", "job_id=$job", jobId);
-            var stateEventRows = Delete(c, tx, "slice_state_events", "job_id=$job", jobId);
-            var stateRows = Delete(c, tx, "current_slice_state", "job_id=$job", jobId);
-            var throttleObservationRows = Delete(c, tx, "ingestion_throttle_observations", "job_id=$job", jobId);
-            var repairSliceRows = Delete(c, tx, "repair_slices", "job_id=$job", jobId);
-            var repairBatchRows = DeleteRepairBatches(c, tx, repairBatchIds);
-            var summaryRows = Delete(c, tx, "failure_summary_runs", "job_id=$job", jobId);
-            var lifecycleRows = Delete(c, tx, "job_lifecycle_events", "job_id=$job", jobId);
-            var eventRows = Delete(c, tx, "job_definition_events", "job_id=$job", jobId);
-            var jobRows = Delete(c, tx, "job_definitions", "job_id=$job", jobId);
+            var counts = PurgeJob(c, tx, jobId);
 
             InsertAudit(c, tx, actor, "HardDeleted", "Job", jobId, new
             {
                 purgeRunId,
                 reason,
-                queueRows,
-                attemptRows,
-                scheduledRows,
-                logRows,
-                stateRows,
-                stateEventRows,
-                throttleObservationRows,
-                repairSliceRows,
-                repairBatchRows,
-                summaryRows,
-                lifecycleRows,
-                eventRows,
-                jobRows
+                counts.QueueRows,
+                counts.AttemptRows,
+                counts.ScheduledRows,
+                counts.LogRows,
+                counts.StateRows,
+                counts.StateEventRows,
+                counts.ThrottleObservationRows,
+                counts.RepairSliceRows,
+                counts.RepairBatchRows,
+                counts.SummaryRows,
+                counts.LifecycleRows,
+                counts.EventRows,
+                counts.JobRows
             });
-            CompletePurgeRun(c, tx, purgeRunId, new { jobId, jobRows, queueRows, stateRows, repairBatchRows });
+            CompletePurgeRun(c, tx, purgeRunId, new
+            {
+                jobId,
+                counts.JobRows,
+                counts.QueueRows,
+                counts.StateRows,
+                counts.RepairBatchRows
+            });
             tx.Commit();
 
-            using var checkpoint = SqliteStorage.Command(c, null, "PRAGMA wal_checkpoint(PASSIVE);");
-            checkpoint.ExecuteNonQuery();
-            return new HardDeleteResult(purgeRunId, jobRows, queueRows, stateRows, repairBatchRows);
+            Checkpoint(c);
+            return new HardDeleteResult(purgeRunId, counts.JobRows, counts.QueueRows, counts.StateRows, counts.RepairBatchRows);
         }
+
+        public HardDeleteBatchResult HardDeleteBatch(
+            IReadOnlyList<HardDeleteBatchItem> requestedItems,
+            string confirmation,
+            string actor,
+            string reason)
+        {
+            var items = requestedItems
+                .Where(item => !string.IsNullOrWhiteSpace(item.JobId))
+                .DistinctBy(item => item.JobId, StringComparer.Ordinal)
+                .ToArray();
+            if (items.Length == 0)
+            {
+                throw new HardDeleteBatchValidationException(
+                [
+                    new HardDeleteBatchIssue(string.Empty, "Selection", "Select at least one soft-deleted job.")
+                ]);
+            }
+
+            var expectedConfirmation = BatchConfirmation(items.Length);
+            if (!StringComparer.Ordinal.Equals(confirmation, expectedConfirmation))
+            {
+                throw new InvalidOperationException($"Bulk hard-delete confirmation must exactly match '{expectedConfirmation}'.");
+            }
+
+            var purgeRunId = Guid.NewGuid().ToString("N");
+            using var c = connectionFactory.OpenConnection();
+            using var tx = c.BeginTransaction(deferred: false);
+            var validated = ValidateBatchItems(c, tx, items);
+            var issues = validated.SelectMany(item => item.Issues).ToArray();
+            if (issues.Length > 0)
+            {
+                throw new HardDeleteBatchValidationException(issues);
+            }
+
+            InsertPurgeRun(c, tx, purgeRunId, jobId: null, actor, reason, "Running");
+            var totals = HardDeleteCounts.Empty;
+            foreach (var item in validated)
+            {
+                var counts = PurgeJob(c, tx, item.Item.JobId);
+                totals += counts;
+                InsertAudit(c, tx, actor, "HardDeleted", "Job", item.Item.JobId, new
+                {
+                    purgeRunId,
+                    reason,
+                    bulk = true,
+                    counts.QueueRows,
+                    counts.AttemptRows,
+                    counts.ScheduledRows,
+                    counts.LogRows,
+                    counts.StateRows,
+                    counts.StateEventRows,
+                    counts.ThrottleObservationRows,
+                    counts.RepairSliceRows,
+                    counts.RepairBatchRows,
+                    counts.SummaryRows,
+                    counts.LifecycleRows,
+                    counts.EventRows,
+                    counts.JobRows
+                });
+            }
+
+            CompletePurgeRun(c, tx, purgeRunId, new
+            {
+                bulk = true,
+                jobIds = validated.Select(item => item.Item.JobId).ToArray(),
+                totals.JobRows,
+                totals.QueueRows,
+                totals.StateRows,
+                totals.RepairBatchRows
+            });
+            tx.Commit();
+
+            Checkpoint(c);
+            return new HardDeleteBatchResult(purgeRunId, totals.JobRows, totals.QueueRows, totals.StateRows, totals.RepairBatchRows);
+        }
+
+        public static string BatchConfirmation(int count) => count == 1 ? "DELETE 1 JOB" : $"DELETE {count} JOBS";
 
         private static void EnsureHardDeletePreconditions(Microsoft.Data.Sqlite.SqliteConnection c, Microsoft.Data.Sqlite.SqliteTransaction tx, string jobId)
         {
@@ -189,6 +277,125 @@ namespace KoLite.Local.Sqlite.Lifecycle
             {
                 throw new InvalidOperationException($"Hard-delete cannot purge job '{jobId}' while {runningSlices} slice(s) are running on an active worker. Wait for the lease to finish or expire, then retry.");
             }
+        }
+
+        private static IReadOnlyList<ValidatedHardDeleteBatchItem> ValidateBatchItems(
+            Microsoft.Data.Sqlite.SqliteConnection c,
+            Microsoft.Data.Sqlite.SqliteTransaction tx,
+            IReadOnlyList<HardDeleteBatchItem> items)
+        {
+            var results = new List<ValidatedHardDeleteBatchItem>(items.Count);
+            foreach (var item in items)
+            {
+                string displayName;
+                long actualVersion;
+                bool enabled;
+                using (var job = SqliteStorage.Command(c, tx, "SELECT display_name,catalog_version,is_enabled FROM job_definitions WHERE job_id=$job;"))
+                {
+                    job.Add("$job", item.JobId);
+                    using var reader = job.ExecuteReader();
+                    if (!reader.Read())
+                    {
+                        results.Add(new ValidatedHardDeleteBatchItem(
+                            item,
+                            item.JobId,
+                            [new HardDeleteBatchIssue(item.JobId, item.JobId, "The job no longer exists.")]));
+                        continue;
+                    }
+
+                    displayName = reader.GetString(0);
+                    actualVersion = reader.GetInt64(1);
+                    enabled = reader.GetInt32(2) != 0;
+                }
+
+                var issues = new List<HardDeleteBatchIssue>();
+                if (actualVersion != item.ExpectedVersion)
+                {
+                    issues.Add(new HardDeleteBatchIssue(
+                        item.JobId,
+                        displayName,
+                        $"The job changed since it was selected (expected catalog version {item.ExpectedVersion}, found {actualVersion})."));
+                }
+
+                if (enabled)
+                {
+                    issues.Add(new HardDeleteBatchIssue(item.JobId, displayName, "The job is enabled. Soft-delete it again before retrying."));
+                }
+
+                using (var lifecycle = SqliteStorage.Command(c, tx, """
+                    SELECT event_type
+                    FROM job_lifecycle_events
+                    WHERE job_id=$job
+                    ORDER BY recorded_at_utc DESC, rowid DESC
+                    LIMIT 1;
+                    """))
+                {
+                    lifecycle.Add("$job", item.JobId);
+                    var latestEvent = lifecycle.ExecuteScalar() as string;
+                    if (!StringComparer.Ordinal.Equals(latestEvent, "SoftDeleted"))
+                    {
+                        issues.Add(new HardDeleteBatchIssue(item.JobId, displayName, "The job is no longer soft-deleted."));
+                    }
+                }
+
+                var nowUtc = SqliteStorage.Utc(DateTimeOffset.UtcNow);
+                var liveLeased = CountActive(c, tx, "work_queue", "job_id=$job AND state='Leased' AND locked_until_utc IS NOT NULL AND locked_until_utc > $now", item.JobId, nowUtc);
+                if (liveLeased > 0)
+                {
+                    issues.Add(new HardDeleteBatchIssue(item.JobId, displayName, $"{liveLeased} work item(s) are leased by an active worker."));
+                }
+
+                var runningSlices = CountActive(c, tx, "current_slice_state", "job_id=$job AND state='Running' AND lease_expires_at_utc IS NOT NULL AND lease_expires_at_utc > $now", item.JobId, nowUtc);
+                if (runningSlices > 0)
+                {
+                    issues.Add(new HardDeleteBatchIssue(item.JobId, displayName, $"{runningSlices} slice(s) are running on an active worker."));
+                }
+
+                results.Add(new ValidatedHardDeleteBatchItem(item, displayName, issues));
+            }
+
+            return results;
+        }
+
+        private static HardDeleteCounts PurgeJob(
+            Microsoft.Data.Sqlite.SqliteConnection c,
+            Microsoft.Data.Sqlite.SqliteTransaction tx,
+            string jobId)
+        {
+            var repairBatchIds = ReadRepairBatchIds(c, tx, jobId);
+            var queueRows = Delete(c, tx, "work_queue", "job_id=$job", jobId);
+            var attemptRows = Delete(c, tx, "slice_attempts", "job_id=$job", jobId);
+            var scheduledRows = Delete(c, tx, "scheduled_slices", "job_id=$job", jobId);
+            var logRows = Delete(c, tx, "operational_logs", "job_id=$job", jobId);
+            var stateEventRows = Delete(c, tx, "slice_state_events", "job_id=$job", jobId);
+            var stateRows = Delete(c, tx, "current_slice_state", "job_id=$job", jobId);
+            var throttleObservationRows = Delete(c, tx, "ingestion_throttle_observations", "job_id=$job", jobId);
+            var repairSliceRows = Delete(c, tx, "repair_slices", "job_id=$job", jobId);
+            var repairBatchRows = DeleteRepairBatches(c, tx, repairBatchIds);
+            var summaryRows = Delete(c, tx, "failure_summary_runs", "job_id=$job", jobId);
+            var lifecycleRows = Delete(c, tx, "job_lifecycle_events", "job_id=$job", jobId);
+            var eventRows = Delete(c, tx, "job_definition_events", "job_id=$job", jobId);
+            var jobRows = Delete(c, tx, "job_definitions", "job_id=$job", jobId);
+            return new HardDeleteCounts(
+                jobRows,
+                queueRows,
+                attemptRows,
+                scheduledRows,
+                logRows,
+                stateRows,
+                stateEventRows,
+                throttleObservationRows,
+                repairSliceRows,
+                repairBatchRows,
+                summaryRows,
+                lifecycleRows,
+                eventRows);
+        }
+
+        private static void Checkpoint(Microsoft.Data.Sqlite.SqliteConnection c)
+        {
+            using var checkpoint = SqliteStorage.Command(c, null, "PRAGMA wal_checkpoint(PASSIVE);");
+            checkpoint.ExecuteNonQuery();
         }
 
         private void RecordLifecycle(string jobId, string eventType, string actor, string reason, object payload)
@@ -276,7 +483,7 @@ namespace KoLite.Local.Sqlite.Lifecycle
             return Convert.ToInt32(cmd.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture);
         }
 
-        private static void InsertPurgeRun(Microsoft.Data.Sqlite.SqliteConnection c, Microsoft.Data.Sqlite.SqliteTransaction tx, string id, string jobId, string actor, string reason, string status)
+        private static void InsertPurgeRun(Microsoft.Data.Sqlite.SqliteConnection c, Microsoft.Data.Sqlite.SqliteTransaction tx, string id, string? jobId, string actor, string reason, string status)
         {
             using var cmd = SqliteStorage.Command(c, tx, "INSERT INTO purge_runs (purge_run_id,job_id,reason,status,requested_by,details_json) VALUES ($id,$job,$reason,$status,$by,'{}');");
             cmd.Add("$id", id); cmd.Add("$job", jobId); cmd.Add("$reason", reason); cmd.Add("$status", status); cmd.Add("$by", actor); cmd.ExecuteNonQuery();
@@ -292,6 +499,44 @@ namespace KoLite.Local.Sqlite.Lifecycle
         {
             using var cmd = SqliteStorage.Command(c, tx, "INSERT INTO system_audit (audit_id,actor,action,subject_type,subject_id,payload_json) VALUES ($id,$actor,$action,$type,$subject,$payload);");
             cmd.Add("$id", Guid.NewGuid().ToString("N")); cmd.Add("$actor", actor); cmd.Add("$action", action); cmd.Add("$type", subjectType); cmd.Add("$subject", subjectId); cmd.Add("$payload", JsonSerializer.Serialize(payload)); cmd.ExecuteNonQuery();
+        }
+
+        private sealed record ValidatedHardDeleteBatchItem(
+            HardDeleteBatchItem Item,
+            string DisplayName,
+            IReadOnlyList<HardDeleteBatchIssue> Issues);
+
+        private sealed record HardDeleteCounts(
+            int JobRows,
+            int QueueRows,
+            int AttemptRows,
+            int ScheduledRows,
+            int LogRows,
+            int StateRows,
+            int StateEventRows,
+            int ThrottleObservationRows,
+            int RepairSliceRows,
+            int RepairBatchRows,
+            int SummaryRows,
+            int LifecycleRows,
+            int EventRows)
+        {
+            public static HardDeleteCounts Empty { get; } = new(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+
+            public static HardDeleteCounts operator +(HardDeleteCounts left, HardDeleteCounts right) => new(
+                left.JobRows + right.JobRows,
+                left.QueueRows + right.QueueRows,
+                left.AttemptRows + right.AttemptRows,
+                left.ScheduledRows + right.ScheduledRows,
+                left.LogRows + right.LogRows,
+                left.StateRows + right.StateRows,
+                left.StateEventRows + right.StateEventRows,
+                left.ThrottleObservationRows + right.ThrottleObservationRows,
+                left.RepairSliceRows + right.RepairSliceRows,
+                left.RepairBatchRows + right.RepairBatchRows,
+                left.SummaryRows + right.SummaryRows,
+                left.LifecycleRows + right.LifecycleRows,
+                left.EventRows + right.EventRows);
         }
     }
 }
