@@ -179,14 +179,14 @@ function Assert-Highlights {
     }
 
     $lines = @($normalized.Split("`n") | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
-    if ($lines.Count -lt 3 -or $lines.Count -gt 6) {
-        throw "Copilot release highlights must contain three to six bullets; received $($lines.Count)."
-    }
     foreach ($line in $lines) {
         if (-not $line.StartsWith('- ', [System.StringComparison]::Ordinal) -or
             [string]::IsNullOrWhiteSpace($line.Substring(2))) {
             throw "Copilot release highlight is not a '- ' bullet: $line"
         }
+    }
+    if ($lines.Count -lt 3 -or $lines.Count -gt 6) {
+        Write-Warning "Copilot returned $($lines.Count) release-highlight bullets; expected three to six."
     }
     return $lines -join "`n"
 }
@@ -220,10 +220,18 @@ Instructions.
     }
 
     Assert-Highlights -Text "- First`n- Second`n- Third" | Out-Null
-    foreach ($invalid in @(
-        '',
+    foreach ($unusualCount in @(
         '- One',
         "- One`n- Two",
+        "- One`n- Two`n- Three`n- Four`n- Five`n- Six`n- Seven"
+    )) {
+        $acceptedHighlights = Assert-Highlights -Text $unusualCount -WarningAction SilentlyContinue
+        if ($acceptedHighlights -ne $unusualCount) {
+            throw 'Self-test did not preserve release highlights with an unusual bullet count.'
+        }
+    }
+    foreach ($invalid in @(
+        '',
         "Prose`n- One`n- Two",
         "- One`n- `n- Three",
         "## Heading`n- One`n- Two`n- Three",
