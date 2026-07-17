@@ -199,7 +199,12 @@ function Assert-Highlights {
         $withoutOscSequences,
         '\x1B\[[0-?]*[ -/]*[@-~]',
         '')
-    $normalized = $withoutTerminalFormatting.Replace("`r", '').Trim()
+    $normalizedLineEndings = $withoutTerminalFormatting.Replace("`r", '')
+    $flushLeftBullets = [regex]::Replace(
+        $normalizedLineEndings,
+        '(?m)^[ \t]+(?=-[ \t]+)',
+        '')
+    $normalized = $flushLeftBullets.Trim()
     if ([string]::IsNullOrWhiteSpace($normalized)) {
         throw 'Copilot returned empty release highlights.'
     }
@@ -260,6 +265,11 @@ Instructions.
     $unstructuredHighlights = "Summary`n- One`nlink to the full changelog."
     if ((Assert-Highlights -Text $unstructuredHighlights) -ne $unstructuredHighlights) {
         throw 'Self-test did not preserve non-empty Copilot output.'
+    }
+    $indentedHighlights = "- One`n - Two`n`t- Three`n  continuation"
+    $flushLeftHighlights = "- One`n- Two`n- Three`n  continuation"
+    if ((Assert-Highlights -Text $indentedHighlights) -ne $flushLeftHighlights) {
+        throw 'Self-test did not normalize top-level bullet indentation.'
     }
     $terminalLink = "$([char]27)]8;;https://example.test$([char]7)https://example.test$([char]27)]8;;$([char]7)"
     if ((Assert-Highlights -Text $terminalLink) -ne 'https://example.test') {

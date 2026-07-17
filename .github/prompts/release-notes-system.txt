@@ -12,5 +12,6 @@ Summarize the commits between the previous published release and the draft, grou
 commits into user-relevant changes and explaining operational impact when the grounding supports
 it.
 
-Prefer Markdown with three to six concise bullets, with each bullet starting with "- ". Do not add
-installation guidance, a contributor list, or unsupported claims.
+Prefer Markdown with three to six concise top-level bullets. Start every bullet at the beginning of
+the line with exactly "- " and no leading spaces or tabs. Do not add installation guidance, a
+contributor list, or unsupported claims.

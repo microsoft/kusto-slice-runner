@@ -3,7 +3,7 @@ name: ko-lite-release-highlights
 description: "Use when the user wants AI-written highlights for an existing KO Lite GitHub Release draft. Requires an explicit vMAJOR.MINOR.PATCH version and invokes the repository's read-only highlights script, which writes a local Markdown file for manual review and paste. Never creates, edits, publishes, deletes, tags, reruns, or repairs a release."
 metadata:
   author: Azure Core Team
-  version: "1.0.0"
+  version: "1.0.1"
 ---
 
 # KO Lite release highlights
@@ -36,6 +36,9 @@ increment a version.
 
 For a read-only preflight, pass `-DryRun`. Use `-Force` only when the user asks
 to overwrite an existing local output file.
+
+Generated top-level Markdown bullets start flush left. The script normalizes
+incidental leading spaces or tabs before bullet markers.
 
 ## Safety boundaries
 
