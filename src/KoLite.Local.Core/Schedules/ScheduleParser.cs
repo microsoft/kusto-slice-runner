@@ -9,7 +9,7 @@ namespace KoLite.Local.Core.Schedules
     {
         private static readonly HashSet<string> AllowedTopLevel = new(StringComparer.Ordinal)
         {
-            "id", "activityId", "functionName", "outputTable", "queryWindowSize", "delayFromUtcNow",
+            "id", "activityId", "description", "functionName", "outputTable", "queryWindowSize", "delayFromUtcNow",
             "maxParallelism", "queryTimeout", "isPaused", "startFrom", "endOn", "folder",
             "tags", "dependsOn", "jobSettings", "target", "healthPolicy"
         };
@@ -349,6 +349,11 @@ namespace KoLite.Local.Core.Schedules
             if (dto.DelayFromUtcNow is { } d && d < TimeSpan.Zero) errors.Add(new ScheduleValidationError(activityId, "delayFromUtcNow", "delayFromUtcNow must be greater than or equal to zero."));
             if (dto.MaxParallelism is { } mp && mp < 1) errors.Add(new ScheduleValidationError(activityId, "maxParallelism", "maxParallelism must be at least 1."));
             if (dto.QueryTimeout is { } qt && qt <= TimeSpan.Zero) errors.Add(new ScheduleValidationError(activityId, "queryTimeout", "queryTimeout must be strictly greater than zero."));
+            if (dto.Description is { Length: > JobDescription.MaxLength })
+            {
+                errors.Add(new ScheduleValidationError(activityId, "description", $"description must not exceed {JobDescription.MaxLength.ToString(CultureInfo.InvariantCulture)} characters."));
+            }
+
             if (dto.Target is not { } target) return;
             if (Blank(target.ClusterUri))
             {
@@ -366,6 +371,7 @@ namespace KoLite.Local.Core.Schedules
         {
             Id = id,
             ActivityId = dto.ActivityId!,
+            Description = dto.Description,
             FunctionName = dto.FunctionName!,
             OutputTable = dto.OutputTable!,
             QueryWindowSize = dto.QueryWindowSize!.Value,
@@ -396,6 +402,7 @@ namespace KoLite.Local.Core.Schedules
         private sealed class ScheduleJsonDto
         {
             public string? ActivityId { get; set; }
+            public string? Description { get; set; }
             public string? FunctionName { get; set; }
             public string? OutputTable { get; set; }
             public TimeSpan? QueryWindowSize { get; set; }

@@ -3,7 +3,7 @@ name: ko-lite-job-manager
 description: "Use when the user wants an agent to read KO Lite jobs, inspect read-only operational diagnostics (slice states, leases, throughput, catalog history, logs, audit), or create/update job schedules directly in a running KO Lite app (instead of clicking through the dashboard). Drives the KO Lite localhost JSON API; it reads state, upserts schedules - including pausing or resuming a job via the schedule's isPaused field - and can soft-delete or restore a job (reversible); it never hard-deletes jobs, runs Kusto, reruns, or repairs. Requires the KO Lite app to be running locally."
 metadata:
   author: Azure Core Team
-  version: "1.3.1"
+  version: "1.3.2"
 ---
 
 # KO Lite job manager
@@ -190,8 +190,9 @@ detailed field-by-field guide. Key points:
   `delayFromUtcNow`, `maxParallelism`, `queryTimeout`, `startFrom`, `target`
   (`clusterUri` + `database`).
 - Optional: `id` (GUID permanent identity — omit when creating; KO Lite mints it),
-  `endOn`, `isPaused`, `folder`, `tags`, `dependsOn`, `jobSettings`, `healthPolicy`
-  (`complete` default, or `recent`).
+  `endOn`, `isPaused`, `description` (Markdown catalog metadata, maximum 65,536
+  characters, never passed to Kusto), `folder`, `tags`, `dependsOn`, `jobSettings`,
+  `healthPolicy` (`complete` default, or `recent`).
 - Unknown top-level, `target`, or `dependsOn` fields are rejected. `dependsOn`
   entries reference an upstream by `id` and/or `activityId`.
 - For an **update**, fetch the current job first (`Get-Job`), keep its `id`, edit

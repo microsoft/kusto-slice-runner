@@ -15,6 +15,7 @@ The schedule contract is intentionally strict. Unknown top-level fields, unknown
   "queryTimeout": "00:05:00",
   "isPaused": true,
   "healthPolicy": "complete",
+  "description": "Builds the hourly data used by the sample dashboard.",
   "tags": ["prod", "daily"],
   "startFrom": "2026-01-01T00:00:00Z",
   "target": {
@@ -43,6 +44,7 @@ durable `id`, dependency edges, slice history, or output idempotency.
 | `queryTimeout` | Yes | Positive `TimeSpan`; used for Kusto server timeout and queue lease sizing. |
 | `isPaused` | No | Defaults to `false`. Paused jobs do not schedule or claim queued retries. |
 | `healthPolicy` | No | `"complete"` (default) or `"recent"`. Controls how the dashboard scores this job's health. `complete` (strict) additionally surfaces unaddressed historical gaps (terminal dead-lettered slices) as a "N gaps" segment on the status pill, even when recent slices are healthy. `recent` colors purely by the recent-slice trend and ignores old gaps. See [Dashboard status](operations-runbook.md#dashboard-status-model). |
+| `description` | No | Optional Markdown catalog metadata, limited to 65,536 characters. Rendered on the job details page with embedded raw HTML treated as text. Preserved by copy/import/export and catalog history; never passed to the Kusto function. |
 | `startFrom` | Yes | UTC ISO-8601 timestamp. After execution history exists, this field is read-only. |
 | `endOn` | No | Optional UTC ISO-8601 timestamp. Must be greater than `startFrom` when present. |
 | `folder` | No | Existing output/Kusto-oriented metadata. It is not a UI grouping tag. |
@@ -79,6 +81,15 @@ render each edge as `{ "id": ..., "activityId": ... }` for readability.
 ```
 
 Tags are local UI/catalog metadata for organizing jobs. They are separate from Kusto ingestion tags and separate from the `folder` field. When present, `tags` must be an array of non-empty strings. KO Lite trims each tag, normalizes it to lowercase, and removes duplicates after normalization. Dashboard and catalog tag filters use AND semantics when multiple tags are selected.
+
+## Description
+
+`description` is optional freeform Markdown for explaining a job's purpose, ownership,
+runbook links, or other local catalog context. KO Lite preserves accepted text exactly,
+up to 65,536 characters, and renders it only on the job details page. Embedded raw HTML
+is displayed as text; generated Markdown HTML is sanitized before it reaches the DOM.
+The field is catalog metadata and is never included in Kusto function arguments or
+request metadata.
 
 ## Import/export behavior
 

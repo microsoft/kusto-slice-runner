@@ -55,9 +55,11 @@ namespace KoLite.LocalApp.Tests
 
             Assert.Contains("initFailureAnalysis", script);
             Assert.Contains("data-analyze-failures", script);
-            Assert.Contains("sanitizeAnalysisHtml", script);
+            Assert.Contains("sanitizeMarkdownHtml", script);
+            Assert.Contains("safeMarkdownRenderer", script);
             Assert.Contains(".analyze-failures-card", css);
             Assert.Contains(".analyze-output", css);
+            Assert.Contains(".markdown-body", css);
         }
 
         [Fact]

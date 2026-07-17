@@ -84,6 +84,19 @@ else
         </div>
     }
 
+    @if (!string.IsNullOrWhiteSpace(data.Job.Description))
+    {
+        <section class="card job-description-card" data-job-description>
+            <div class="card-header">
+                <h2>Description</h2>
+                <span class="muted">Markdown</span>
+            </div>
+            <div class="markdown-body job-description-output" data-job-description-output hidden></div>
+            <div data-job-description-source hidden>@data.Job.Description</div>
+            <noscript><pre class="markdown-fallback">@data.Job.Description</pre></noscript>
+        </section>
+    }
+
     <partial name="_CatchUpSummary" model="data.CatchUp" />
 
     <div class="job-tabs" data-tabs>

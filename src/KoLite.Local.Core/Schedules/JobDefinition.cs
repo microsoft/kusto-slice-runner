@@ -2,6 +2,11 @@ using System.Text.Json;
 
 namespace KoLite.Local.Core.Schedules
 {
+    public static class JobDescription
+    {
+        public const int MaxLength = 65_536;
+    }
+
     public sealed record JobDefinition
     {
         // Durable, opaque job identity (GUID, "N" format). Null only for freshly authored
@@ -10,6 +15,7 @@ namespace KoLite.Local.Core.Schedules
 
         // Mutable, unique, human-facing label. May be renamed; never the durable identity.
         public required string ActivityId { get; init; }
+        public string? Description { get; init; }
         public required string FunctionName { get; init; }
         public required string OutputTable { get; init; }
         public required TimeSpan QueryWindowSize { get; init; }

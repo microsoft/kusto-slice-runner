@@ -35,7 +35,7 @@ namespace KoLite.LocalApp.Tests
         public async Task Get_jobs_lists_seeded_jobs_with_summary_fields()
         {
             var catalog = new SqliteJobCatalogRepository(sqlite);
-            catalog.Create(Schedule("job.active", "ActiveFunction", isPaused: false, tags: ["prod", "daily"]));
+            catalog.Create(Schedule("job.active", "ActiveFunction", isPaused: false, tags: ["prod", "daily"], description: "Active job description"));
             catalog.Create(Schedule("job.paused", "PausedFunction", isPaused: true));
             var soft = catalog.Create(Schedule("job.soft", "SoftFunction", isPaused: false));
             new SqliteJobLifecycleService(sqlite, catalog).SoftDelete(JobId("job.soft"), soft.CatalogVersion, "api-test", "exclude");
@@ -60,6 +60,7 @@ namespace KoLite.LocalApp.Tests
             Assert.Equal(2, tags.Count);
             Assert.Contains("prod", tags);
             Assert.Contains("daily", tags);
+            Assert.False(active.TryGetProperty("description", out _));
 
             // A paused schedule is stored as not-enabled (the scheduler emits no work for it).
             Assert.False(jobs[JobId("job.paused")].GetProperty("isEnabled").GetBoolean());
@@ -70,7 +71,7 @@ namespace KoLite.LocalApp.Tests
         [Fact]
         public async Task Get_job_returns_canonical_schedule_and_404_for_missing()
         {
-            new SqliteJobCatalogRepository(sqlite).Create(Schedule("job.detail", "DetailFunction", isPaused: true));
+            new SqliteJobCatalogRepository(sqlite).Create(Schedule("job.detail", "DetailFunction", isPaused: true, description: "# Detail purpose"));
             using var client = factory.CreateClient();
 
             using var found = JsonDocument.Parse(await client.GetStringAsync($"/api/jobs/{JobId("job.detail")}"));
@@ -79,6 +80,7 @@ namespace KoLite.LocalApp.Tests
             Assert.Equal("job.detail", schedule.GetProperty("activityId").GetString());
             Assert.Equal("DetailFunction", schedule.GetProperty("functionName").GetString());
             Assert.True(schedule.GetProperty("isPaused").GetBoolean());
+            Assert.Equal("# Detail purpose", schedule.GetProperty("description").GetString());
 
             using var missing = await client.GetAsync("/api/jobs/job.missing");
             Assert.Equal(HttpStatusCode.NotFound, missing.StatusCode);
@@ -334,10 +336,13 @@ namespace KoLite.LocalApp.Tests
             return new Guid(bytes).ToString("N");
         }
 
-        private static string Schedule(string activityId, string functionName, bool isPaused, IReadOnlyList<string>? tags = null, IReadOnlyList<string>? dependsOnIds = null)
+        private static string Schedule(string activityId, string functionName, bool isPaused, IReadOnlyList<string>? tags = null, IReadOnlyList<string>? dependsOnIds = null, string? description = null)
         {
             var tagsLine = tags is { Count: > 0 }
                 ? $"  \"tags\": {JsonSerializer.Serialize(tags)},\n"
+                : string.Empty;
+            var descriptionLine = description is not null
+                ? $"  \"description\": {JsonSerializer.Serialize(description)},\n"
                 : string.Empty;
             var dependsOnLine = dependsOnIds is { Count: > 0 }
                 ? "  \"dependsOn\": [" + string.Join(",", dependsOnIds.Select(id => $"{{ \"id\": \"{id}\" }}")) + "],\n"
@@ -355,6 +360,7 @@ namespace KoLite.LocalApp.Tests
                 $"  \"isPaused\": {(isPaused ? "true" : "false")},\n" +
                 "  \"startFrom\": \"2026-01-01T00:00:00Z\",\n" +
                 dependsOnLine +
+                descriptionLine +
                 tagsLine +
                 "  \"target\": { \"clusterUri\": \"https://kolite-example.invalid\", \"database\": \"DemoDb\" }\n" +
                 "}";

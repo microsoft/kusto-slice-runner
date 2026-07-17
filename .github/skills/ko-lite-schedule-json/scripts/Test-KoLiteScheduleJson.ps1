@@ -62,10 +62,11 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+$DescriptionMaxLength = 65536
 
 $AllowedTopLevel = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
 @(
-    'id','activityId','functionName','outputTable','queryWindowSize',
+    'id','activityId','description','functionName','outputTable','queryWindowSize',
     'delayFromUtcNow','maxParallelism','queryTimeout','isPaused',
     'startFrom','endOn','folder','tags','dependsOn','jobSettings','target','healthPolicy'
 ) | ForEach-Object { [void]$AllowedTopLevel.Add($_) }
@@ -338,6 +339,16 @@ function Test-Definition {
     $folderProp = Get-Property -Element $Root -Name 'folder'
     if ($null -ne $folderProp -and $folderProp.ValueKind -ne [System.Text.Json.JsonValueKind]::String -and $folderProp.ValueKind -ne [System.Text.Json.JsonValueKind]::Null) {
         Add-Error $errors 'folder' "folder must be a string when present (got $($folderProp.ValueKind))."
+    }
+
+    $descriptionProp = Get-Property -Element $Root -Name 'description'
+    if ($null -ne $descriptionProp -and $descriptionProp.ValueKind -ne [System.Text.Json.JsonValueKind]::Null) {
+        if ($descriptionProp.ValueKind -ne [System.Text.Json.JsonValueKind]::String) {
+            Add-Error $errors 'description' "description must be a string when present (got $($descriptionProp.ValueKind))."
+        }
+        elseif ($descriptionProp.GetString().Length -gt $DescriptionMaxLength) {
+            Add-Error $errors 'description' "description must not exceed $DescriptionMaxLength characters."
+        }
     }
 
     $tagsProp = Get-Property -Element $Root -Name 'tags'

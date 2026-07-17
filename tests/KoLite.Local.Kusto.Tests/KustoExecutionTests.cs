@@ -1,4 +1,5 @@
 using System.Data;
+using System.Text.Json;
 using Kusto.Data.Common;
 using Kusto.Data.Exceptions;
 using KoLite.Local.Core.Orchestration;
@@ -38,6 +39,17 @@ namespace KoLite.Local.Kusto.Tests
 
             Assert.Contains("KustoFunction(datetime(2026-01-01T00:00:00.0000000Z), datetime(2026-01-01T00:05:00.0000000Z))", request.CommandText);
             Assert.DoesNotContain("dynamic(", request.CommandText, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void Request_builder_does_not_include_job_description()
+        {
+            const string sentinel = "DESCRIPTION_MUST_STAY_LOCAL_7E35A9";
+            var request = new KustoRequestBuilder().Build(
+                Job() with { Description = sentinel },
+                new SliceRange("job_kusto", At(0), At(5)));
+
+            Assert.DoesNotContain(sentinel, JsonSerializer.Serialize(request), StringComparison.Ordinal);
         }
 
         [Fact]

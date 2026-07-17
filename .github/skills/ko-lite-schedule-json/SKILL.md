@@ -3,7 +3,7 @@ name: ko-lite-schedule-json
 description: "Use when the user wants to create, edit, or validate a KO Lite job-schedule JSON file (single object or an array of objects). Produces JSON-only output and validates it locally against the strict KO Lite schedule contract. Does NOT upload to KO Lite, write to Kusto, change schema, or run import tooling - uploading is the user's responsibility."
 metadata:
   author: Azure Core Team
-  version: "1.0.1"
+  version: "1.0.2"
 ---
 
 # KO Lite schedule JSON
@@ -59,6 +59,7 @@ Anything else is rejected by the validator.
 | `endOn` | No | ISO-8601 UTC string | Same shape rules as `startFrom`. When present, the scheduler caps planning so only whole, grid-aligned slices ending at or before `endOn` are emitted (no partial trailing slice; no KO-style mid-window clip). Must be strictly greater than `startFrom`. Mutable across `DefinitionVersion`s (unlike KO's `EndOn`). |
 | `target` | Yes | object | `target.clusterUri` (absolute `https` URI, non-empty) and `target.database` (non-empty string). No other fields. |
 | `isPaused` | No | boolean | Default `false`. When `true`, the scheduler emits no work. |
+| `description` | No | string | Optional Markdown catalog metadata, up to 65,536 characters. KO Lite renders it on the job details page with raw HTML disabled. It is preserved by import/export and never passed to the Kusto function. |
 | `folder` | No | string | Informational only. KO Lite does not interpret. |
 | `tags` | No | array of strings | Optional local job organization tags. When present, must be an array of non-empty strings. KO Lite trims tags, normalizes them to lowercase, deduplicates after normalization, and uses them for dashboard/catalog filters. Tags are separate from Kusto ingestion tags and from `folder`. |
 | `dependsOn` | No | array of objects | Each entry references an upstream by `activityId` and/or `id` (the upstream's GUID): `{ "activityId": "<label>" }`, `{ "id": "<guid>" }`, or both. At least one is required per entry. No bare-string shorthand. No self-dependency. KO Lite resolves the reference to the upstream's GUID and stores the edge by `id`, so upstream renames don't break it; referencing by `activityId` requires the upstream to exist (in the catalog or same import batch). |

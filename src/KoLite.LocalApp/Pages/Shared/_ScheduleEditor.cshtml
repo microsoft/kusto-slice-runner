@@ -20,6 +20,10 @@
                 <label>Job ID<input value="@Model.Input.Id" readonly /></label>
             }
             <label>Activity ID<input name="Input.ActivityId" value="@Model.Input.ActivityId" /></label>
+            <label class="form-field-full">Description (Markdown)
+                <textarea name="Input.Description" rows="6" maxlength="@KoLite.Local.Core.Schedules.JobDescription.MaxLength" aria-describedby="schedule-description-help">@Model.Input.Description</textarea>
+                <span id="schedule-description-help" class="muted form-field-help">Optional catalog metadata. Supports Markdown and is never passed to the Kusto function.</span>
+            </label>
             <label>Function name<input name="Input.FunctionName" value="@Model.Input.FunctionName" /></label>
             <label>Output table<input name="Input.OutputTable" value="@Model.Input.OutputTable" /></label>
             <label>Query window size<input name="Input.QueryWindowSize" value="@Model.Input.QueryWindowSize" placeholder="01:00:00" @(Model.StartedFieldsReadOnly ? "readonly" : null) /></label>

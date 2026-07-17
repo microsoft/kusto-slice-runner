@@ -1820,43 +1820,104 @@
   window.initTagPickers = initTagPickers;
   window.initBulkSelect = initBulkSelect;
 
+  function escapeHtml(text) {
+    var holder = document.createElement("div");
+    holder.textContent = text || "";
+    return holder.innerHTML;
+  }
+
+  function safeMarkdownRenderer() {
+    if (!window.marked || typeof window.marked.Renderer !== "function") return null;
+    var renderer = new window.marked.Renderer();
+    renderer.html = function (token) {
+      return escapeHtml(token && typeof token === "object" ? token.text : token);
+    };
+    return renderer;
+  }
+
+  function safeMarkdownUrl(href) {
+    if (!href) return null;
+    try {
+      var url = new URL(href.trim(), window.location.href);
+      return ["http:", "https:", "mailto:"].indexOf(url.protocol.toLowerCase()) >= 0 ? url : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // Markdown may come from imported schedule JSON or echoed failure evidence. Keep only the structural
+  // elements that marked emits for text formatting, remove every unapproved attribute, and validate
+  // link protocols before assigning the resulting HTML to the page.
+  function sanitizeMarkdownHtml(html) {
+    var allowedElements = {
+      a: true, blockquote: true, br: true, code: true, del: true, em: true,
+      h1: true, h2: true, h3: true, h4: true, h5: true, h6: true, hr: true,
+      li: true, ol: true, p: true, pre: true, strong: true, table: true,
+      tbody: true, td: true, th: true, thead: true, tr: true, ul: true
+    };
+    var template = document.createElement("template");
+    template.innerHTML = html;
+    template.content.querySelectorAll("*").forEach(function (element) {
+      var tag = element.tagName.toLowerCase();
+      if (!allowedElements[tag]) {
+        var text = tag === "img" ? element.getAttribute("alt") || "" : element.textContent || "";
+        element.replaceWith(document.createTextNode(text));
+        return;
+      }
+
+      Array.prototype.slice.call(element.attributes).forEach(function (attr) {
+        var name = attr.name.toLowerCase();
+        var allowed = (tag === "a" && (name === "href" || name === "title"))
+          || (tag === "ol" && name === "start")
+          || ((tag === "th" || tag === "td") && name === "align");
+        if (!allowed) {
+          element.removeAttribute(attr.name);
+        }
+      });
+
+      if (tag === "a") {
+        var safeUrl = safeMarkdownUrl(element.getAttribute("href"));
+        if (!safeUrl) {
+          element.removeAttribute("href");
+        } else if (safeUrl.protocol === "mailto:" || safeUrl.origin !== window.location.origin) {
+          element.setAttribute("target", "_blank");
+          element.setAttribute("rel", "noopener noreferrer");
+        }
+      }
+    });
+    return template.innerHTML;
+  }
+
+  function renderMarkdown(target, markdown) {
+    var text = markdown || "";
+    var renderer = safeMarkdownRenderer();
+    if (!window.marked || typeof window.marked.parse !== "function" || !renderer) {
+      target.replaceChildren();
+      var pre = document.createElement("pre");
+      pre.className = "markdown-fallback";
+      pre.textContent = text;
+      target.appendChild(pre);
+      target.hidden = false;
+      return;
+    }
+
+    target.innerHTML = sanitizeMarkdownHtml(window.marked.parse(text, { renderer: renderer }));
+    target.hidden = false;
+  }
+
+  function initJobDescriptions() {
+    document.querySelectorAll("[data-job-description]").forEach(function (card) {
+      var source = card.querySelector("[data-job-description-source]");
+      var output = card.querySelector("[data-job-description-output]");
+      if (source && output) renderMarkdown(output, source.textContent || "");
+    });
+  }
+
   // "Analyze failures with Copilot" on the job Operations tab: trigger the loopback analysis endpoint,
   // poll for the ephemeral result, and render the returned Markdown. Nothing runs until the operator
   // clicks; the antiforgery token is sent as the X-CSRF-TOKEN header like the dashboard toggle.
   function renderAnalysisMarkdown(target, markdown) {
-    var text = markdown || "";
-    var html;
-    if (window.marked && typeof window.marked.parse === "function") {
-      html = window.marked.parse(text);
-    } else {
-      html = "<pre></pre>";
-    }
-    target.innerHTML = sanitizeAnalysisHtml(html);
-    if (!window.marked || typeof window.marked.parse !== "function") {
-      var pre = target.querySelector("pre");
-      if (pre) pre.textContent = text;
-    }
-    target.hidden = false;
-  }
-
-  // Minimal client-side hardening for model-produced HTML: drop script/style/iframe-like nodes and any
-  // event-handler or javascript: attributes. This is a local single-user tool, but the analysis text can
-  // echo Kusto error strings, so we never trust raw HTML.
-  function sanitizeAnalysisHtml(html) {
-    var template = document.createElement("template");
-    template.innerHTML = html;
-    var blocked = template.content.querySelectorAll("script, style, iframe, object, embed, link, meta");
-    blocked.forEach(function (node) { node.remove(); });
-    template.content.querySelectorAll("*").forEach(function (element) {
-      Array.prototype.slice.call(element.attributes).forEach(function (attr) {
-        var name = attr.name.toLowerCase();
-        var value = (attr.value || "").replace(/\s/g, "").toLowerCase();
-        if (name.indexOf("on") === 0 || ((name === "href" || name === "src") && value.indexOf("javascript:") === 0)) {
-          element.removeAttribute(attr.name);
-        }
-      });
-    });
-    return template.innerHTML;
+    renderMarkdown(target, markdown);
   }
 
   function initFailureAnalysis() {
@@ -1973,6 +2034,9 @@
   }
 
   window.initFailureAnalysis = initFailureAnalysis;
+  window.initJobDescriptions = initJobDescriptions;
+  window.renderMarkdown = renderMarkdown;
+  window.sanitizeMarkdownHtml = sanitizeMarkdownHtml;
   initCharts("data-chartjs-success", function (canvas, payload) {
     var chart = buildSuccessRateChart(canvas, payload);
     if (chart) {
@@ -1991,5 +2055,6 @@
   initTagPickers();
   initDependencyPickers();
   initDependencyGraphs();
+  initJobDescriptions();
   initFailureAnalysis();
 })();

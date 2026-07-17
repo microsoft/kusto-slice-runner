@@ -24,6 +24,7 @@
     "queryTimeout": "00:30:00",
     "isPaused": false,
     "startFrom": "2026-01-01T00:00:00Z",
+    "description": "Full example job with dependency and settings metadata.",
     "folder": "YourTeam/Full",
     "tags": ["example", "full"],
     "healthPolicy": "recent",

@@ -511,11 +511,12 @@ namespace KoLite.Local.Sqlite.Catalog
         {
             using var insert = SqliteStorage.Command(connection, transaction, """
                 INSERT INTO job_definitions (job_id, activity_id, display_name, description, query_ref, schedule_json, parameters_json, is_enabled, catalog_version, created_at_utc, updated_at_utc)
-                VALUES ($job_id, $activity_id, $display_name, NULL, $query_ref, $schedule_json, $parameters_json, $is_enabled, $catalog_version, $now, $now);
+                VALUES ($job_id, $activity_id, $display_name, $description, $query_ref, $schedule_json, $parameters_json, $is_enabled, $catalog_version, $now, $now);
                 """);
             insert.Add("$job_id", jobId);
             insert.Add("$activity_id", definition.ActivityId);
             insert.Add("$display_name", definition.ActivityId);
+            insert.Add("$description", definition.Description);
             insert.Add("$query_ref", definition.FunctionName);
             insert.Add("$schedule_json", storageJson);
             insert.Add("$parameters_json", ParametersJson(definition));
@@ -529,12 +530,13 @@ namespace KoLite.Local.Sqlite.Catalog
         {
             using var update = SqliteStorage.Command(connection, transaction, """
                 UPDATE job_definitions
-                SET activity_id = $activity_id, display_name = $display_name, query_ref = $query_ref, schedule_json = $schedule_json, parameters_json = $parameters_json,
+                SET activity_id = $activity_id, display_name = $display_name, description = $description, query_ref = $query_ref, schedule_json = $schedule_json, parameters_json = $parameters_json,
                     is_enabled = $is_enabled, catalog_version = $catalog_version, updated_at_utc = $updated_at
                 WHERE job_id = $job_id AND catalog_version = $expected_version;
                 """);
             update.Add("$activity_id", definition.ActivityId);
             update.Add("$display_name", definition.ActivityId);
+            update.Add("$description", definition.Description);
             update.Add("$query_ref", definition.FunctionName);
             update.Add("$schedule_json", storageJson);
             update.Add("$parameters_json", ParametersJson(definition));

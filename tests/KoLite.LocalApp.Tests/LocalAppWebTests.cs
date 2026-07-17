@@ -779,6 +779,60 @@ namespace KoLite.LocalApp.Tests
         }
 
         [Fact]
+        public void Schedule_form_input_round_trips_markdown_description_and_omits_blank_values()
+        {
+            const string description = "# Purpose\n\nRuns **daily**.\n\n    keep indentation";
+            var input = ScheduleFormInput.FromJson(Schedule(
+                "job.description.form",
+                "DescriptionFunction",
+                isPaused: false,
+                description: description));
+
+            Assert.Equal(description, input.Description);
+            var output = ScheduleParser.Parse(input.ToScheduleJson());
+            Assert.True(output.IsValid, string.Join(Environment.NewLine, output.Errors.Select(e => $"{e.Field}: {e.Message}")));
+            Assert.Equal(description, output.Definition!.Description);
+
+            input.Description = " \r\n ";
+            using var blankDocument = JsonDocument.Parse(input.ToScheduleJson());
+            Assert.False(blankDocument.RootElement.TryGetProperty("description", out _));
+        }
+
+        [Fact]
+        public async Task Description_editor_details_copy_and_history_preserve_encoded_markdown()
+        {
+            const string description = "# Purpose\n\n<script>alert('description')</script>\n\n[unsafe](javascript:alert(1))";
+            var catalog = new SqliteJobCatalogRepository(sqlite);
+            var record = catalog.Create(Schedule(
+                "job.description.web",
+                "DescriptionWebFunction",
+                isPaused: false,
+                description: description));
+            var empty = catalog.Create(Schedule("job.description.empty", "EmptyDescriptionFunction", isPaused: false));
+            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+
+            var details = await client.GetStringAsync($"/jobs/{record.JobId}");
+            var copy = await client.GetStringAsync($"/catalog/{record.JobId}/copy");
+            var emptyDetails = await client.GetStringAsync($"/jobs/{empty.JobId}");
+
+            Assert.Contains("class=\"card job-description-card\" data-job-description", details, StringComparison.Ordinal);
+            Assert.Contains("data-job-description-source hidden", details, StringComparison.Ordinal);
+            Assert.Contains("&lt;script&gt;", details, StringComparison.Ordinal);
+            Assert.DoesNotContain("<script>alert('description')</script>", details, StringComparison.Ordinal);
+            Assert.Contains("name=\"Input.Description\" rows=\"6\" maxlength=\"65536\"", details, StringComparison.Ordinal);
+            Assert.Contains("name=\"Input.Description\" rows=\"6\" maxlength=\"65536\"", copy, StringComparison.Ordinal);
+            Assert.Contains("&lt;script&gt;", copy, StringComparison.Ordinal);
+            Assert.DoesNotContain("data-job-description", emptyDetails, StringComparison.Ordinal);
+
+            _ = catalog.Update(
+                record.JobId,
+                Schedule("job.description.web", "DescriptionWebFunction", isPaused: false, description: "Updated purpose"),
+                expectedVersion: record.CatalogVersion);
+            var updatedDetails = await client.GetStringAsync($"/jobs/{record.JobId}");
+            Assert.Contains("<code>$.description</code>", updatedDetails, StringComparison.Ordinal);
+        }
+
+        [Fact]
         public async Task Shared_schedule_editor_renders_multiple_tags_as_separate_chips()
         {
             var catalog = new SqliteJobCatalogRepository(sqlite);
@@ -834,13 +888,16 @@ namespace KoLite.LocalApp.Tests
                 ["Input.ClusterUri"] = "https://kolite-example.invalid",
                 ["Input.Database"] = "DemoDb",
                 ["Input.Tags"] = "Harvest\nv2;HARVEST",
+                ["Input.Description"] = "# Tagged job\n\nCatalog metadata only.",
                 ["Input.JobSettingsJson"] = "{}"
             };
 
             using var response = await PostForm(client, $"/catalog/{record.JobId}/update", token, form);
 
             Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
-            Assert.Equal(["harvest", "v2"], catalog.Get(record.JobId)!.Definition.Tags);
+            var updated = catalog.Get(record.JobId)!;
+            Assert.Equal(["harvest", "v2"], updated.Definition.Tags);
+            Assert.Equal("# Tagged job\n\nCatalog metadata only.", updated.Description);
         }
 
         [Fact]
@@ -2845,7 +2902,7 @@ namespace KoLite.LocalApp.Tests
             return new Guid(bytes).ToString("N");
         }
 
-        private static string Schedule(string activityId, string functionName, bool isPaused, string outputTable = "Output", int maxParallelism = 1, string queryWindowSize = "00:05:00", string? folder = null, IReadOnlyList<string>? tags = null, string? endOn = null, string? healthPolicy = null)
+        private static string Schedule(string activityId, string functionName, bool isPaused, string outputTable = "Output", int maxParallelism = 1, string queryWindowSize = "00:05:00", string? folder = null, IReadOnlyList<string>? tags = null, string? endOn = null, string? healthPolicy = null, string? description = null)
         {
             var schedule = $$"""
             {
@@ -2864,6 +2921,11 @@ namespace KoLite.LocalApp.Tests
             """;
 
             var metadata = new List<string>();
+            if (description is not null)
+            {
+                metadata.Add($"  \"description\": {JsonSerializer.Serialize(description)},");
+            }
+
             if (folder is not null)
             {
                 metadata.Add($"  \"folder\": {JsonSerializer.Serialize(folder)},");

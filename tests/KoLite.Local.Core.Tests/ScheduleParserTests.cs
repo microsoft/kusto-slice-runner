@@ -114,6 +114,50 @@ namespace KoLite.Local.Core.Tests
         }
 
         [Fact]
+        public void Parser_accepts_and_preserves_optional_markdown_description()
+        {
+            const string description = "# Purpose\n\nRuns **daily**.\n\n    keep indentation";
+            var json = WithTopLevel(
+                MinimalSample,
+                "\"description\": " + System.Text.Json.JsonSerializer.Serialize(description));
+
+            var result = ScheduleParser.Parse(json);
+
+            Assert.True(result.IsValid, string.Join(Environment.NewLine, result.Errors.Select(e => $"{e.Field}: {e.Message}")));
+            Assert.Equal(description, result.Definition!.Description);
+            Assert.Null(ScheduleParser.Parse(MinimalSample).Definition!.Description);
+            Assert.Null(ScheduleParser.Parse(WithTopLevel(MinimalSample, "\"description\": null")).Definition!.Description);
+        }
+
+        [Fact]
+        public void Parser_accepts_description_at_the_length_limit()
+        {
+            var description = new string('a', JobDescription.MaxLength);
+            var json = WithTopLevel(
+                MinimalSample,
+                "\"description\": " + System.Text.Json.JsonSerializer.Serialize(description));
+
+            var result = ScheduleParser.Parse(json);
+
+            Assert.True(result.IsValid, string.Join(Environment.NewLine, result.Errors.Select(e => $"{e.Field}: {e.Message}")));
+            Assert.Equal(JobDescription.MaxLength, result.Definition!.Description!.Length);
+        }
+
+        [Fact]
+        public void Parser_rejects_non_string_and_over_limit_descriptions()
+        {
+            var nonString = ScheduleParser.Parse(WithTopLevel(MinimalSample, "\"description\": 42"));
+            var tooLong = ScheduleParser.Parse(WithTopLevel(
+                MinimalSample,
+                "\"description\": " + System.Text.Json.JsonSerializer.Serialize(new string('a', JobDescription.MaxLength + 1))));
+
+            Assert.False(nonString.IsValid);
+            Assert.Contains(nonString.Errors, e => e.Field == "description");
+            Assert.False(tooLong.IsValid);
+            Assert.Contains(tooLong.Errors, e => e.Field == "description" && e.Message.Contains("65536", StringComparison.Ordinal));
+        }
+
+        [Fact]
         public void Parser_normalizes_and_deduplicates_tags()
         {
             var result = ScheduleParser.Parse(WithTopLevel(MinimalSample, "\"tags\": [\" Prod \", \"daily\", \"PROD\", \"security\"]"));

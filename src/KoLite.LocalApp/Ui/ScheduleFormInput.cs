@@ -11,6 +11,7 @@ namespace KoLite.LocalApp.Ui
 
         public string ActivityId { get; set; } = string.Empty;
         public string? Id { get; set; }
+        public string? Description { get; set; }
         public string FunctionName { get; set; } = string.Empty;
         public string OutputTable { get; set; } = string.Empty;
         public string QueryWindowSize { get; set; } = "01:00:00";
@@ -52,6 +53,7 @@ namespace KoLite.LocalApp.Ui
             {
                 Id = definition.Id,
                 ActivityId = definition.ActivityId,
+                Description = definition.Description,
                 FunctionName = definition.FunctionName,
                 OutputTable = definition.OutputTable,
                 QueryWindowSize = definition.QueryWindowSize.ToString("c", CultureInfo.InvariantCulture),
@@ -95,6 +97,11 @@ namespace KoLite.LocalApp.Ui
             if (!string.IsNullOrWhiteSpace(Id))
             {
                 root["id"] = Id.Trim();
+            }
+
+            if (!string.IsNullOrWhiteSpace(Description))
+            {
+                root["description"] = Description;
             }
 
             if (!string.IsNullOrWhiteSpace(EndOn))

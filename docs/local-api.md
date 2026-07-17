@@ -51,11 +51,15 @@ Base URL defaults to `http://127.0.0.1:5057`.
 | Method | Route | Purpose |
 | --- | --- | --- |
 | GET | `/api/jobs` | `{ "jobs": [ ... ] }` of summaries: `jobId` (permanent GUID), `displayName` (the activityId label), `isEnabled`, `isSoftDeleted`, `hasStarted`, `isPaused`, `tags`, `target { clusterUri, database }`, `catalogVersion`, `createdAtUtc`, `updatedAtUtc`. |
-| GET | `/api/jobs/{jobId}` | `{ "job": { ...summary }, "schedule": { ...canonical import-compatible object, including its `id` } }`. `{jobId}` is the permanent GUID. `404` with `{ "error" }` when the job does not exist. |
+| GET | `/api/jobs/{jobId}` | `{ "job": { ...summary }, "schedule": { ...canonical import-compatible object, including its `id` and optional `description` } }`. `{jobId}` is the permanent GUID. `404` with `{ "error" }` when the job does not exist. |
 | GET | `/api/jobs/export` | Import-compatible JSON **array** of every non-soft-deleted job (same payload as the dashboard **Export all**). |
 | POST | `/api/jobs/import` | Body is schedule JSON (single object **or** array). Returns `{ "created", "updated", "total", "items": [ { "jobId", "action", "catalogVersion" } ] }`. `400` with `{ "error" }` on JSON, validation, or mutation-policy failure. |
 | POST | `/api/jobs/{jobId}/soft-delete` | Soft-delete (hide) a job — reversible. `{jobId}` is the permanent GUID. Body `{ "expectedVersion": <current catalogVersion, required>, "reason"?, "force"? }`. Returns `{ "job": { ...summary, "isSoftDeleted": true } }`. Errors: `400` (missing/invalid body or absent `expectedVersion`), `404` (unknown job), `409` (version conflict), or `409` `{ "error", "dependents": [ { "jobId", "activityId" } ] }` when active downstream jobs depend on it and `force` is not `true`. |
 | POST | `/api/jobs/{jobId}/restore` | Restore (un-hide) a soft-deleted job. `{jobId}` is the permanent GUID. Body `{ "expectedVersion": <required>, "reason"? }`. Returns `{ "job": { ...summary, "isEnabled": true } }`. Errors: `400`/`404`/`409` as above (no dependents check). |
+
+The potentially large `description` value is not duplicated into `GET /api/jobs`
+summaries. Read it from the single-job `schedule` object or an export. It is Markdown
+catalog metadata only and is never forwarded to Kusto execution.
 
 The database path is also reported as `databasePath` by `GET /status/health`,
 which an agent can read to confirm which instance it is talking to. The

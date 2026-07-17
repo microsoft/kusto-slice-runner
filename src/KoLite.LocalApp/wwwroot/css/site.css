@@ -600,6 +600,8 @@ h3 { font-size: 16px; margin-bottom: 10px; }
   margin-top: 3px;
 }
 .form-card textarea { font-family: Consolas, "Courier New", monospace; }
+.form-grid .form-field-full { grid-column: 1 / -1; }
+.form-field-help { display: block; font-weight: 400; margin-top: 4px; }
 .tag-picker { margin-bottom: 10px; }
 .tag-picker-label { margin-bottom: 6px !important; }
 .tag-picker-controls { align-items: center; display: flex; gap: 8px; margin-bottom: 8px; }
@@ -1199,15 +1201,18 @@ h3 { font-size: 16px; margin-bottom: 10px; }
   border-radius: 6px;
   background: var(--bg);
 }
-.analyze-output > :first-child { margin-top: 0; }
-.analyze-output > :last-child { margin-bottom: 0; }
-.analyze-output h1, .analyze-output h2, .analyze-output h3, .analyze-output h4 {
+.job-description-output { overflow-wrap: anywhere; }
+.markdown-body > :first-child { margin-top: 0; }
+.markdown-body > :last-child { margin-bottom: 0; }
+.markdown-body h1, .markdown-body h2, .markdown-body h3, .markdown-body h4,
+.markdown-body h5, .markdown-body h6 {
   margin: 14px 0 6px;
   font-size: 15px;
 }
-.analyze-output p, .analyze-output ul, .analyze-output ol { margin: 6px 0; }
-.analyze-output ul, .analyze-output ol { padding-left: 22px; }
-.analyze-output pre {
+.markdown-body p, .markdown-body ul, .markdown-body ol, .markdown-body blockquote { margin: 6px 0; }
+.markdown-body ul, .markdown-body ol { padding-left: 22px; }
+.markdown-body blockquote { border-left: 3px solid var(--border); color: var(--muted); padding-left: 12px; }
+.markdown-body pre, .markdown-fallback {
   background: #f6f8fa;
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -1215,6 +1220,9 @@ h3 { font-size: 16px; margin-bottom: 10px; }
   overflow-x: auto;
   white-space: pre-wrap;
 }
+.markdown-body table { border-collapse: collapse; display: block; max-width: 100%; overflow-x: auto; }
+.markdown-body th, .markdown-body td { border: 1px solid var(--border); padding: 6px 10px; }
+.markdown-body th { background: #f6f8fa; }
 @media (prefers-reduced-motion: reduce) {
   .analyze-status-running::before { animation: none; }
 }

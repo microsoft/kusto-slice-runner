@@ -207,6 +207,44 @@ namespace KoLite.Local.Sqlite.Tests
         }
 
         [Fact]
+        public void Description_round_trips_through_create_started_update_import_export_and_clear()
+        {
+            const string initial = "# Initial purpose\n\nRuns **daily**.";
+            const string updatedDescription = "Updated after start.\n\n- one\n- two";
+            var created = repository.Create(Schedule("job.description", paused: false, description: initial));
+
+            Assert.Equal(initial, created.Description);
+            Assert.Equal(initial, created.Definition.Description);
+            Assert.Equal(initial, ScheduleImportParser.Parse(repository.Export(created.JobId)).Items.Single().Definition.Description);
+
+            MarkStarted(created.JobId);
+            var updated = repository.Update(
+                created.JobId,
+                Schedule("job.description", paused: false, description: updatedDescription),
+                expectedVersion: created.CatalogVersion);
+
+            Assert.Equal(2, updated.CatalogVersion);
+            Assert.Equal(updatedDescription, updated.Description);
+            Assert.Equal(updatedDescription, updated.Definition.Description);
+
+            var import = repository.Import(Schedule("job.description", paused: false, description: "Imported description"), actor: "test-import");
+            var imported = repository.Get(created.JobId)!;
+            Assert.Equal(1, import.Updated);
+            Assert.Equal("Imported description", imported.Description);
+            Assert.Equal("Imported description", ScheduleImportParser.Parse(repository.ExportAll()).Items.Single().Definition.Description);
+
+            var cleared = repository.Update(
+                created.JobId,
+                Schedule("job.description", paused: false),
+                expectedVersion: imported.CatalogVersion);
+
+            Assert.Null(cleared.Description);
+            Assert.Null(cleared.Definition.Description);
+            Assert.DoesNotContain("\"description\"", cleared.ScheduleJson, StringComparison.Ordinal);
+            Assert.Equal(["Created", "Updated", "Updated", "Updated"], repository.History(created.JobId).Select(e => e.EventType).ToArray());
+        }
+
+        [Fact]
         public void Update_allows_activity_id_rename_keeping_same_job_id()
         {
             var created = repository.Create(Schedule("job.rename", paused: false));
@@ -365,7 +403,7 @@ namespace KoLite.Local.Sqlite.Tests
             return new Guid(bytes).ToString("N");
         }
 
-        private static string Schedule(string activityId, bool paused, int maxParallelism = 1, string queryWindowSize = "00:05:00", string startFrom = "2026-01-01T00:00:00Z", IReadOnlyList<string>? tags = null, string? id = null)
+        private static string Schedule(string activityId, bool paused, int maxParallelism = 1, string queryWindowSize = "00:05:00", string startFrom = "2026-01-01T00:00:00Z", IReadOnlyList<string>? tags = null, string? id = null, string? description = null)
         {
             var jobId = id ?? JobId(activityId);
             var schedule = $$"""
@@ -383,6 +421,11 @@ namespace KoLite.Local.Sqlite.Tests
               "target": { "clusterUri": "https://kolite-example.invalid", "database": "DemoDb" }
             }
             """;
+
+            if (description is not null)
+            {
+                schedule = schedule.Replace("  \"target\":", $"  \"description\": {JsonSerializer.Serialize(description)},\n  \"target\":", StringComparison.Ordinal);
+            }
 
             if (tags is not { Count: > 0 })
             {
