@@ -91,21 +91,6 @@ Analyze failures with Copilot:
 
 ![KO Lite Copilot failure analysis](docs/images/copilot-failure-analysis.png)
 
-## Release highlights (maintainers)
-
-After the GitHub Release workflow creates a draft, generate local AI highlights:
-
-```powershell
-pwsh -File .\scripts\New-KoLiteReleaseHighlights.ps1 -Version v1.1.0
-```
-
-The workflow creates `Changes`, `Install`, and `Full Changelog` sections, with a
-placeholder under `Changes`. The read-only script uses authenticated `gh` and
-Copilot CLI sessions to summarize commits since the previous published release,
-then writes a Markdown file. Review it and replace the placeholder manually. It
-never changes GitHub and requires no PAT, repository secret, or
-organization-setting change. See the [release guide](docs/releasing.md).
-
 ## Documentation
 
 | Topic | Link |
