@@ -110,6 +110,38 @@ namespace KoLite.LocalApp.Tests
         }
 
         [Fact]
+        public async Task Post_import_round_trips_description_through_detail_and_export()
+        {
+            const string initialDescription = "# Initial purpose\n\nCreated through the API.";
+            const string updatedDescription = "## Updated purpose\n\nStill catalog metadata only.";
+            using var client = factory.CreateClient();
+
+            using var created = await PostImport(
+                client,
+                Schedule("job.description.api", "DescriptionApiFunction", isPaused: true, description: initialDescription));
+            Assert.Equal(HttpStatusCode.OK, created.StatusCode);
+
+            using var detail = JsonDocument.Parse(await client.GetStringAsync($"/api/jobs/{JobId("job.description.api")}"));
+            Assert.Equal(initialDescription, detail.RootElement.GetProperty("schedule").GetProperty("description").GetString());
+
+            using var exported = JsonDocument.Parse(await client.GetStringAsync("/api/jobs/export"));
+            Assert.Equal(initialDescription, exported.RootElement.EnumerateArray().Single().GetProperty("description").GetString());
+
+            using var updated = await PostImport(
+                client,
+                Schedule("job.description.api", "DescriptionApiFunction", isPaused: true, description: updatedDescription));
+            Assert.Equal(HttpStatusCode.OK, updated.StatusCode);
+            using var updatedBody = JsonDocument.Parse(await updated.Content.ReadAsStringAsync());
+            Assert.Equal(1, updatedBody.RootElement.GetProperty("updated").GetInt32());
+
+            using var updatedDetail = JsonDocument.Parse(await client.GetStringAsync($"/api/jobs/{JobId("job.description.api")}"));
+            Assert.Equal(updatedDescription, updatedDetail.RootElement.GetProperty("schedule").GetProperty("description").GetString());
+
+            using var summaries = JsonDocument.Parse(await client.GetStringAsync("/api/jobs"));
+            Assert.False(summaries.RootElement.GetProperty("jobs").EnumerateArray().Single().TryGetProperty("description", out _));
+        }
+
+        [Fact]
         public async Task Post_import_creates_then_upserts_without_deleting_omitted_jobs()
         {
             using var client = factory.CreateClient();

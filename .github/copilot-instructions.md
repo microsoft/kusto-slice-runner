@@ -44,6 +44,7 @@ For targeted changes, run the narrow relevant test project first, then decide wh
 - The local app should use the real Kusto output writer for user-facing execution. Test projects may use in-memory or fake executors where they already exist.
 - Scheduler enqueue behavior and worker claim/execution behavior are separate. Preserve per-job `maxParallelism`, global worker concurrency, visibility/query timeout leases, pause/delete state, and dependency readiness semantics.
 - Schedule JSON import/export accepts a single schedule object or an array. The parser rejects unknown top-level fields, unknown `target` fields, and unknown `dependsOn` entry fields. A job's permanent identity is an opaque GUID `id` (server-assigned, immutable); `activityId` is a mutable, unique display label. Imports match by `id` when present (enabling rename = same `id`, new `activityId`), else by `activityId`. `dependsOn` entries reference an upstream by `id` and/or `activityId` and are stored by GUID.
+- `description` is optional Markdown catalog metadata, limited to 65,536 characters. It round-trips through copy, import/export, catalog history, and the single-job API schedule; it is omitted from compact API job summaries and must never enter Kusto requests or function arguments. When the schedule contract changes, keep the C# parser, standalone PowerShell validator, both schedule-management skills and templates, API docs, and tests synchronized.
 - For `.csl` and `.kql`, follow `.github\instructions\kusto.instructions.md`.
 
 ## Git workflow (feature branches and worktrees)

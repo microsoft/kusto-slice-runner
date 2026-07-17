@@ -111,6 +111,8 @@ The database path is resolved at runtime, so it cannot be read reliably from `ap
 - Preserve import/export compatibility: a single schedule object or an array is valid. Imports match an existing job by `id` when present (this is how a rename is applied — same `id`, new `activityId`), else by `activityId`, else create (preserving a supplied `id`, otherwise minting one).
 - The job's permanent identity is the opaque GUID `id` (immutable). `activityId` is a mutable, unique display label that can be renamed; `queryWindowSize` and `startFrom` remain read-only after a job has started.
 - Dependencies are stored by upstream GUID; `dependsOn` entries may reference the upstream by `activityId` and/or `id`, resolved to the GUID at create/import.
+- `description` is optional Markdown catalog metadata, limited to 65,536 characters. Preserve it across copy, import/export, catalog history, and the single-job API schedule; keep it out of compact API job summaries and every Kusto request/function argument.
+- When adding or changing a schedule field, update the core parser, standalone PowerShell validator, `ko-lite-schedule-json` and `ko-lite-job-manager` guidance/templates, API docs, and matching tests together.
 - Preserve additive/update-only import behavior unless the user explicitly asks for replacement or deletion semantics.
 
 ## Validation
