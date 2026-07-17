@@ -126,7 +126,7 @@ again with `"isPaused": false` to resume. An import always re-activates an
 | Method | Route | Purpose |
 | --- | --- | --- |
 | GET | `/api/jobs` | Array of job summaries (`jobId` = permanent GUID, `displayName` = the activityId label, `isEnabled`, `isSoftDeleted`, `hasStarted`, `isPaused`, `tags`, `target`, `catalogVersion`, timestamps). To find a job by its human `activityId`, match `displayName`. |
-| GET | `/api/jobs/{jobId}` | One summary plus `schedule` (the canonical, import-compatible schedule object, including its `id`). `{jobId}` is the permanent GUID. 404 if missing. |
+| GET | `/api/jobs/{jobId}` | One summary plus `schedule` (the canonical, import-compatible schedule object, including its `id`). The API route requires the permanent GUID. The helper prefers that GUID but can resolve an exact `activityId` through `GET /api/jobs` when the caller does not know it. 404 if missing. |
 | GET | `/api/jobs/export` | Import-compatible JSON array of all non-soft-deleted jobs. |
 | POST | `/api/jobs/import` | Body is schedule JSON (single object or array). Returns `{ created, updated, total, items[] }`. 400 with `{ error }` on validation/mutation failure. |
 | POST | `/api/jobs/{jobId}/soft-delete` | Soft-delete (hide) a job — reversible. `{jobId}` is the permanent GUID. Body `{ expectedVersion (required), reason?, force? }`. Returns `{ job }`. 400/404/409; 409 `{ error, dependents[] }` when active dependents block it and `force` is not set. |
@@ -208,8 +208,11 @@ detailed field-by-field guide. Key points:
    a "will not" action, stop.
 2. **Confirm the app is reachable.** Run the `Health` action; note `databasePath`
    so the user knows which instance you are changing.
-3. **Read current state.** For an update, run `Get-Job -JobId <id>` and edit the
-   returned `schedule`. For a broad change, `Export` everything first.
+3. **Read current state.** For an update, get the permanent GUID from `Get-Jobs`,
+   then run `Get-Job -JobId <guid>` and edit the returned `schedule`. If only the
+   exact `activityId` is known, `Get-Job` can resolve it once; use the returned
+   `job.jobId` for subsequent reads and writes. For a broad change, `Export`
+   everything first.
 4. **Author/edit the JSON** per the contract above. Write it to a temp file or a
    path the user names.
 5. **Validate locally.** The Import action validates automatically with the
@@ -269,10 +272,11 @@ $skill = '.\.github\skills\ko-lite-job-manager\scripts\Invoke-KoLiteJobApi.ps1'
 & $skill -Action Health
 
 # List jobs
-& $skill -Action Get-Jobs
+$jobs = @(& $skill -Action Get-Jobs)
 
 # Inspect one job (summary + canonical schedule)
-& $skill -Action Get-Job -JobId 'CopilotUsage.GhcpReportingUserDaily'
+$summary = $jobs | Where-Object { $_.displayName -ceq 'CopilotUsage.GhcpReportingUserDaily' }
+$job = & $skill -Action Get-Job -JobId $summary.jobId
 
 # Export all active jobs (import-compatible)
 & $skill -Action Export
@@ -281,7 +285,6 @@ $skill = '.\.github\skills\ko-lite-job-manager\scripts\Invoke-KoLiteJobApi.ps1'
 & $skill -Action Import -Path .\my-job.json
 
 # Soft-delete a job (reversible), then restore it. Read its current version first.
-$job = & $skill -Action Get-Job -JobId 'CopilotUsage.GhcpReportingUserDaily'
 & $skill -Action Soft-Delete -JobId $job.job.jobId -ExpectedVersion $job.job.catalogVersion
 # ...and restore it later (use the catalogVersion returned by the soft-delete).
 & $skill -Action Restore     -JobId $job.job.jobId -ExpectedVersion <version>

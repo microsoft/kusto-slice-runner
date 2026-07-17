@@ -73,11 +73,13 @@ back to a best-effort guess when the app is stopped).
 Invoke-RestMethod http://127.0.0.1:5057/status/health |
     Select-Object status, databasePath, jobCount
 
-# List jobs.
-Invoke-RestMethod http://127.0.0.1:5057/api/jobs | Select-Object -Expand jobs
+# List jobs and resolve the permanent GUID from the human activityId label.
+$jobs = Invoke-RestMethod http://127.0.0.1:5057/api/jobs |
+    Select-Object -Expand jobs
+$jobId = ($jobs | Where-Object { $_.displayName -ceq 'Demo.SkillTest' }).jobId
 
 # Inspect one job's canonical schedule.
-Invoke-RestMethod http://127.0.0.1:5057/api/jobs/Demo.SkillTest |
+Invoke-RestMethod "http://127.0.0.1:5057/api/jobs/$jobId" |
     Select-Object -Expand schedule
 
 # Create or update from a file (single object or array).
@@ -85,7 +87,7 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:5057/api/jobs/import `
     -ContentType 'application/json' -InFile .\my-job.json
 
 # Soft-delete a job (reversible). Read its current catalogVersion first.
-$job = Invoke-RestMethod http://127.0.0.1:5057/api/jobs/Demo.SkillTest
+$job = Invoke-RestMethod "http://127.0.0.1:5057/api/jobs/$jobId"
 Invoke-RestMethod -Method Post `
     -Uri "http://127.0.0.1:5057/api/jobs/$($job.job.jobId)/soft-delete" `
     -ContentType 'application/json' `
@@ -104,11 +106,17 @@ sending and surfaces API errors clearly:
 ```powershell
 $skill = '.\.github\skills\ko-lite-job-manager\scripts\Invoke-KoLiteJobApi.ps1'
 & $skill -Action Health
-& $skill -Action Get-Jobs
+$jobs = @(& $skill -Action Get-Jobs)
+$job = & $skill -Action Get-Job -JobId $jobs[0].jobId
 & $skill -Action Import -Path .\my-job.json
 & $skill -Action Soft-Delete -JobId <jobId> -ExpectedVersion <catalogVersion>
 & $skill -Action Restore     -JobId <jobId> -ExpectedVersion <catalogVersion>
 ```
+
+The helper keeps the permanent GUID as the normal reference. For a read where
+only the exact `activityId` is known, `Get-Job` resolves the matching
+`displayName` through `GET /api/jobs` and then calls the GUID-keyed route. Use the
+returned `job.jobId` for subsequent operations.
 
 ## Read-only diagnostics
 

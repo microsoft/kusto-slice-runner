@@ -37,10 +37,10 @@
     KO Lite base URL. Defaults to the loopback default http://127.0.0.1:5057.
 
 .PARAMETER JobId
-    Job id - the permanent GUID - for Get-Job and the per-job diagnostics actions.
-    (To resolve a job from its human activityId, list jobs with Get-Jobs and match
-    on displayName, then use its jobId. Per-job diagnostics also accept an
-    activityId here.)
+    The permanent GUID is preferred and is required for lifecycle writes.
+    Get-Job also accepts an exact activityId and resolves it through Get-Jobs
+    before calling the GUID-keyed route. Per-job diagnostics accept either the
+    permanent GUID or activityId directly.
 
 .PARAMETER Query
     Hashtable of query-string filters for diagnostics actions, e.g.
@@ -162,6 +162,34 @@ function Invoke-KoLiteApi {
     return $response
 }
 
+# Keep catalog reads GUID-keyed; resolve the mutable activityId only when the
+# caller does not already have the permanent identity.
+function Resolve-GetJobId {
+    param([Parameter(Mandatory)] [string] $Reference)
+
+    $guid = [guid]::Empty
+    if ([guid]::TryParse($Reference, [ref]$guid)) {
+        return $guid.ToString('N')
+    }
+
+    $response = Invoke-KoLiteApi -Method 'GET' -RelativeUri '/api/jobs'
+    $matches = @($response.jobs | Where-Object {
+        [string]::Equals(
+            [string]$_.displayName,
+            $Reference,
+            [System.StringComparison]::Ordinal)
+    })
+
+    if ($matches.Count -eq 0) {
+        throw "Get-Job could not resolve '$Reference' as a permanent GUID or exact activityId. Use -Action Get-Jobs to inspect available jobs."
+    }
+    if ($matches.Count -gt 1) {
+        throw "Get-Job found multiple jobs with activityId '$Reference'. Use the permanent GUID instead."
+    }
+
+    return [string]$matches[0].jobId
+}
+
 function Get-ImportBody {
     if (-not [string]::IsNullOrWhiteSpace($Json)) {
         if (-not [string]::IsNullOrWhiteSpace($Path)) {
@@ -259,9 +287,10 @@ switch ($Action) {
     }
     'Get-Job' {
         if ([string]::IsNullOrWhiteSpace($JobId)) {
-            throw 'Get-Job requires -JobId.'
+            throw 'Get-Job requires -JobId (the permanent GUID or exact activityId).'
         }
-        $encoded = [uri]::EscapeDataString($JobId)
+        $resolvedJobId = Resolve-GetJobId -Reference $JobId
+        $encoded = [uri]::EscapeDataString($resolvedJobId)
         return Invoke-KoLiteApi -Method 'GET' -RelativeUri "/api/jobs/$encoded"
     }
     'Export' {
