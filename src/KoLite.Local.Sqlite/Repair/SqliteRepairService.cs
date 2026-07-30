@@ -1,5 +1,6 @@
 using System.Text.Json;
 using KoLite.Local.Core.Repair;
+using KoLite.Local.Core.Schedules;
 using KoLite.Local.Core.Scheduling;
 using KoLite.Local.Core.Time;
 using KoLite.Local.Sqlite.Catalog;
@@ -10,8 +11,46 @@ using KoLite.Local.Sqlite.State;
 
 namespace KoLite.Local.Sqlite.Repair
 {
-    public sealed record RepairPlanRequest(string JobId, DateTimeOffset StartUtc, DateTimeOffset EndUtc, string RequestedBy, string Reason, RepairOutputStrategy OutputStrategy = RepairOutputStrategy.ExecuteNoCleanup);
+    // Which already-recorded slice states a repair is allowed to act on.
+    //
+    // AllRepairable is the original behavior and stays the default so existing callers are unchanged.
+    // FailedAndDeadLetteredOnly is what the local API uses: it is exactly the state set that
+    // GET /api/diagnostics/failures reports, and it deliberately excludes Missing. SliceEnumerator
+    // steps from whatever start it is given rather than snapping to the job's slice grid, so an
+    // unaligned range fabricates windows that all read back as Missing; excluding Missing means such a
+    // window can never be enqueued as real work. Missing slices also need no repair - the scheduler
+    // already enqueues missing eligible slices on its own.
+    public enum RepairSliceScope { AllRepairable, FailedAndDeadLetteredOnly }
+
+    public sealed record RepairPlanRequest(
+        string JobId,
+        DateTimeOffset StartUtc,
+        DateTimeOffset EndUtc,
+        string RequestedBy,
+        string Reason,
+        RepairOutputStrategy OutputStrategy = RepairOutputStrategy.ExecuteNoCleanup,
+        RepairSliceScope Scope = RepairSliceScope.AllRepairable);
+
     public sealed record RepairPlanResult(string RepairBatchId, int Queued, int Blocked, int Skipped);
+
+    public enum RepairSliceOutcome { Repairable, Blocked, Skipped }
+
+    public sealed record RepairSlicePreview(
+        DateTimeOffset StartUtc,
+        DateTimeOffset EndUtc,
+        DurableSliceStatus CurrentStatus,
+        RepairSliceOutcome Outcome,
+        string? Detail);
+
+    // Write-free projection of what PlanAndEnqueue would do for the same request.
+    public sealed record RepairPreviewResult(
+        string JobId,
+        DateTimeOffset StartUtc,
+        DateTimeOffset EndUtc,
+        int Repairable,
+        int Blocked,
+        int Skipped,
+        IReadOnlyList<RepairSlicePreview> Slices);
 
     public sealed class SqliteRepairService
     {
@@ -38,7 +77,6 @@ namespace KoLite.Local.Sqlite.Repair
             }
 
             var job = catalog.Get(request.JobId) ?? throw new InvalidOperationException($"Job '{request.JobId}' does not exist.");
-            var allJobs = catalog.List().ToDictionary(j => j.JobId, j => j.Definition, StringComparer.Ordinal);
             var batchId = StableId("repair-batch", request.JobId, SqliteStorage.Utc(request.StartUtc), SqliteStorage.Utc(request.EndUtc), request.OutputStrategy.ToString(), request.Reason);
             var queued = 0;
             var blocked = 0;
@@ -46,41 +84,48 @@ namespace KoLite.Local.Sqlite.Repair
 
             InsertBatch(batchId, request);
 
-            foreach (var slice in SliceEnumerator.Enumerate(request.JobId, request.StartUtc, request.EndUtc, job.Definition.QueryWindowSize))
+            foreach (var candidate in Classify(job, request))
             {
-                var current = state.Get(request.JobId, slice.StartUtc, slice.EndUtc);
-                if (current.Status is DurableSliceStatus.Queued or DurableSliceStatus.Running)
+                var slice = candidate.Slice;
+                if (candidate.Outcome == RepairSliceOutcome.Skipped)
                 {
                     skipped++;
+                    if (candidate.Persist)
+                    {
+                        UpsertRepairSlice(batchId, slice, RepairSliceStatus.Skipped, null, candidate.Detail);
+                    }
+
                     continue;
                 }
 
-                if (current.Status is not (DurableSliceStatus.Missing or DurableSliceStatus.Failed or DurableSliceStatus.DeadLettered or DurableSliceStatus.DependencyBlocked or DurableSliceStatus.Completed))
-                {
-                    skipped++;
-                    UpsertRepairSlice(batchId, slice, RepairSliceStatus.Skipped, null, $"Current state is {current.Status}.");
-                    continue;
-                }
-
-                var readiness = state.EvaluateDependencyReadiness(job.Definition, slice, allJobs);
-                if (!readiness.IsReady)
+                if (candidate.Outcome == RepairSliceOutcome.Blocked)
                 {
                     blocked++;
-                    UpsertRepairSlice(batchId, slice, RepairSliceStatus.Blocked, null, string.Join(",", readiness.MissingSlices.Select(s => s.Value)));
+                    UpsertRepairSlice(batchId, slice, RepairSliceStatus.Blocked, null, candidate.Detail);
                     continue;
                 }
 
                 if (request.OutputStrategy == RepairOutputStrategy.MarkCompletedOnly)
                 {
-                    state.Append($"repair-manual-complete|{batchId}|{slice.ToKey().Value}", request.JobId, slice.StartUtc, slice.EndUtc, DurableSliceStatus.Completed, current.Version, request.Reason, request.RequestedBy, payloadJson: JsonSerializer.Serialize(new { repairBatchId = batchId, request.OutputStrategy }));
+                    state.Append($"repair-manual-complete|{batchId}|{slice.ToKey().Value}", request.JobId, slice.StartUtc, slice.EndUtc, DurableSliceStatus.Completed, candidate.Current.Version, request.Reason, request.RequestedBy, payloadJson: JsonSerializer.Serialize(new { repairBatchId = batchId, request.OutputStrategy }));
                     UpsertRepairSlice(batchId, slice, RepairSliceStatus.Completed, null, null);
                     queued++;
                     continue;
                 }
 
-                if (current.Status is DurableSliceStatus.Missing or DurableSliceStatus.Failed or DurableSliceStatus.DeadLettered or DurableSliceStatus.DependencyBlocked or DurableSliceStatus.Completed)
+                // A worker can move this slice between classification and here (its state was read a moment
+                // ago). state.Append then throws on the version mismatch. Skipping that one slice - rather
+                // than letting the exception abort the loop - matters because earlier slices are already
+                // committed: aborting would leave a partially enqueued batch behind an error response.
+                try
                 {
-                    state.Append($"repair-queue|{batchId}|{slice.ToKey().Value}", request.JobId, slice.StartUtc, slice.EndUtc, DurableSliceStatus.Queued, current.Version, request.Reason, request.RequestedBy, payloadJson: JsonSerializer.Serialize(new { repairBatchId = batchId, request.OutputStrategy }));
+                    state.Append($"repair-queue|{batchId}|{slice.ToKey().Value}", request.JobId, slice.StartUtc, slice.EndUtc, DurableSliceStatus.Queued, candidate.Current.Version, request.Reason, request.RequestedBy, payloadJson: JsonSerializer.Serialize(new { repairBatchId = batchId, request.OutputStrategy }));
+                }
+                catch (InvalidOperationException)
+                {
+                    skipped++;
+                    UpsertRepairSlice(batchId, slice, RepairSliceStatus.Skipped, null, "Slice state changed while the repair was being applied.");
+                    continue;
                 }
 
                 var work = queue.Enqueue(
@@ -96,8 +141,157 @@ namespace KoLite.Local.Sqlite.Repair
             }
 
             UpdateBatchStatus(batchId, queued > 0 ? RepairBatchStatus.Queued : RepairBatchStatus.Planned);
+            InsertAudit(request, batchId, queued, blocked, skipped);
             return new RepairPlanResult(batchId, queued, blocked, skipped);
         }
+
+        // Write-free projection of exactly what PlanAndEnqueue would do for the same request. It shares
+        // Classify with the enqueue path so the preview a caller approves cannot drift from what actually
+        // runs, and it touches no table: no batch row, no slice state, no queue work.
+        public RepairPreviewResult Preview(RepairPlanRequest request)
+        {
+            var job = catalog.Get(request.JobId) ?? throw new InvalidOperationException($"Job '{request.JobId}' does not exist.");
+            var slices = Classify(job, request)
+                .Select(candidate => new RepairSlicePreview(
+                    candidate.Slice.StartUtc,
+                    candidate.Slice.EndUtc,
+                    candidate.Current.Status,
+                    candidate.Outcome,
+                    candidate.Detail))
+                .ToArray();
+
+            return new RepairPreviewResult(
+                request.JobId,
+                request.StartUtc.ToUniversalTime(),
+                request.EndUtc.ToUniversalTime(),
+                slices.Count(s => s.Outcome == RepairSliceOutcome.Repairable),
+                slices.Count(s => s.Outcome == RepairSliceOutcome.Blocked),
+                slices.Count(s => s.Outcome == RepairSliceOutcome.Skipped),
+                slices);
+        }
+
+        // Single source of truth for repair eligibility, shared by Preview and PlanAndEnqueue.
+        private IEnumerable<SliceClassification> Classify(JobCatalogRecord job, RepairPlanRequest request)
+        {
+            var allJobs = catalog.List().ToDictionary(j => j.JobId, j => j.Definition, StringComparer.Ordinal);
+            foreach (var slice in SliceEnumerator.Enumerate(request.JobId, request.StartUtc, request.EndUtc, job.Definition.QueryWindowSize))
+            {
+                var current = state.Get(request.JobId, slice.StartUtc, slice.EndUtc);
+
+                // Actively claimable or in-flight work is left strictly alone, and - unlike every other
+                // outcome - records no repair_slices row, so a batch that touched nothing stays childless.
+                if (current.Status is DurableSliceStatus.Queued or DurableSliceStatus.Running)
+                {
+                    yield return new SliceClassification(slice, current, RepairSliceOutcome.Skipped, Persist: false, $"Current state is {current.Status}.");
+                    continue;
+                }
+
+                if (!IsInScope(current.Status, request.Scope))
+                {
+                    // Out-of-scope states are also not persisted: a narrow-scope repair over a wide range
+                    // would otherwise write a Skipped row for every untouched slice in the range.
+                    var persist = request.Scope == RepairSliceScope.AllRepairable;
+                    yield return new SliceClassification(slice, current, RepairSliceOutcome.Skipped, persist, $"Current state is {current.Status}.");
+                    continue;
+                }
+
+                var readiness = state.EvaluateDependencyReadiness(job.Definition, slice, allJobs);
+                if (!readiness.IsReady)
+                {
+                    yield return new SliceClassification(slice, current, RepairSliceOutcome.Blocked, Persist: true, string.Join(",", readiness.MissingSlices.Select(s => s.Value)));
+                    continue;
+                }
+
+                yield return new SliceClassification(slice, current, RepairSliceOutcome.Repairable, Persist: true, null);
+            }
+        }
+
+        private static bool IsInScope(DurableSliceStatus status, RepairSliceScope scope) => scope switch
+        {
+            RepairSliceScope.FailedAndDeadLetteredOnly => status is DurableSliceStatus.Failed or DurableSliceStatus.DeadLettered,
+            _ => status is DurableSliceStatus.Missing or DurableSliceStatus.Failed or DurableSliceStatus.DeadLettered or DurableSliceStatus.DependencyBlocked or DurableSliceStatus.Completed,
+        };
+
+        // Rejects a range that does not land on this job's slice boundaries. SliceEnumerator steps from
+        // whatever start it is handed rather than snapping to the grid, so an unaligned range silently
+        // enumerates windows that never existed. Callers get the nearest aligned bounds to retry with.
+        // The range is also capped: classification reads slice state one window at a time, so an
+        // unbounded range (a year of one-minute slices is over half a million lookups) would stall the
+        // local app rather than fail cleanly.
+        public const int MaxRepairSlices = 10_000;
+
+        public static void ValidateAlignedRange(JobDefinition job, DateTimeOffset start, DateTimeOffset end)
+        {
+            start = start.ToUniversalTime();
+            end = end.ToUniversalTime();
+            if (end <= start)
+            {
+                throw new InvalidOperationException("Repair end must be after start.");
+            }
+
+            if (start < job.StartFrom.ToUniversalTime())
+            {
+                throw new InvalidOperationException($"Repair start must not be before job start {SqliteStorage.Utc(job.StartFrom)}.");
+            }
+
+            if (!IsAligned(start, job.StartFrom, job.QueryWindowSize) || !IsAligned(end, job.StartFrom, job.QueryWindowSize))
+            {
+                throw new InvalidOperationException(
+                    "Repair start and end must align to this job's slice boundaries. " +
+                    NearestAlignedRangeHint(job, start, end));
+            }
+
+            var sliceCount = (end - start).Ticks / job.QueryWindowSize.Ticks;
+            if (sliceCount > MaxRepairSlices)
+            {
+                throw new InvalidOperationException(
+                    $"Repair range covers {sliceCount} slices, above the {MaxRepairSlices} limit. Repair a narrower range.");
+            }
+        }
+
+        private static string NearestAlignedRangeHint(JobDefinition job, DateTimeOffset start, DateTimeOffset end)
+        {
+            try
+            {
+                return $"Nearest aligned range is {SqliteStorage.Utc(AlignFloor(start, job.StartFrom, job.QueryWindowSize))} to " +
+                       $"{SqliteStorage.Utc(AlignCeiling(end, job.StartFrom, job.QueryWindowSize))}.";
+            }
+            catch (ArgumentOutOfRangeException)
+            {
+                // An end near DateTimeOffset.MaxValue has no representable aligned ceiling; the range is
+                // rejected either way, so report it plainly instead of failing while building the message.
+                return "The supplied bounds are too close to the maximum representable date to align.";
+            }
+        }
+
+        private static bool IsAligned(DateTimeOffset value, DateTimeOffset anchor, TimeSpan queryWindow) =>
+            (value.ToUniversalTime().Ticks - anchor.ToUniversalTime().Ticks) % queryWindow.Ticks == 0;
+
+        private static DateTimeOffset AlignFloor(DateTimeOffset value, DateTimeOffset anchor, TimeSpan queryWindow)
+        {
+            value = value.ToUniversalTime();
+            anchor = anchor.ToUniversalTime();
+            var quotient = Math.DivRem(value.Ticks - anchor.Ticks, queryWindow.Ticks, out var remainder);
+            if (value.Ticks < anchor.Ticks && remainder != 0)
+            {
+                quotient--;
+            }
+
+            return anchor.AddTicks(quotient * queryWindow.Ticks);
+        }
+
+        private static DateTimeOffset AlignCeiling(DateTimeOffset value, DateTimeOffset anchor, TimeSpan queryWindow)
+        {
+            var floor = AlignFloor(value, anchor, queryWindow);
+            return floor == value.ToUniversalTime() ? floor : floor + queryWindow;
+        }
+
+        private sealed record SliceClassification(
+            SliceRange Slice,
+            DurableSliceState Current,
+            RepairSliceOutcome Outcome,
+            bool Persist,
+            string? Detail);
 
         // Operator-driven single-slice recovery for an orphaned lease: a slice left Running/Leased after
         // its lease expired (the prior worker faulted or was killed without recording a terminal result).
@@ -172,6 +366,35 @@ namespace KoLite.Local.Sqlite.Repair
                 rows.Add(new RepairSlice(r.GetString(0), slice.ToKey(), slice, Enum.Parse<RepairSliceStatus>(r.GetString(4)), r.IsDBNull(5) ? null : r.GetString(5)));
             }
             return rows;
+        }
+
+        // Repair batches previously recorded no audit row at all, unlike reruns. An agent-driven repair
+        // must be visible in the system audit trail (GET /api/diagnostics/audit) or the required-reason
+        // guard on the API is unverifiable after the fact.
+        private void InsertAudit(RepairPlanRequest request, string batchId, int queued, int blocked, int skipped)
+        {
+            using var c = connectionFactory.OpenConnection();
+            using var cmd = SqliteStorage.Command(c, null, "INSERT INTO system_audit (audit_id,actor,action,subject_type,subject_id,payload_json) VALUES ($id,$actor,$action,$type,$subject,$payload);");
+            cmd.Add("$id", Guid.NewGuid().ToString("N"));
+            cmd.Add("$actor", request.RequestedBy);
+            cmd.Add("$action", "RepairEnqueued");
+            cmd.Add("$type", "RepairBatch");
+            cmd.Add("$subject", batchId);
+            cmd.Add("$payload", JsonSerializer.Serialize(
+                new
+                {
+                    jobId = request.JobId,
+                    startUtc = request.StartUtc,
+                    endUtc = request.EndUtc,
+                    scope = request.Scope.ToString(),
+                    outputStrategy = request.OutputStrategy.ToString(),
+                    reason = request.Reason,
+                    queued,
+                    blocked,
+                    skipped,
+                },
+                SqliteStorage.JsonOptions));
+            cmd.ExecuteNonQuery();
         }
 
         private void InsertBatch(string batchId, RepairPlanRequest request)

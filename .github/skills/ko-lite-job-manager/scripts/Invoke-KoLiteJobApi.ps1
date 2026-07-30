@@ -9,10 +9,12 @@
     (see docs\local-api.md). Schedule writes go through POST /api/jobs/import, the
     same validated, additive/update-only catalog path the dashboard import uses. It
     can also soft-delete and restore a job (POST /api/jobs/{id}/soft-delete and
-    /restore), each requiring the job's current -ExpectedVersion. This script
-    intentionally exposes no hard-delete, enable/disable, Kusto, rerun, or repair
-    surface - it reads state (schedules and read-only operational diagnostics) and
-    upserts / soft-deletes / restores schedules.
+    /restore), each requiring the job's current -ExpectedVersion, and re-run slices
+    that already failed (POST /api/jobs/{id}/repair, preceded by a dry-run preview).
+    This script intentionally exposes no hard-delete, enable/disable, direct Kusto,
+    or rerun surface. Repair only re-runs Failed/DeadLettered slices; it can never
+    touch a Completed slice, mark a slice complete without executing it, or delete
+    anything from Kusto.
 
     Before importing, the body is validated locally with the sibling
     ko-lite-schedule-json validator unless -SkipValidation is supplied.
@@ -26,6 +28,12 @@
     Import     POST /api/jobs/import - create/update schedules (single object or array).
     Soft-Delete POST /api/jobs/{id}/soft-delete - hide a job (reversible); needs -ExpectedVersion.
     Restore     POST /api/jobs/{id}/restore     - un-hide a soft-deleted job; needs -ExpectedVersion.
+
+    Repair (re-run slices that already failed):
+    Preview-Repair POST /api/jobs/{id}/repair/preview - dry run; lists the Failed/DeadLettered
+                   slices in -From..-To that would re-run. Writes nothing.
+    Repair         POST /api/jobs/{id}/repair         - enqueue that set; needs -Reason and
+                   -ExpectedSliceCount (the preview's repairableSliceCount).
 
     Read-only diagnostics (no mutation; pass filters via -Query):
     Per-job (require -JobId): Get-JobStatus, Get-Slices, Get-Attempts, Get-Events,
@@ -62,7 +70,21 @@
     A mismatch returns HTTP 409.
 
 .PARAMETER Reason
-    Optional audit reason recorded with a Soft-Delete or Restore.
+    Optional audit reason recorded with a Soft-Delete or Restore. REQUIRED for
+    Repair, where it is recorded on the repair batch and in the system audit trail.
+
+.PARAMETER From
+    Repair only: inclusive UTC start of the slice range, e.g. '2026-01-01T00:00:00Z'.
+    Must land on the job's slice boundary; an unaligned value returns HTTP 400 naming
+    the nearest aligned range.
+
+.PARAMETER To
+    Repair only: exclusive UTC end of the slice range. Same alignment rule as -From.
+
+.PARAMETER ExpectedSliceCount
+    Repair only (required): the 'repairableSliceCount' returned by Preview-Repair.
+    If the count no longer matches, the call returns HTTP 409 instead of repairing a
+    different set than the one that was approved. Always preview first.
 
 .PARAMETER Force
     Soft-Delete only: proceed even when active downstream jobs depend on the target.
@@ -94,12 +116,19 @@
 
 .EXAMPLE
     .\Invoke-KoLiteJobApi.ps1 -Action Restore -JobId $id -ExpectedVersion 4
+
+.EXAMPLE
+    # Re-run failed slices: always preview, then repair with the previewed count.
+    $p = .\Invoke-KoLiteJobApi.ps1 -Action Preview-Repair -JobId $id -From '2026-01-01T00:00:00Z' -To '2026-01-02T00:00:00Z'
+    .\Invoke-KoLiteJobApi.ps1 -Action Repair -JobId $id -From '2026-01-01T00:00:00Z' -To '2026-01-02T00:00:00Z' `
+        -Reason 'Requeue slices that failed on a transient Kusto error' -ExpectedSliceCount $p.repairableSliceCount
 #>
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true, Position = 0)]
     [ValidateSet(
         'Health', 'Get-Jobs', 'Get-Job', 'Export', 'Import', 'Soft-Delete', 'Restore',
+        'Preview-Repair', 'Repair',
         'Get-JobStatus', 'Get-Slices', 'Get-Attempts', 'Get-Events', 'Get-JobLogs',
         'Get-JobQueue', 'Get-History', 'Get-JobThroughput', 'Get-Dependencies',
         'Get-WorkerPool', 'Get-RunningSlices', 'Get-Throughput', 'Get-Queue',
@@ -119,6 +148,12 @@ param(
     [long] $ExpectedVersion,
 
     [string] $Reason,
+
+    [Nullable[datetime]] $From,
+
+    [Nullable[datetime]] $To,
+
+    [int] $ExpectedSliceCount,
 
     [switch] $Force,
 
@@ -277,6 +312,36 @@ $perJobDiagnostics = [ordered]@{
     'Get-Dependencies'  = 'dependencies'
 }
 
+# Builds the shared repair request body. -From/-To are sent as explicit UTC instants so the
+# range the API validates against the job's slice grid is exactly the one the caller meant,
+# regardless of the local machine's time zone. Pass them with a trailing 'Z'.
+function Get-RepairBounds {
+    param(
+        [string] $Reason,
+        [int] $ExpectedSliceCount
+    )
+
+    if ([string]::IsNullOrWhiteSpace($JobId)) {
+        throw "$Action requires -JobId (the permanent GUID or activityId)."
+    }
+
+    if ($null -eq $From -or $null -eq $To) {
+        throw "$Action requires -From and -To (UTC slice bounds, e.g. '2026-01-01T00:00:00Z')."
+    }
+
+    $payload = [ordered]@{
+        from = $From.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffffffZ')
+        to   = $To.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffffffZ')
+    }
+    if (-not [string]::IsNullOrWhiteSpace($Reason)) { $payload['reason'] = $Reason }
+    if ($PSBoundParameters.ContainsKey('ExpectedSliceCount')) { $payload['expectedSliceCount'] = $ExpectedSliceCount }
+
+    return [pscustomobject]@{
+        EncodedJobId = [uri]::EscapeDataString($JobId)
+        Body         = ($payload | ConvertTo-Json -Compress)
+    }
+}
+
 switch ($Action) {
     'Health' {
         return Invoke-KoLiteApi -Method 'GET' -RelativeUri '/status/health'
@@ -337,6 +402,25 @@ switch ($Action) {
         $encoded = [uri]::EscapeDataString($JobId)
         $result = Invoke-KoLiteApi -Method 'POST' -RelativeUri "/api/jobs/$encoded/restore" -Body ($payload | ConvertTo-Json -Compress)
         Write-Host "Restored job '$JobId' (catalogVersion now $($result.job.catalogVersion))."
+        return $result
+    }
+    'Preview-Repair' {
+        $bounds = Get-RepairBounds
+        $result = Invoke-KoLiteApi -Method 'POST' -RelativeUri "/api/jobs/$($bounds.EncodedJobId)/repair/preview" -Body $bounds.Body
+        Write-Host "Repair preview: $($result.repairableSliceCount) slice(s) would re-run, $($result.blockedSliceCount) blocked, $($result.skippedSliceCount) untouched. Nothing was changed."
+        return $result
+    }
+    'Repair' {
+        if ([string]::IsNullOrWhiteSpace($Reason)) {
+            throw 'Repair requires -Reason; it is recorded on the repair batch and in the audit trail.'
+        }
+        if (-not $PSBoundParameters.ContainsKey('ExpectedSliceCount')) {
+            throw "Repair requires -ExpectedSliceCount (the 'repairableSliceCount' from -Action Preview-Repair). Always preview first."
+        }
+
+        $bounds = Get-RepairBounds -Reason $Reason -ExpectedSliceCount $ExpectedSliceCount
+        $result = Invoke-KoLiteApi -Method 'POST' -RelativeUri "/api/jobs/$($bounds.EncodedJobId)/repair" -Body $bounds.Body
+        Write-Host "Repair batch $($result.repairBatchId): $($result.queued) slice(s) queued, $($result.blocked) blocked, $($result.skipped) untouched. The worker picks them up normally; re-running cannot duplicate Kusto output."
         return $result
     }
     default {

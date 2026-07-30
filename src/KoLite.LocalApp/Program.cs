@@ -92,6 +92,8 @@ namespace KoLite.LocalApp
 
             LocalDiagnosticsApi.Map(api);
 
+            LocalRepairApi.Map(api);
+
             KustoConsumersApi.Map(api);
 
             FailureAnalysisApi.Map(api);

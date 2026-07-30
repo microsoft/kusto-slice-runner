@@ -16,11 +16,13 @@ authoring skill `ko-lite-schedule-json` does not upload.
 
 ## Scope and safety
 
-- **Schedules, plus soft-delete / restore.** The API can read jobs, create/update
-  schedules, and **soft-delete or restore** a job. Soft-delete is reversible (it
-  flips `is_enabled` off and records a lifecycle event; no rows are purged). It
-  exposes **no** hard-delete, generic enable/disable, Kusto execution, rerun,
-  cleanup, or repair surface. (The separate, read-only
+- **Schedules, soft-delete / restore, plus failed-slice repair.** The API can read
+  jobs, create/update schedules, **soft-delete or restore** a job, and **re-run
+  slices that failed**. Soft-delete is reversible (it flips `is_enabled` off and
+  records a lifecycle event; no rows are purged). Repair re-queues only
+  `Failed`/`DeadLettered` slices — see [Repairing failed slices](#repairing-failed-slices).
+  It exposes **no** hard-delete, generic enable/disable, direct Kusto execution,
+  rerun, or cleanup surface. (The separate, read-only
   `POST /api/dependency-graph/kusto-consumers` endpoint issues a read-only Kusto
   metadata query for the dependency graph — see the operations runbook.)
 - **Guarded delete.** Soft-delete and restore require the job's current
@@ -56,6 +58,8 @@ Base URL defaults to `http://127.0.0.1:5057`.
 | POST | `/api/jobs/import` | Body is schedule JSON (single object **or** array). Returns `{ "created", "updated", "total", "items": [ { "jobId", "action", "catalogVersion" } ] }`. `400` with `{ "error" }` on JSON, validation, or mutation-policy failure. |
 | POST | `/api/jobs/{jobId}/soft-delete` | Soft-delete (hide) a job — reversible. `{jobId}` is the permanent GUID. Body `{ "expectedVersion": <current catalogVersion, required>, "reason"?, "force"? }`. Returns `{ "job": { ...summary, "isSoftDeleted": true } }`. Errors: `400` (missing/invalid body or absent `expectedVersion`), `404` (unknown job), `409` (version conflict), or `409` `{ "error", "dependents": [ { "jobId", "activityId" } ] }` when active downstream jobs depend on it and `force` is not `true`. |
 | POST | `/api/jobs/{jobId}/restore` | Restore (un-hide) a soft-deleted job. `{jobId}` is the permanent GUID. Body `{ "expectedVersion": <required>, "reason"? }`. Returns `{ "job": { ...summary, "isEnabled": true } }`. Errors: `400`/`404`/`409` as above (no dependents check). |
+| POST | `/api/jobs/{jobId}/repair/preview` | Dry run of a repair. Body `{ "from", "to" }` (ISO-8601 UTC). Returns `{ "job", "fromUtc", "toUtc", "repairableSliceCount", "blockedSliceCount", "skippedSliceCount", "slices": [ ... ] }`. Writes nothing. |
+| POST | `/api/jobs/{jobId}/repair` | Re-queue the `Failed`/`DeadLettered` slices in the range. Body `{ "from", "to", "reason": <required>, "expectedSliceCount": <required> }`. Returns `{ "repairBatchId", "queued", "blocked", "skipped", "slices": [ ... ] }`. |
 
 The potentially large `description` value is not duplicated into `GET /api/jobs`
 summaries. Read it from the single-job `schedule` object or an export. It is Markdown
@@ -117,6 +121,81 @@ The helper keeps the permanent GUID as the normal reference. For a read where
 only the exact `activityId` is known, `Get-Job` resolves the matching
 `displayName` through `GET /api/jobs` and then calls the GUID-keyed route. Use the
 returned `job.jobId` for subsequent operations.
+
+## Repairing failed slices
+
+The one write path into slice execution. It re-queues the slices in a UTC range
+whose current state is **`Failed` or `DeadLettered`** — exactly the set
+`GET /api/diagnostics/failures` reports — so the normal worker runs them again.
+
+**Why this is safe without a cleanup step.** KO Lite writes output with an
+`ingest-by:ko-lite:<sliceKey>` tag and `ingestIfNotExists`, so Kusto **dedupes a
+repeat ingestion**. Re-running a slice cannot duplicate rows, which is why repair
+has no equivalent of the rerun flow's manual `.delete` + acknowledgement dance.
+
+**Repair fills gaps; it cannot overwrite.** That same dedup tag means re-running an
+already-`Completed` slice would execute the query and then have its result
+discarded. Recomputing completed history is the **rerun** flow (dashboard-only,
+with manual Kusto cleanup). The repair API therefore refuses to touch `Completed`
+slices at all.
+
+### Scope and guards
+
+- **Only `Failed`/`DeadLettered`.** `Completed` slices are never touched.
+  `Queued`/`Running` work is never disturbed. `Missing` slices are skipped — the
+  scheduler already enqueues those on its own.
+- **No `outputStrategy` knob.** Repairs always just re-run the slice. The
+  unimplemented `CleanSliceOutputThenExecute` and the execute-nothing
+  `MarkCompletedOnly` strategies are not reachable from the API.
+- **Aligned range required.** `from`/`to` must land on the job's slice boundaries
+  (anchored at `startFrom`, stepped by `queryWindowSize`). An unaligned range is a
+  `400` naming the nearest aligned range. This matters because slice enumeration
+  steps from the supplied start rather than snapping to the grid.
+- **Preview first, then echo the count.** `expectedSliceCount` must equal the
+  preview's `repairableSliceCount`; a mismatch is a `409` reporting both numbers, so
+  a repair can never act on a different set than the one that was approved.
+- **`reason` is required** and is recorded on the repair batch and as a
+  `RepairEnqueued` row in the system audit trail (`GET /api/diagnostics/audit`).
+- **Enabled jobs only.** Pause and soft-delete both clear `is_enabled`, and the
+  queue claim filters on it, so repaired work for a disabled job would never be
+  claimed. The API returns `409` telling you to resume the job first.
+- **Dependency-blocked slices are reported, not queued.** They appear in the
+  `blocked` count; fix the upstream first.
+
+`{jobId}` accepts the permanent GUID **or** the `activityId`.
+
+```powershell
+$base = 'http://127.0.0.1:5057'
+$jobId = 'SampleAnalytics.BuildEcu5MinProfile'
+$range = @{ from = '2026-01-01T00:00:00Z'; to = '2026-01-02T00:00:00Z' }
+
+# 1. Which slices failed?
+Invoke-RestMethod "$base/api/diagnostics/failures" |
+    Select-Object -Expand recentFailures |
+    Where-Object status -eq 'DeadLettered'
+
+# 2. Preview - writes nothing.
+$preview = Invoke-RestMethod -Method Post -Uri "$base/api/jobs/$jobId/repair/preview" `
+    -ContentType 'application/json' -Body ($range | ConvertTo-Json)
+$preview.slices | Format-Table startUtc, currentState, outcome
+
+# 3. Repair, echoing the previewed count.
+$body = $range + @{ reason = 'Requeue transient Kusto failures'; expectedSliceCount = $preview.repairableSliceCount }
+Invoke-RestMethod -Method Post -Uri "$base/api/jobs/$jobId/repair" `
+    -ContentType 'application/json' -Body ($body | ConvertTo-Json)
+
+# 4. Verify.
+Invoke-RestMethod "$base/api/jobs/$jobId/slices?state=Running"
+```
+
+Or through the skill helper, which previews, guards, and reports for you:
+
+```powershell
+$skill = '.\.github\skills\ko-lite-job-manager\scripts\Invoke-KoLiteJobApi.ps1'
+$p = & $skill -Action Preview-Repair -JobId $jobId -From '2026-01-01T00:00:00Z' -To '2026-01-02T00:00:00Z'
+& $skill -Action Repair -JobId $jobId -From '2026-01-01T00:00:00Z' -To '2026-01-02T00:00:00Z' `
+    -Reason 'Requeue transient Kusto failures' -ExpectedSliceCount $p.repairableSliceCount
+```
 
 ## Read-only diagnostics
 

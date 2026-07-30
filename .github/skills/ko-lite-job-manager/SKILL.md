@@ -1,9 +1,9 @@
 ---
 name: ko-lite-job-manager
-description: "Use when the user wants an agent to read KO Lite jobs, inspect read-only operational diagnostics (slice states, leases, throughput, catalog history, logs, audit), or create/update job schedules directly in a running KO Lite app (instead of clicking through the dashboard). Drives the KO Lite localhost JSON API; it reads state, upserts schedules - including pausing or resuming a job via the schedule's isPaused field - and can soft-delete or restore a job (reversible); it never hard-deletes jobs, runs Kusto, reruns, or repairs. Requires the KO Lite app to be running locally."
+description: "Use when the user wants an agent to read KO Lite jobs, inspect read-only operational diagnostics (slice states, leases, throughput, catalog history, logs, audit), re-run slices that failed, or create/update job schedules directly in a running KO Lite app (instead of clicking through the dashboard). Drives the KO Lite localhost JSON API; it reads state, upserts schedules - including pausing or resuming a job via the schedule's isPaused field - can soft-delete or restore a job (reversible), and can repair (re-run) Failed/DeadLettered slices after a dry-run preview; it never hard-deletes jobs, runs Kusto by hand, reruns, or overwrites existing output. Requires the KO Lite app to be running locally."
 metadata:
   author: Azure Core Team
-  version: "1.3.2"
+  version: "1.4.0"
 ---
 
 # KO Lite job manager
@@ -39,6 +39,9 @@ It **will**:
   and dependency readiness; and cross-job worker-pool state, in-flight/expired
   leases, throughput, queue, logs, failures, audit trail, and rerun/repair
   **history**.
+- **Repair (re-run) slices that already failed.** `Preview-Repair` reports exactly
+  which `Failed`/`DeadLettered` slices in a UTC range would re-run; `Repair`
+  enqueues that set. See [Repairing failed slices](#repairing-failed-slices).
 
 It **will not** (these stay manual / dashboard-only on purpose):
 
@@ -49,8 +52,11 @@ It **will not** (these stay manual / dashboard-only on purpose):
   above) and soft-delete/restore flip `is_enabled` with lifecycle semantics, but
   there is no generic enable/disable schedule field, and an import **re-activates** an
   enabled job — so use `isPaused: true` to pause a schedule rather than run it.
-- Execute Kusto, run reruns, run cleanup, or run repair. (Reading the rerun/repair
-  **history** via diagnostics is fine; *triggering* a rerun/repair is not.)
+- **Re-run a `Completed` slice, or overwrite existing Kusto output.** Repair fills
+  gaps only. Replaying completed history is the **rerun** flow, which requires manual
+  Kusto cleanup and stays dashboard-only.
+- Execute Kusto directly, trigger a rerun, run cleanup, or mark a slice complete
+  without executing it. (Reading rerun/repair **history** via diagnostics is fine.)
 - Touch the SQLite file directly. All reads and writes go through the API.
 
 If the user asks for any of the "will not" actions, stop and tell them to use the
@@ -99,6 +105,15 @@ local state (the same read models the dashboard renders). They are bounded by
 default (capped `take`, recent-time windows) so a call never scans the whole
 local store.
 
+**Repair** is the one write path into slice execution, and it is deliberately
+narrow. It re-runs slices already recorded as `Failed` or `DeadLettered` and
+nothing else — it cannot touch a `Completed` slice, cannot mark a slice complete
+without executing it, and cannot delete anything from Kusto. Re-running is safe
+because KO Lite writes output with an `ingest-by` tag plus `ingestIfNotExists`, so
+Kusto **dedupes a repeat ingestion**; that is also why repair needs no cleanup step.
+The same dedup is why repair cannot *overwrite*: replaying completed history
+requires the rerun flow's manual Kusto cleanup, which stays dashboard-only.
+
 The API is **loopback-only** and intended for same-machine use.
 
 **Execution awareness:** creating or updating an *enabled, unpaused* job means the
@@ -131,6 +146,8 @@ again with `"isPaused": false` to resume. An import always re-activates an
 | POST | `/api/jobs/import` | Body is schedule JSON (single object or array). Returns `{ created, updated, total, items[] }`. 400 with `{ error }` on validation/mutation failure. |
 | POST | `/api/jobs/{jobId}/soft-delete` | Soft-delete (hide) a job — reversible. `{jobId}` is the permanent GUID. Body `{ expectedVersion (required), reason?, force? }`. Returns `{ job }`. 400/404/409; 409 `{ error, dependents[] }` when active dependents block it and `force` is not set. |
 | POST | `/api/jobs/{jobId}/restore` | Restore a soft-deleted job. Body `{ expectedVersion (required), reason? }`. Returns `{ job }`. 400/404/409 (no dependents check). |
+| POST | `/api/jobs/{jobId}/repair/preview` | Dry run. Body `{ from, to }` (ISO-8601 UTC, aligned to the job's slice grid). Returns `{ repairableSliceCount, blockedSliceCount, skippedSliceCount, slices[] }`. Writes nothing. |
+| POST | `/api/jobs/{jobId}/repair` | Enqueue the previewed `Failed`/`DeadLettered` slices. Body `{ from, to, reason (required), expectedSliceCount (required) }`. Returns `{ repairBatchId, queued, blocked, skipped, slices[] }`. 409 when the count no longer matches or the job is paused/soft-deleted. |
 
 ## Read-only diagnostics
 
@@ -223,7 +240,57 @@ detailed field-by-field guide. Key points:
    deleted.
 7. **Verify.** Re-read with `Get-Job` (or `Get-Jobs`) and confirm the change.
 
+## Repairing failed slices
+
+Use this when the user wants failed slices re-run ("re-run the failures",
+"backfill the gaps", "these slices errored, try them again").
+
+**What it does.** Enqueues the slices in a UTC range whose current state is
+`Failed` or `DeadLettered`, so the normal worker picks them up again. It leaves
+everything else alone: `Completed` slices are never touched, `Queued`/`Running`
+work is never disturbed, and `Missing` slices are skipped because the scheduler
+already enqueues those on its own.
+
+**Why it is safe.** Output is written with an `ingest-by` tag and
+`ingestIfNotExists`, so a re-run **cannot duplicate rows** in Kusto. There is no
+cleanup step to perform and none to acknowledge.
+
+**What it cannot do.** It cannot overwrite existing output. If a slice already
+`Completed` and the user wants it recomputed (say the query changed), repair will
+not help — Kusto discards the repeat ingestion. That is the **rerun** flow, which
+requires manual Kusto cleanup and is dashboard-only. Say so plainly rather than
+running a repair that appears to work and changes nothing.
+
+**Workflow:**
+
+1. **Find the failures.** `Get-Failures` lists recent `Failed`/`DeadLettered`
+   slices across all jobs; `Get-Slices -JobId <id> -Query @{ state = 'Failed' }`
+   narrows to one job. Group by `jobId` — repair is per-job.
+2. **Understand them before re-running.** Check `Get-JobLogs` or the failure's
+   `lastErrorMessage`. A transient Kusto error is worth retrying; a semantic error
+   from a broken function will just fail again, so fix the source first. Say which
+   you think it is.
+3. **Pick an aligned range.** `from`/`to` must land on the job's slice boundaries
+   (anchored at `startFrom`, stepped by `queryWindowSize`). An unaligned range is
+   rejected with the nearest aligned range in the error — use that.
+4. **Preview.** `Preview-Repair` reports exactly which slices would re-run. It
+   writes nothing.
+5. **Show the user and get approval.** List the slice windows and the count.
+6. **Repair.** Pass a meaningful `-Reason` (recorded on the batch and in the audit
+   trail) and `-ExpectedSliceCount` from the preview. If state moved in between,
+   the call returns `409` with the current count — re-preview rather than guessing.
+7. **Verify.** `Get-JobStatus`, `Get-Slices -Query @{ state = 'Running' }`, and
+   `Get-Repairs -Query @{ batchId = '...' }`.
+
+**Blockers you may hit:**
+
+- **Paused or soft-deleted job → `409`.** Queued work is only claimed for enabled
+  jobs, so repaired slices would sit forever. Resume the job first.
+- **Blocked slices.** A slice whose upstream dependency is not satisfied is reported
+  as `blocked` and not queued. Repair the upstream first.
+
 ## Replacing a job to replay completed history
+
 
 Use this workflow only when completed slices must be planned again under a new
 definition. Hard-delete is permanently destructive local state and is always a
@@ -304,7 +371,20 @@ $job = & $skill -Action Get-Job -JobId $summary.jobId
 
 # Rerun/repair history (read-only) and the audit trail.
 & $skill -Action Get-Reruns
-& $skill -Action Get-Audit -Query @{ action = 'RerunExecuted' }
+& $skill -Action Get-Audit -Query @{ action = 'RepairEnqueued' }
+
+# --- Repair: re-run slices that failed ---
+
+# 1. Find failures, 2. preview the repair, 3. enqueue with the previewed count.
+& $skill -Action Get-Failures
+$preview = & $skill -Action Preview-Repair -JobId 'SampleAnalytics.BuildEcu5MinProfile' `
+    -From '2026-01-01T00:00:00Z' -To '2026-01-02T00:00:00Z'
+$preview.slices | Format-Table startUtc, currentState, outcome
+
+& $skill -Action Repair -JobId 'SampleAnalytics.BuildEcu5MinProfile' `
+    -From '2026-01-01T00:00:00Z' -To '2026-01-02T00:00:00Z' `
+    -Reason 'Requeue slices that failed on a transient Kusto error' `
+    -ExpectedSliceCount $preview.repairableSliceCount
 
 # Point at a non-default instance
 & $skill -Action Get-Jobs -BaseUrl 'http://127.0.0.1:5099'
@@ -316,13 +396,20 @@ unreachable it tells you to start it.
 
 ## Hard constraints
 
-- **Writes are schedule upsert plus soft-delete/restore.** Schedule create/update
-  goes through Import (including pause/resume via the `isPaused` field); soft-delete
-  and restore go through their own endpoints and always require `expectedVersion`.
+- **Writes are schedule upsert, soft-delete/restore, and failed-slice repair.**
+  Schedule create/update goes through Import (including pause/resume via the
+  `isPaused` field); soft-delete and restore go through their own endpoints and
+  always require `expectedVersion`; repair re-runs `Failed`/`DeadLettered` slices
+  only, after a preview, with a `reason` and the previewed `expectedSliceCount`.
   Never **hard-delete** a job (no API surface — that stays a dashboard action), and
-  never call any Kusto, rerun, cleanup, or repair surface, or edit the SQLite file
-  directly. Reading diagnostics (including rerun/repair/audit **history**) is fine;
-  *triggering* those actions is not.
+  never call any direct Kusto, rerun, or cleanup surface, or edit the SQLite file
+  directly. Reading diagnostics (including rerun/repair/audit **history**) is fine.
+- **Always preview before repairing.** Never send a guessed `expectedSliceCount`;
+  take it from the preview response and show the user the slice list first.
+- **Never present repair as a replay.** Repair fills gaps. It cannot recompute or
+  overwrite a `Completed` slice — Kusto's `ingest-by` dedup discards the repeat. If
+  the user wants completed history recomputed, say that it requires the dashboard
+  rerun flow plus manual Kusto cleanup.
 - **Validate before writing.** Always validate the JSON locally before POSTing
   (the Import action does this by default).
 - **Respect the identity model.** For a normal update, never change the permanent
@@ -339,8 +426,11 @@ unreachable it tells you to start it.
 
 - The KO Lite app is not reachable and the user has not provided a `-BaseUrl`.
 - The requested action is outside scope (hard-delete, generic enable/disable of a
-  job's `isEnabled` lifecycle, Kusto, rerun, repair). Pausing/resuming via `isPaused`,
-  and soft-delete/restore, are in scope.
+  job's `isEnabled` lifecycle, direct Kusto, rerun, Kusto cleanup). Pausing/resuming
+  via `isPaused`, soft-delete/restore, and repairing failed slices are in scope.
+- A repair is requested but the failures look **permanent** (a semantic/function
+  error that will simply fail again), or the user actually wants completed slices
+  recomputed — which repair cannot do.
 - A started-job update is requested but it is unclear whether completed slices
   should remain completed or be replayed under the new definition.
 - A replacement is waiting on the user's manual hard-delete confirmation, or an

@@ -161,6 +161,167 @@ namespace KoLite.Local.Sqlite.Tests
         }
 
         [Fact]
+        public void Failed_only_scope_repairs_failures_and_leaves_completed_and_missing_slices_alone()
+        {
+            catalog.Create(Schedule("job.scope"));
+            state.Append("failed", JobId("job.scope"), At(0), At(5), DurableSliceStatus.Failed, expectedVersion: 0, reason: "boom");
+            state.Append("dead", JobId("job.scope"), At(5), At(10), DurableSliceStatus.DeadLettered, expectedVersion: 0, reason: "gave up");
+            state.Append("done", JobId("job.scope"), At(10), At(15), DurableSliceStatus.Completed, expectedVersion: 0);
+            // At(15)-At(20) is left untouched, so it reads back as Missing.
+
+            var result = Service().PlanAndEnqueue(new RepairPlanRequest(
+                JobId("job.scope"), At(0), At(20), "tester", "rerun failures", Scope: RepairSliceScope.FailedAndDeadLetteredOnly));
+
+            Assert.Equal(2, result.Queued);
+            Assert.Equal(2, result.Skipped);
+            Assert.Equal(0, result.Blocked);
+
+            var queuedStarts = queue.List(JobId("job.scope")).Select(item => item.SliceStartUtc).ToArray();
+            Assert.Equal([At(0), At(5)], queuedStarts.OrderBy(start => start).ToArray());
+
+            // The out-of-scope slices keep their original state and record no repair_slices row.
+            Assert.Equal(DurableSliceStatus.Completed, state.Get(JobId("job.scope"), At(10), At(15)).Status);
+            Assert.Equal(DurableSliceStatus.Missing, state.Get(JobId("job.scope"), At(15), At(20)).Status);
+            Assert.Equal(2, Service().GetRepairSlices(result.RepairBatchId).Count);
+        }
+
+        [Fact]
+        public void Preview_reports_what_enqueue_would_do_without_writing_anything()
+        {
+            catalog.Create(Schedule("job.preview"));
+            state.Append("failed", JobId("job.preview"), At(0), At(5), DurableSliceStatus.Failed, expectedVersion: 0, reason: "boom");
+            state.Append("done", JobId("job.preview"), At(5), At(10), DurableSliceStatus.Completed, expectedVersion: 0);
+            var request = new RepairPlanRequest(
+                JobId("job.preview"), At(0), At(10), "tester", "preview only", Scope: RepairSliceScope.FailedAndDeadLetteredOnly);
+
+            var preview = Service().Preview(request);
+
+            Assert.Equal(1, preview.Repairable);
+            Assert.Equal(1, preview.Skipped);
+            Assert.Equal(0, preview.Blocked);
+            var repairable = Assert.Single(preview.Slices, slice => slice.Outcome == RepairSliceOutcome.Repairable);
+            Assert.Equal(At(0), repairable.StartUtc);
+            Assert.Equal(DurableSliceStatus.Failed, repairable.CurrentStatus);
+
+            // Nothing was persisted: no batch, no queue work, and the failed slice is still failed.
+            Assert.Equal(0, QueryInt("SELECT COUNT(*) FROM repair_batches;"));
+            Assert.Equal(0, QueryInt("SELECT COUNT(*) FROM repair_slices;"));
+            Assert.Empty(queue.List(JobId("job.preview")));
+            Assert.Equal(DurableSliceStatus.Failed, state.Get(JobId("job.preview"), At(0), At(5)).Status);
+
+            // ...and the count it promised is what the enqueue actually does.
+            Assert.Equal(preview.Repairable, Service().PlanAndEnqueue(request).Queued);
+        }
+
+        [Fact]
+        public void Preview_reports_blocked_slices_for_an_unready_dependency()
+        {
+            catalog.Create(Schedule("upstream.preview"));
+            catalog.Create(Schedule("downstream.preview", dependsOn: "upstream.preview"));
+            state.Append("failed", JobId("downstream.preview"), At(0), At(5), DurableSliceStatus.Failed, expectedVersion: 0, reason: "boom");
+
+            var preview = Service().Preview(new RepairPlanRequest(
+                JobId("downstream.preview"), At(0), At(5), "tester", "blocked preview", Scope: RepairSliceScope.FailedAndDeadLetteredOnly));
+
+            Assert.Equal(0, preview.Repairable);
+            Assert.Equal(1, preview.Blocked);
+            Assert.Single(preview.Slices, slice => slice.Outcome == RepairSliceOutcome.Blocked);
+        }
+
+        [Fact]
+        public void Unaligned_repair_range_is_rejected_with_the_nearest_aligned_bounds()
+        {
+            var job = catalog.Create(Schedule("job.aligned")).Definition;
+
+            // The job's window is 5 minutes anchored at At(0), so At(2)..At(7) sits off the grid.
+            var ex = Assert.Throws<InvalidOperationException>(() =>
+                SqliteRepairService.ValidateAlignedRange(job, At(2), At(7)));
+
+            Assert.Contains("align", ex.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("2026-01-01T00:00:00", ex.Message, StringComparison.Ordinal);
+            Assert.Contains("2026-01-01T00:10:00", ex.Message, StringComparison.Ordinal);
+
+            SqliteRepairService.ValidateAlignedRange(job, At(0), At(10));
+        }
+
+        [Fact]
+        public void Repair_range_before_job_start_or_inverted_is_rejected()
+        {
+            var job = catalog.Create(Schedule("job.bounds")).Definition;
+
+            Assert.Throws<InvalidOperationException>(() => SqliteRepairService.ValidateAlignedRange(job, At(10), At(5)));
+            Assert.Throws<InvalidOperationException>(() => SqliteRepairService.ValidateAlignedRange(job, At(-10), At(5)));
+        }
+
+        [Fact]
+        public void Oversized_repair_range_is_rejected_before_it_scans_the_store()
+        {
+            var job = catalog.Create(Schedule("job.huge")).Definition;
+            var tooMany = At(0).AddMinutes(5 * (SqliteRepairService.MaxRepairSlices + 1));
+
+            var ex = Assert.Throws<InvalidOperationException>(() => SqliteRepairService.ValidateAlignedRange(job, At(0), tooMany));
+
+            Assert.Contains(SqliteRepairService.MaxRepairSlices.ToString(System.Globalization.CultureInfo.InvariantCulture), ex.Message, StringComparison.Ordinal);
+            SqliteRepairService.ValidateAlignedRange(job, At(0), At(5 * SqliteRepairService.MaxRepairSlices));
+        }
+
+        [Fact]
+        public void Unaligned_range_at_the_end_of_time_reports_a_clean_error_instead_of_overflowing()
+        {
+            var job = catalog.Create(Schedule("job.maxdate")).Definition;
+
+            // The aligned ceiling for a value this close to DateTimeOffset.MaxValue is not representable;
+            // building the "nearest aligned range" hint must not throw while rejecting the range.
+            var ex = Assert.Throws<InvalidOperationException>(() =>
+                SqliteRepairService.ValidateAlignedRange(job, At(0), DateTimeOffset.MaxValue));
+
+            Assert.Contains("align", ex.Message, StringComparison.OrdinalIgnoreCase);
+        }
+
+        [Fact]
+        public void Slice_that_left_scope_between_preview_and_enqueue_is_skipped_without_losing_the_batch()
+        {
+            catalog.Create(Schedule("job.race"));
+            state.Append("failed-a", JobId("job.race"), At(0), At(5), DurableSliceStatus.Failed, expectedVersion: 0, reason: "boom");
+            state.Append("failed-b", JobId("job.race"), At(5), At(10), DurableSliceStatus.Failed, expectedVersion: 0, reason: "boom");
+
+            var service = Service();
+            var request = new RepairPlanRequest(
+                JobId("job.race"), At(0), At(10), "tester", "racing repair", Scope: RepairSliceScope.FailedAndDeadLetteredOnly);
+
+            var preview = service.Preview(request);
+            Assert.Equal(2, preview.Repairable);
+
+            // A worker picks the second slice up between the preview and the enqueue. PlanAndEnqueue
+            // re-classifies from live state, so that slice drops out - and the other one still repairs.
+            state.Append("claimed", JobId("job.race"), At(5), At(10), DurableSliceStatus.Queued, expectedVersion: 1, reason: "claimed elsewhere");
+
+            var result = service.PlanAndEnqueue(request);
+
+            Assert.Equal(1, result.Queued);
+            Assert.Equal(1, result.Skipped);
+            var work = Assert.Single(queue.List(JobId("job.race")));
+            Assert.Equal(At(0), work.SliceStartUtc);
+        }
+
+        [Fact]
+        public void Enqueue_writes_an_audit_row_carrying_the_reason_and_counts()
+        {
+            catalog.Create(Schedule("job.audit"));
+            state.Append("failed", JobId("job.audit"), At(0), At(5), DurableSliceStatus.Failed, expectedVersion: 0, reason: "boom");
+
+            var result = Service().PlanAndEnqueue(new RepairPlanRequest(
+                JobId("job.audit"), At(0), At(5), "local-api", "closing a gap", Scope: RepairSliceScope.FailedAndDeadLetteredOnly));
+
+            Assert.Equal(1, QueryInt(
+                "SELECT COUNT(*) FROM system_audit WHERE action='RepairEnqueued' AND subject_type='RepairBatch' AND subject_id=$id AND actor='local-api';",
+                ("$id", result.RepairBatchId)));
+            var payload = QueryString("SELECT payload_json FROM system_audit WHERE subject_id=$id;", ("$id", result.RepairBatchId));
+            Assert.Contains("closing a gap", payload, StringComparison.Ordinal);
+            Assert.Contains("FailedAndDeadLetteredOnly", payload, StringComparison.Ordinal);
+        }
+
+        [Fact]
         public void Recover_orphaned_slice_requeues_an_expired_running_lease_for_enabled_job()
         {
             catalog.Create(Schedule("job.orphan"));

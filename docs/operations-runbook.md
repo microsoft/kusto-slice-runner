@@ -181,7 +181,7 @@ See [schedule-json.md](schedule-json.md) for the schedule contract.
 
 ## Local management API
 
-KO Lite hosts a localhost-only JSON API so a same-machine agent or tool can read jobs and create/update schedules without using the dashboard. It starts and stops with the app. Schedule writes go through the same validated, additive/update-only import path as the dashboard; the API also exposes soft-delete and restore (each requiring the job's current catalogVersion, and soft-delete blocks on active downstream dependents unless forced), but no hard-delete, generic enable/disable, rerun, or repair surface. Reads are `GET /api/jobs`, `GET /api/jobs/{jobId}`, and `GET /api/jobs/export`; writes are `POST /api/jobs/import`, `POST /api/jobs/{jobId}/soft-delete`, and `POST /api/jobs/{jobId}/restore`. The one Kusto-touching route is the on-demand, read-only dependency-graph consumer endpoint (`POST /api/dependency-graph/kusto-consumers`; see [Dependency graph](#dependency-graph)). All `/api` routes are loopback-only. See [local-api.md](local-api.md) for the full contract and the `ko-lite-job-manager` skill that drives it.
+KO Lite hosts a localhost-only JSON API so a same-machine agent or tool can read jobs, create/update schedules, and re-run failed slices without using the dashboard. It starts and stops with the app. Schedule writes go through the same validated, additive/update-only import path as the dashboard; the API also exposes soft-delete and restore (each requiring the job's current catalogVersion, and soft-delete blocks on active downstream dependents unless forced), and repair of `Failed`/`DeadLettered` slices (preview first, then enqueue with a reason and the previewed slice count) — but no hard-delete, generic enable/disable, or rerun surface. Reads are `GET /api/jobs`, `GET /api/jobs/{jobId}`, and `GET /api/jobs/export`; writes are `POST /api/jobs/import`, `POST /api/jobs/{jobId}/soft-delete`, `POST /api/jobs/{jobId}/restore`, and `POST /api/jobs/{jobId}/repair` (with a read-only `/repair/preview`). The one Kusto-touching route is the on-demand, read-only dependency-graph consumer endpoint (`POST /api/dependency-graph/kusto-consumers`; see [Dependency graph](#dependency-graph)). All `/api` routes are loopback-only. See [local-api.md](local-api.md) for the full contract and the `ko-lite-job-manager` skill that drives it.
 
 ## Dashboard status model
 
@@ -366,6 +366,12 @@ Rerun execution is intentionally two-step:
 
 Rerun is blocked while any affected slice is queued, leased, or running.
 
+**Rerun vs. repair.** Rerun exists to *replace* output that is already in Kusto, which is why it needs
+the manual cleanup step. To simply *re-run slices that failed* (nothing was successfully written, so
+there is nothing to clean up), use the repair API instead — see
+[Requeuing slices that already dead-lettered](#requeuing-slices-that-already-dead-lettered). Repair
+cannot overwrite a `Completed` slice; the `ingest-by` dedup tag would discard the repeat ingestion.
+
 Back up the SQLite database before service upgrades, hard deletes, repair experiments, or large reruns.
 
 ## Retry classification and dead-letters
@@ -398,17 +404,34 @@ The attempt's metrics JSON also records `isRetryable`, `isPermanent`, `kustoFail
 ### Requeuing slices that already dead-lettered
 
 The classification change is forward-looking; it does not revisit slices that dead-lettered earlier.
-To re-run those, use the normal repair flow from the job's page, which accepts a UTC range and
-requeues `DeadLettered` slices. Review the failures first so genuinely permanent ones (a semantic
-error from a broken function, say) are fixed at the source rather than retried:
+To re-run those, use the **repair API** (`POST /api/jobs/{jobId}/repair`), which accepts an aligned
+UTC range and re-queues the `Failed`/`DeadLettered` slices in it. Review the failures first so
+genuinely permanent ones (a semantic error from a broken function, say) are fixed at the source
+rather than retried:
 
 ```powershell
+$base = 'http://127.0.0.1:5057'
+$jobId = 'SampleAnalytics.BuildEcu5MinProfile'   # permanent GUID or activityId
+
 # Recent failures, newest first, with the attempt number they dead-lettered on.
-Invoke-RestMethod "http://127.0.0.1:5057/api/diagnostics/failures?take=200" |
+Invoke-RestMethod "$base/api/diagnostics/failures?take=200" |
   Select-Object -ExpandProperty recentFailures |
   Where-Object status -eq 'DeadLettered' |
   Select-Object jobId, sliceStartUtc, attempt, reason
+
+# Preview the repair (writes nothing), then enqueue it echoing the previewed count.
+$range = @{ from = '2026-01-01T00:00:00Z'; to = '2026-01-02T00:00:00Z' }
+$preview = Invoke-RestMethod -Method Post -Uri "$base/api/jobs/$jobId/repair/preview" `
+  -ContentType 'application/json' -Body ($range | ConvertTo-Json)
+
+Invoke-RestMethod -Method Post -Uri "$base/api/jobs/$jobId/repair" -ContentType 'application/json' `
+  -Body (($range + @{ reason = 'Requeue transient failures'; expectedSliceCount = $preview.repairableSliceCount }) | ConvertTo-Json)
 ```
+
+Re-running is safe: output carries an `ingest-by` tag plus `ingestIfNotExists`, so Kusto dedupes a
+repeat ingestion and no cleanup is needed. For the same reason repair only fills gaps — it cannot
+overwrite an already-`Completed` slice, which is what the [rerun flow](#rerun-and-cleanup) is for. See
+[local-api.md](local-api.md#repairing-failed-slices) for the full contract and guards.
 
 A slice that dead-lettered on **attempt 1** with a transient reason is a good requeue candidate; one
 that dead-lettered on attempt 3 already exhausted its retries.
