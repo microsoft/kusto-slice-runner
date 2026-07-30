@@ -74,6 +74,83 @@ namespace KoLite.Local.Kusto.Tests
             Assert.Equal("OutputTable", live.Requests[0].OutputTable);
         }
 
+        // Regression guard for the bug where Kusto low-memory failures were dead-lettered on the
+        // first attempt. The old classifier matched the error text against a fixed keyword list;
+        // a low-memory condition contains none of those words, so it was treated as permanent even
+        // though Kusto itself reports it as retryable ("@permanent": false). This uses the exact
+        // exception type the service raises for that failure.
+        [Fact]
+        public void Classifier_retries_non_permanent_kusto_failures_such_as_low_memory()
+        {
+            var exception = new KustoServicePartialQueryFailureLowMemoryConditionException(
+                "Request is invalid and cannot be processed: Query execution lacks memory resources to complete "
+                + "(80DA0007). Partial query failure: Low memory condition (E_LOW_MEMORY_CONDITION). "
+                + "(message: bad allocation (E_LOW_MEMORY_CONDITION))",
+                new InvalidOperationException("low memory condition"));
+
+            // Guards the SDK assumption the classifier is built on.
+            Assert.False(exception.IsPermanent);
+
+            var error = KustoErrorClassifier.Classify(exception);
+
+            Assert.True(error.IsRetryable);
+            Assert.False(error.IsPermanent);
+            Assert.Equal(nameof(KustoServicePartialQueryFailureLowMemoryConditionException), error.Code);
+
+            // None of the words the previous heuristic looked for appear in this message, so a
+            // text-matching classifier would still get this wrong.
+            foreach (var keyword in new[] { "timeout", "throttl", "temporar", "transient", "too many requests", "service unavailable" })
+            {
+                Assert.DoesNotContain(keyword, error.Message, StringComparison.OrdinalIgnoreCase);
+            }
+        }
+
+        [Fact]
+        public void Classifier_does_not_retry_permanent_kusto_failures()
+        {
+            var exception = new KustoRequestException(
+                "Semantic error: 'ThisTableDoesNotExist' could not be resolved.",
+                new InvalidOperationException("bad request"));
+
+            Assert.True(exception.IsPermanent);
+
+            var error = KustoErrorClassifier.Classify(exception);
+
+            Assert.False(error.IsRetryable);
+            Assert.True(error.IsPermanent);
+        }
+
+        // Without a Kusto exception there is no permanence signal, so the slice stays retryable and
+        // is bounded by the worker's MaxAttempts rather than dead-lettering on the first attempt.
+        [Fact]
+        public void Classifier_retries_failures_reported_without_a_kusto_exception()
+        {
+            var error = KustoErrorClassifier.Classify("KustoExecutionFailed", "Kusto execution failed without a detailed error.");
+
+            Assert.True(error.IsRetryable);
+            Assert.Null(error.IsPermanent);
+            Assert.Null(error.FailureCode);
+        }
+
+        [Fact]
+        public async Task Local_slice_executor_propagates_permanence_from_kusto_failures()
+        {
+            var live = new RecordingKustoExecutor(new KustoExecutionResult(
+                false,
+                null,
+                new Dictionary<string, string>(),
+                new KustoExecutionError("KustoServiceException", "Low memory condition.", IsRetryable: true, IsPermanent: false, FailureCode: 429, FailureSubCode: "General_TooManyRequests")));
+            var executor = new KustoLocalSliceOutputExecutor(new KustoRequestBuilder(), live);
+
+            var result = await executor.ExecuteAsync(Job(), new SliceRange("job_kusto", At(0), At(5)));
+
+            Assert.False(result.Succeeded);
+            Assert.True(result.IsRetryable);
+            Assert.False(result.IsPermanent);
+            Assert.Equal(429, result.FailureCode);
+            Assert.Equal("General_TooManyRequests", result.FailureSubCode);
+        }
+
         [Fact]
         public async Task Sdk_executor_dispatches_control_command_with_idempotency_metadata()
         {

@@ -263,6 +263,64 @@ namespace KoLite.Local.Sqlite.Tests
                 });
         }
 
+        // A permanent Kusto failure (a semantic error, for example) will never succeed on a retry,
+        // so it dead-letters on the first attempt instead of burning the retry budget. This is the
+        // behaviour that must survive the switch to the SDK's permanence flag.
+        [Fact]
+        public async Task Worker_deadletters_permanent_failures_on_the_first_attempt()
+        {
+            catalog.Create(Schedule("job.permanent", maxParallelism: 1));
+            Scheduler(maxSlicesPerTick: 1).Tick();
+            var progress = new RecordingProgressSink();
+            var executor = new RecordingExecutor(LocalSliceOutputResult.Failure(
+                "SemanticException",
+                "Semantic error: 'MissingTable' could not be resolved.",
+                isRetryable: false,
+                isPermanent: true,
+                failureCode: 400,
+                failureSubCode: "General_BadRequest"));
+            var worker = Worker(executor, new LocalWorkerOptions(MaxAttempts: 3, InitialRetryDelay: TimeSpan.FromMinutes(1), VisibilityTimeout: TimeSpan.FromMinutes(5)), progress);
+
+            var run = await worker.RunOnceAsync();
+
+            Assert.True(run.Executed);
+            Assert.True(run.DeadLettered);
+            Assert.Equal(DurableSliceStatus.DeadLettered, state.Get(JobId("job.permanent"), At(0), At(5)).Status);
+            Assert.Equal(1, queue.List(JobId("job.permanent")).Single().Attempts);
+            var finished = Assert.Single(progress.Finished);
+            Assert.Equal(LocalWorkerProgressStatus.DeadLettered, finished.Status);
+            Assert.False(finished.IsRetryable);
+        }
+
+        // The bug this guards: a retryable Kusto failure (a low memory condition, say) used to be
+        // dead-lettered on attempt 1. It must instead be abandoned for a later retry with its
+        // permanence recorded for diagnostics.
+        [Fact]
+        public async Task Worker_retries_non_permanent_failures_instead_of_deadlettering_immediately()
+        {
+            catalog.Create(Schedule("job.lowmemory", maxParallelism: 1));
+            Scheduler(maxSlicesPerTick: 1).Tick();
+            var progress = new RecordingProgressSink();
+            var executor = new RecordingExecutor(LocalSliceOutputResult.Failure(
+                "KustoServiceException",
+                "Partial query failure: Low memory condition (E_LOW_MEMORY_CONDITION).",
+                isRetryable: true,
+                isPermanent: false,
+                failureCode: 400,
+                failureSubCode: "General_BadRequest"));
+            var worker = Worker(executor, new LocalWorkerOptions(MaxAttempts: 3, InitialRetryDelay: TimeSpan.FromMinutes(1), VisibilityTimeout: TimeSpan.FromMinutes(5)), progress);
+
+            var run = await worker.RunOnceAsync();
+
+            Assert.True(run.Executed);
+            Assert.False(run.DeadLettered);
+            Assert.NotEqual(DurableSliceStatus.DeadLettered, state.Get(JobId("job.lowmemory"), At(0), At(5)).Status);
+            Assert.NotEqual(DurableWorkQueueState.DeadLettered, queue.List(JobId("job.lowmemory")).Single().State);
+            var finished = Assert.Single(progress.Finished);
+            Assert.Equal(LocalWorkerProgressStatus.FailedRetryable, finished.Status);
+            Assert.True(finished.IsRetryable);
+        }
+
         [Fact]
         public async Task Worker_does_not_retry_paused_job_until_resume()
         {

@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using KoLite.Local.Core.Orchestration;
 using KoLite.Local.Core.Schedules;
@@ -227,22 +228,26 @@ namespace KoLite.Local.Sqlite.Orchestration
                 return new LocalWorkerRunResult(true, item.QueueItemId, true, completed, false, completed ? null : "Slice lease lost before completion.");
             }
 
-            return FailSlice(item, lease, progress, result.ErrorCode, result.ErrorMessage, result.IsRetryable, clock.UtcNow);
+            return FailSlice(item, lease, progress, result.ErrorCode, result.ErrorMessage, result.IsRetryable, clock.UtcNow, result.IsPermanent, result.FailureCode, result.FailureSubCode);
         }
 
         // Records a non-success terminal outcome for the current attempt and releases the queue item.
         // Shared by the executor-reported failure path and the unhandled-fault/timeout catch so both
         // promptly Abandon (retry) or DeadLetter the slice instead of leaving the lease to expire.
-        private LocalWorkerRunResult FailSlice(DurableWorkItem item, DurableSliceState lease, LocalWorkerProgressEvent progress, string? errorCode, string? errorMessage, bool isRetryable, DateTimeOffset failedAtUtc)
+        // isPermanent/failureCode/failureSubCode are diagnostic detail from the Kusto SDK and are
+        // null for failures that did not originate from a Kusto exception.
+        private LocalWorkerRunResult FailSlice(DurableWorkItem item, DurableSliceState lease, LocalWorkerProgressEvent progress, string? errorCode, string? errorMessage, bool isRetryable, DateTimeOffset failedAtUtc, bool? isPermanent = null, int? failureCode = null, string? failureSubCode = null)
         {
             var reason = string.IsNullOrWhiteSpace(errorMessage) ? errorCode ?? "Execution failed." : errorMessage!;
-            var shouldRetry = isRetryable && item.Attempts < Math.Max(1, options.MaxAttempts);
-            var payloadJson = JsonSerializer.Serialize(new { ErrorCode = errorCode, ErrorMessage = errorMessage, IsRetryable = isRetryable });
+            var maxAttempts = Math.Max(1, options.MaxAttempts);
+            var shouldRetry = isRetryable && item.Attempts < maxAttempts;
+            var payloadJson = JsonSerializer.Serialize(new { ErrorCode = errorCode, ErrorMessage = errorMessage, IsRetryable = isRetryable, IsPermanent = isPermanent, FailureCode = failureCode, FailureSubCode = failureSubCode });
+            var metricsJson = JsonSerializer.Serialize(new { isRetryable, isPermanent, kustoFailureCode = failureCode, kustoFailureSubCode = failureSubCode });
             if (shouldRetry)
             {
                 state.FailLease($"fail|{item.QueueItemId}|{item.Attempts}", item.JobId, item.SliceStartUtc, item.SliceEndUtc, options.WorkerId, lease.LeaseToken!, failedAtUtc, reason, payloadJson);
                 queue.Abandon(item.QueueItemId, options.WorkerId, failedAtUtc + RetryDelay(item.Attempts));
-                observability.RecordAttempt(AttemptId(item), item.JobId, item.SliceStartUtc, item.SliceEndUtc, item.Attempts, "FailedRetryable", options.WorkerId, null, failedAtUtc, errorCode, errorMessage);
+                observability.RecordAttempt(AttemptId(item), item.JobId, item.SliceStartUtc, item.SliceEndUtc, item.Attempts, "FailedRetryable", options.WorkerId, null, failedAtUtc, errorCode, errorMessage, metricsJson);
                 observability.RecordLog("Warning", "Slice failed and was scheduled for retry.", "worker", item.JobId, item.SliceStartUtc, item.SliceEndUtc, payloadJson);
                 progressSink.RecordFinished(progress with
                 {
@@ -257,8 +262,20 @@ namespace KoLite.Local.Sqlite.Orchestration
 
             state.DeadLetterLease($"deadletter|{item.QueueItemId}|{item.Attempts}", item.JobId, item.SliceStartUtc, item.SliceEndUtc, options.WorkerId, lease.LeaseToken!, failedAtUtc, reason, payloadJson);
             queue.DeadLetter(item.QueueItemId, options.WorkerId);
-            observability.RecordAttempt(AttemptId(item), item.JobId, item.SliceStartUtc, item.SliceEndUtc, item.Attempts, "DeadLettered", options.WorkerId, null, failedAtUtc, errorCode, errorMessage);
-            observability.RecordLog("Error", "Slice dead-lettered.", "worker", item.JobId, item.SliceStartUtc, item.SliceEndUtc, payloadJson);
+            observability.RecordAttempt(AttemptId(item), item.JobId, item.SliceStartUtc, item.SliceEndUtc, item.Attempts, "DeadLettered", options.WorkerId, null, failedAtUtc, errorCode, errorMessage, metricsJson);
+
+            // Separate "never eligible for retry" from "ran out of attempts" so an operator reading
+            // the log can tell a permanent failure apart from an exhausted retry budget.
+            observability.RecordLog(
+                "Error",
+                isRetryable
+                    ? $"Slice dead-lettered after {item.Attempts.ToString(CultureInfo.InvariantCulture)} of {maxAttempts.ToString(CultureInfo.InvariantCulture)} attempts."
+                    : "Slice dead-lettered without retry because the failure was classified as permanent.",
+                "worker",
+                item.JobId,
+                item.SliceStartUtc,
+                item.SliceEndUtc,
+                payloadJson);
             progressSink.RecordFinished(progress with
             {
                 Status = LocalWorkerProgressStatus.DeadLettered,

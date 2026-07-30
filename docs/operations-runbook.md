@@ -368,6 +368,51 @@ Rerun is blocked while any affected slice is queued, leased, or running.
 
 Back up the SQLite database before service upgrades, hard deletes, repair experiments, or large reruns.
 
+## Retry classification and dead-letters
+
+When a slice fails, KO Lite asks the Kusto .NET SDK whether the error was **permanent**
+(`KustoException.IsPermanent`) and uses that answer alone to decide whether to retry:
+
+- **Permanent** (semantic errors, syntax errors, bad input — typically HTTP 400) — the request will
+  never succeed as written, so the slice dead-letters on the first attempt without consuming its
+  retry budget.
+- **Not permanent** (low memory conditions, internal service errors, transport faults, throttling) —
+  the slice is retried up to `MaxAttempts` (3) with exponential backoff (1 min, then 2 min, capped at
+  5 min). Retries are safe to repeat because output is idempotent via `ingest-by`.
+- **No Kusto exception to inspect** (an unclassified fault or timeout) — treated as retryable and
+  bounded by the same `MaxAttempts`.
+
+The dead-letter log message distinguishes the two cases, so you can tell them apart without
+reconstructing the attempt history:
+
+- `Slice dead-lettered without retry because the failure was classified as permanent.`
+- `Slice dead-lettered after N of M attempts.`
+
+The attempt's metrics JSON also records `isRetryable`, `isPermanent`, `kustoFailureCode`, and
+`kustoFailureSubCode`.
+
+> Do not infer retryability from the error text. A Kusto low-memory failure
+> (`E_LOW_MEMORY_CONDITION`) reports `"@permanent": false` — meaning *retry* — but its message
+> contains none of the words a keyword-matching classifier would look for.
+
+### Requeuing slices that already dead-lettered
+
+The classification change is forward-looking; it does not revisit slices that dead-lettered earlier.
+To re-run those, use the normal repair flow from the job's page, which accepts a UTC range and
+requeues `DeadLettered` slices. Review the failures first so genuinely permanent ones (a semantic
+error from a broken function, say) are fixed at the source rather than retried:
+
+```powershell
+# Recent failures, newest first, with the attempt number they dead-lettered on.
+Invoke-RestMethod "http://127.0.0.1:5057/api/diagnostics/failures?take=200" |
+  Select-Object -ExpandProperty recentFailures |
+  Where-Object status -eq 'DeadLettered' |
+  Select-Object jobId, sliceStartUtc, attempt, reason
+```
+
+A slice that dead-lettered on **attempt 1** with a transient reason is a good requeue candidate; one
+that dead-lettered on attempt 3 already exhausted its retries.
+
 ## Orphaned leases and recovery
 
 A slice is **leased** while a worker holds it. If that worker faults or its process is killed after

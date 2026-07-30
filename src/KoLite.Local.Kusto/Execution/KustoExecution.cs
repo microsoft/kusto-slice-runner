@@ -28,7 +28,7 @@ namespace KoLite.Local.Kusto.Execution
     }
 
     public sealed record KustoExecutionResult(bool Succeeded, string? OutputReference, IReadOnlyDictionary<string, string> Metadata, KustoExecutionError? Error = null);
-    public sealed record KustoExecutionError(string Code, string Message, bool IsRetryable);
+    public sealed record KustoExecutionError(string Code, string Message, bool IsRetryable, bool? IsPermanent = null, int? FailureCode = null, string? FailureSubCode = null);
     public interface IKustoRequestBuilder { KustoExecutionRequest Build(JobDefinition job, SliceRange slice); }
     public interface IKustoExecutor { Task<KustoExecutionResult> ExecuteAsync(KustoExecutionRequest request, CancellationToken cancellationToken = default); }
 
@@ -138,7 +138,7 @@ namespace KoLite.Local.Kusto.Execution
 
             if (result.Succeeded) return LocalSliceOutputResult.Success(result.OutputReference);
             var error = result.Error ?? KustoErrorClassifier.Classify("KustoExecutionFailed", "Kusto execution failed without a detailed error.");
-            return LocalSliceOutputResult.Failure(error.Code, error.Message, error.IsRetryable);
+            return LocalSliceOutputResult.Failure(error.Code, error.Message, error.IsRetryable, error.IsPermanent, error.FailureCode, error.FailureSubCode);
         }
     }
 
@@ -199,7 +199,7 @@ namespace KoLite.Local.Kusto.Execution
 
         private static KustoExecutionResult Failure(KustoException exception)
         {
-            var error = KustoErrorClassifier.Classify(exception.GetType().Name, exception.Message);
+            var error = KustoErrorClassifier.Classify(exception);
             return new KustoExecutionResult(false, null, new Dictionary<string, string>(), error);
         }
 
@@ -239,5 +239,32 @@ namespace KoLite.Local.Kusto.Execution
         }
     }
 
-    public static class KustoErrorClassifier { public static KustoExecutionError Classify(string code, string message) { var text = $"{code} {message}"; var retryable = new[] { "timeout", "throttl", "temporar", "transient", "too many requests", "service unavailable" }.Any(t => text.Contains(t, StringComparison.OrdinalIgnoreCase)); return new KustoExecutionError(code, message, retryable); } }
+    // Retryability comes from the Kusto SDK's own permanence flag rather than the error text.
+    // Per the Kusto .NET SDK contract a permanent exception means the caller should not retry
+    // because the request is unlikely to ever succeed (a semantic or syntax error, for example),
+    // while everything else - low memory conditions, internal service errors, transport faults -
+    // is transient and worth a bounded retry. Matching on message text instead silently misses
+    // codes such as LowMemoryCondition and retries others only when a keyword happens to appear
+    // somewhere in the payload.
+    public static class KustoErrorClassifier
+    {
+        public static KustoExecutionError Classify(KustoException exception)
+        {
+            ArgumentNullException.ThrowIfNull(exception);
+            var isPermanent = exception.IsPermanent;
+            return new KustoExecutionError(
+                exception.GetType().Name,
+                exception.Message,
+                IsRetryable: !isPermanent,
+                IsPermanent: isPermanent,
+                FailureCode: exception.FailureCode,
+                FailureSubCode: exception.FailureSubCode);
+        }
+
+        // Fallback for failures reported without a Kusto exception to inspect. There is no
+        // permanence signal available here, so the slice stays retryable and is bounded by the
+        // worker's MaxAttempts, matching how the worker already treats unclassified faults.
+        public static KustoExecutionError Classify(string code, string message) =>
+            new(code, message, IsRetryable: true);
+    }
 }
