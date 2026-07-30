@@ -684,7 +684,8 @@ jobs:
           $aiStatus = @'
           Actions AI was not attempted.
           Local Copilot post-processing is supported by scripts\New-KoLiteReleaseHighlights.ps1.
-          The hosted draft leaves a Changes placeholder for reviewed local Copilot output.
+          The release-highlights skill previews reviewed local Copilot output before applying only
+          the Changes section of this draft.
           '@
           [System.IO.File]::WriteAllText(
               (Join-Path $env:GROUNDING_DIRECTORY 'ai-status.txt'),
@@ -694,9 +695,9 @@ jobs:
           $changesTemplate = @'
           ## Changes
 
-          _Replace this placeholder with the reviewed output from `pwsh -File .\scripts\New-KoLiteReleaseHighlights.ps1 -Version {{version}}`._
+          _Use the `ko-lite-release-highlights` skill to generate, review, and apply this section._
           '@
-          $changes = $changesTemplate.Replace('{{version}}', $env:RELEASE_VERSION)
+          $changes = $changesTemplate
 
           $installTemplate = @'
           ## Install

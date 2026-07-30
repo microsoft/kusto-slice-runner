@@ -124,23 +124,35 @@ namespace KoLite.LocalApp.Tests
         }
 
         [Fact]
-        public void Release_highlights_script_is_read_only_toward_github()
+        public void Release_highlights_script_limits_github_writes_to_approved_draft_notes()
         {
             var script = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "scripts", "New-KoLiteReleaseHighlights.ps1"));
 
             Assert.Contains("[switch]$DryRun", script, StringComparison.Ordinal);
             Assert.Contains("[switch]$SelfTest", script, StringComparison.Ordinal);
             Assert.Contains("[switch]$Force", script, StringComparison.Ordinal);
+            Assert.Contains("[switch]$PrepareUpdate", script, StringComparison.Ordinal);
+            Assert.Contains("[string]$ApplyUpdatePlan", script, StringComparison.Ordinal);
+            Assert.Contains("[switch]$ConfirmDraftEdit", script, StringComparison.Ordinal);
+            Assert.Contains("[switch]$AllowOverwriteChanges", script, StringComparison.Ordinal);
             Assert.Contains("--no-custom-instructions", script, StringComparison.Ordinal);
             Assert.Contains("--disable-builtin-mcps", script, StringComparison.Ordinal);
             Assert.Contains("--available-tools=", script, StringComparison.Ordinal);
             Assert.Contains("--no-remote", script, StringComparison.Ordinal);
             Assert.Contains("Assert-Highlights", script, StringComparison.Ordinal);
+            Assert.Contains("Get-TextSha256", script, StringComparison.Ordinal);
+            Assert.Contains("Get-ReleaseTagSha", script, StringComparison.Ordinal);
+            Assert.Contains("$targetCommitish = $release.MarkerSha", script, StringComparison.Ordinal);
+            Assert.Contains("changed immediately before editing", script, StringComparison.Ordinal);
+            Assert.Contains("ko-lite-release-workflow:", script, StringComparison.Ordinal);
+            Assert.Contains("'release', 'edit'", script, StringComparison.Ordinal);
+            Assert.Contains("--notes-file", script, StringComparison.Ordinal);
             Assert.DoesNotContain("gh auth token", script, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("workflow run", script, StringComparison.OrdinalIgnoreCase);
-            Assert.DoesNotContain("release edit", script, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("release delete", script, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("release publish", script, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("'release', 'create'", script, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("'release', 'upload'", script, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("git tag", script, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("--allow-all", script, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("--allow-tool", script, StringComparison.OrdinalIgnoreCase);

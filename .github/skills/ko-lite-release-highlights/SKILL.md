@@ -1,18 +1,18 @@
 ---
 name: ko-lite-release-highlights
-description: "Use when the user wants AI-written highlights for an existing KO Lite GitHub Release draft. Requires an explicit vMAJOR.MINOR.PATCH version and invokes the repository's read-only highlights script, which writes a local Markdown file for manual review and paste. Never creates, edits, publishes, deletes, tags, reruns, or repairs a release."
+description: "Use when the user wants AI-written highlights for an existing KO Lite GitHub Release draft. Auto-selects one workflow-owned draft or asks the user to choose among multiple drafts, previews the exact highlights for approval, and can replace only the draft's Changes section. Never creates, publishes, deletes, tags, uploads assets, reruns, or repairs a release."
 metadata:
   author: Azure Core Team
-  version: "1.0.1"
+  version: "2.0.0"
 ---
 
 # KO Lite release highlights
 
-Use this skill to generate a local Markdown file of concise highlights for an
-existing KO Lite GitHub Release draft:
+Use this skill to generate, review, and apply concise highlights to an existing
+workflow-owned KO Lite GitHub Release draft:
 
 ```powershell
-pwsh -File .\scripts\New-KoLiteReleaseHighlights.ps1 -Version v1.1.0
+pwsh -File .\scripts\New-KoLiteReleaseHighlights.ps1 -PrepareUpdate
 ```
 
 ## When to activate
@@ -20,37 +20,64 @@ pwsh -File .\scripts\New-KoLiteReleaseHighlights.ps1 -Version v1.1.0
 Activate when the user asks for AI release highlights or a summary for an
 existing KO Lite release draft.
 
-Require an explicit version in strict `vMAJOR.MINOR.PATCH` form. Never infer or
-increment a version.
+If the user supplies a version, require strict `vMAJOR.MINOR.PATCH` form and pass
+it explicitly. Never infer or increment a version.
 
 ## Workflow
 
 1. Resolve the repository root.
-2. Choose the user-requested output path, or allow the script to use its
-   versioned `%TEMP%` default.
-3. Run `scripts\New-KoLiteReleaseHighlights.ps1` with PowerShell 7 (`pwsh`) and
-   the explicit version.
-4. Return the output file path and draft URL printed by the script.
-5. Tell the user to review the file and replace the placeholder under
-   `## Changes` in the GitHub draft.
+2. Run `scripts\New-KoLiteReleaseHighlights.ps1 -PrepareUpdate` with PowerShell
+   7 (`pwsh`). Add `-Version vMAJOR.MINOR.PATCH` only when the user supplied or
+   selected that version.
+3. If no workflow-owned draft exists, stop and tell the user to run the
+   **KO Lite Release** workflow first. Do not ask for or invent a version.
+4. If multiple workflow-owned drafts exist, use `ask_user` to present the exact
+   versions and URLs printed by the script, then rerun `-PrepareUpdate` with the
+   selected version.
+5. Read the transient JSON update plan printed by the script. Show the user the
+   exact `highlights` value and use `ask_user` to require explicit approval
+   before any GitHub write. Tell the user not to edit the draft concurrently
+   during the brief apply step because GitHub release edits do not expose an
+   atomic conditional-write precondition.
+6. If `changesWasPlaceholder` is false, also show the existing
+   `originalChanges` value and require a distinct confirmation that it may be
+   overwritten.
+7. If the user declines or cancels, delete only the exact transient update-plan
+   path and stop without changing GitHub.
+8. After approval, apply the reviewed plan:
 
-For a read-only preflight, pass `-DryRun`. Use `-Force` only when the user asks
-to overwrite an existing local output file.
+   ```powershell
+   pwsh -File .\scripts\New-KoLiteReleaseHighlights.ps1 `
+       -ApplyUpdatePlan <path> `
+       -ConfirmDraftEdit
+   ```
+
+   Add `-AllowOverwriteChanges` only after the user explicitly approved
+   replacing non-placeholder Changes content.
+9. Return the draft URL printed by the script and state that the release remains
+   a draft. The script deletes the consumed update plan after successful
+   verification.
+
+For a read-only preflight, pass `-DryRun`. The skill does not retain a Markdown
+copy. If preparation or application ends in a terminal failure, delete only the
+exact transient update-plan path before ending the task.
 
 Generated top-level Markdown bullets start flush left. The script normalizes
 incidental leading spaces or tabs before bullet markers.
 
 ## Safety boundaries
 
-- This skill and script are read-only toward GitHub.
-- Never create, edit, publish, delete, tag, rerun, or repair a release.
+- Edit only the `## Changes` section of a workflow-owned draft after explicit
+  preview approval.
+- Never edit a published release.
+- Never create, publish, delete, tag, upload assets, rerun, or repair a release.
 - Never dispatch or reconstruct the release workflow.
 - Never call GitHub Models or create a PAT/repository secret.
-- Never paste or apply the generated text automatically.
-- Do not proceed for a published release; highlights are generated before
-  publication.
+- Never bypass the script's stale-body, ownership-marker, or overwrite guards.
+- Never apply generated text without the required user approval.
+- Never apply while the user is concurrently editing the same draft.
 
 The hosted release workflow remains responsible for builds, tests, packages,
 checksums, deterministic notes, and draft creation. The local script reads the
-draft and the commits since the previous published release, then writes a local
-Markdown file.
+draft and the commits since the previous published release, prepares the
+reviewable highlights, and performs only the approved Changes-section update.

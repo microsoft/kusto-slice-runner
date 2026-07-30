@@ -65,14 +65,13 @@ Open `http://127.0.0.1:5057/status/health`, confirm the database path and schedu
   - framework-dependent DLL through .NET 10.
 - Confirm both ZIPs contain the start/stop scripts, required notices/docs, and `.github\skills`, but no SQLite databases, logs, credentials, `bin`, or `obj` directories.
 - Download `SHA256SUMS.txt` and verify both ZIP hashes.
-- Optionally generate a local highlights file:
-
-  ```powershell
-  pwsh -File .\scripts\New-KoLiteReleaseHighlights.ps1 -Version v1.1.0
-  ```
-
+- Optionally invoke the `ko-lite-release-highlights` skill. It auto-selects one
+  workflow-owned draft or asks you to choose among multiple eligible drafts.
 - Review every generated bullet against the complete GitHub-generated notes,
-  then paste it into the draft manually. The script must not change GitHub.
+  then explicitly approve the Changes-section edit. If Changes already contains
+  reviewed content, separately confirm any overwrite.
+- Re-open the draft and verify that `Install`, `Full Changelog`, the target, and
+  all assets are unchanged.
 - If Copilot is unavailable or validation fails, retain the deterministic notes.
 - Confirm the draft targets the intended commit. GitHub may create the Git tag only when the draft is published, and the update badge will not see the version before publication.
 - Download and run the self-contained package on a clean Windows x64 environment before publishing the draft.

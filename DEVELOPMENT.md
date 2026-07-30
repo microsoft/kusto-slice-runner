@@ -85,16 +85,17 @@ Run the **KO Lite Release** workflow from GitHub Actions with an unused
 publishes and smoke-tests both Windows x64 packages, generates checksums and
 complete release notes, and creates a draft.
 
-After the draft exists, generate optional local highlights:
+After the draft exists, invoke the `ko-lite-release-highlights` skill. It
+auto-selects a single workflow-owned draft, asks when multiple eligible drafts
+exist, previews the exact generated bullets, and edits only `## Changes` after
+explicit approval. Replacing existing non-placeholder Changes content requires
+a separate overwrite confirmation. The transient preview data is removed after
+the interaction, and publishing remains manual.
+
+For a read-only script preflight, run:
 
 ```powershell
-pwsh -File .\scripts\New-KoLiteReleaseHighlights.ps1 -Version v1.1.0
+pwsh -File .\scripts\New-KoLiteReleaseHighlights.ps1 -DryRun
 ```
 
-The workflow creates `Changes`, `Install`, and `Full Changelog` sections. The
-script reads the draft and the commits since the previous published release,
-runs local Copilot with no tools, and writes its non-empty response to a
-Markdown file under `%TEMP%`. Review it, replace the placeholder under
-`## Changes`, then review the draft and publish manually. The script never edits
-GitHub. See the
-[release guide](docs/releasing.md).
+See the [release guide](docs/releasing.md).
