@@ -13,5 +13,7 @@ commits into user-relevant changes and explaining operational impact when the gr
 it.
 
 Prefer Markdown with three to six concise top-level bullets. Start every bullet at the beginning of
-the line with exactly "- " and no leading spaces or tabs. Do not add installation guidance, a
+the line with exactly "- " and no leading spaces or tabs. Write each bullet as a single unbroken
+line: never hard-wrap a bullet across multiple lines, never add continuation or blank lines between
+bullets, and ignore any line-length or column limit. Do not add installation guidance, a
 contributor list, or unsupported claims.

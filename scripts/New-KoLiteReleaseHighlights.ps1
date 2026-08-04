@@ -699,9 +699,22 @@ function Assert-Highlights {
     if ($lines[0] -notmatch '^- [^\s]') {
         throw 'Copilot release highlights must start with a flush-left Markdown bullet.'
     }
-    $bulletCount = @($lines | Where-Object { $_ -match '^- [^\s]' }).Count
-    if ($bulletCount -lt 3 -or $bulletCount -gt 6) {
-        throw "Copilot release highlights must contain three to six top-level bullets; received $bulletCount."
+
+    $bullets = [System.Collections.Generic.List[string]]::new()
+    foreach ($line in $lines) {
+        if ([string]::IsNullOrWhiteSpace($line)) {
+            continue
+        }
+        if ($line -match '^- [^\s]') {
+            $bullets.Add($line.TrimEnd())
+        } else {
+            $bullets[$bullets.Count - 1] = "$($bullets[$bullets.Count - 1]) $($line.Trim())"
+        }
+    }
+    $normalized = $bullets -join "`n"
+
+    if ($bullets.Count -lt 3 -or $bullets.Count -gt 6) {
+        throw "Copilot release highlights must contain three to six top-level bullets; received $($bullets.Count)."
     }
 
     return $normalized
@@ -823,9 +836,13 @@ Instructions.
         throw 'Self-test did not preserve structured Copilot output.'
     }
     $indentedHighlights = "- One`n - Two`n`t- Three`n  continuation"
-    $flushLeftHighlights = "- One`n- Two`n- Three`n  continuation"
+    $flushLeftHighlights = "- One`n- Two`n- Three continuation"
     if ((Assert-Highlights -Text $indentedHighlights) -ne $flushLeftHighlights) {
         throw 'Self-test did not normalize top-level bullet indentation.'
+    }
+    $wrappedHighlights = "- One that wraps`n  onto another line`n`n- Two`n- Three`nstill three"
+    if ((Assert-Highlights -Text $wrappedHighlights) -ne "- One that wraps onto another line`n- Two`n- Three still three") {
+        throw 'Self-test did not unwrap hard-wrapped release highlight bullets.'
     }
     $terminalLink = "$([char]27)]8;;https://example.test$([char]7)https://example.test$([char]27)]8;;$([char]7)"
     $terminalHighlights = "- One $terminalLink`n- Two`n- Three"

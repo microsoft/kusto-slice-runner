@@ -62,8 +62,10 @@ For a read-only preflight, pass `-DryRun`. The skill does not retain a Markdown
 copy. If preparation or application ends in a terminal failure, delete only the
 exact transient update-plan path before ending the task.
 
-Generated top-level Markdown bullets start flush left. The script normalizes
-incidental leading spaces or tabs before bullet markers.
+Generated top-level Markdown bullets start flush left, and each bullet is a
+single unbroken line. The script normalizes incidental leading spaces or tabs
+before bullet markers, and joins any hard-wrapped continuation lines back into
+their bullet.
 
 ## Safety boundaries
 
