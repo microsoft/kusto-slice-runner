@@ -34,7 +34,7 @@ If you're familiar with [scheduled Kusto jobs](https://learn.microsoft.com/kusto
 - Detects Kusto ingestion-capacity throttling (429), shows how bad it is (the % of attempts throttled, with a trend chart), highlights slices lost to throttling, and recommends per-job `maxParallelism` reductions that never starve a job below the parallelism it needs to keep up (and only trim a backfilling job to what still clears its backlog in time); operators apply them explicitly.
 - Plans historical reruns and local state repair while leaving destructive Kusto cleanup to the operator.
 - Exposes a localhost-only JSON API so a same-machine agent can read jobs, create/update schedules (via the same validated import path as the dashboard), and soft-delete/restore a job — plus a read-only **diagnostics** API for slice states, leases, throughput, history, logs, and audit.
-- Ships **Copilot skills** in `.github/skills`: `ko-lite-job-manager` drives that API (import/upsert, pause/resume, soft-delete/restore, diagnostics), `ko-lite-schedule-json` authors and validates schedule JSON locally, `ko-lite-release-highlights` writes AI highlights for an existing release draft to a local Markdown file, and a `kusto` query helper.
+- Ships **Copilot skills** in `.github/skills`: `ko-lite-job-manager` drives that API (import/upsert, pause/resume, soft-delete/restore, diagnostics), `ko-lite-schedule-json` authors and validates schedule JSON locally, and `ko-lite-release-highlights` writes AI highlights for an existing release draft to a local Markdown file.
 - Periodically checks GitHub (via the `gh` CLI) for a newer published KO Lite release and shows an update badge in the top bar.
 
 ## Quick start from a release
@@ -54,6 +54,11 @@ az login
 Open `http://127.0.0.1:5057` and check `http://127.0.0.1:5057/status/health`. Review the configured jobs and Kusto targets before restarting without the scheduler override. The local catalog and execution history remain in `%LOCALAPPDATA%\KoLite\ko-lite.db`, outside the extracted application folder, so replacing the application folder does not replace your runtime state.
 
 GitHub CLI is optional for basic execution but is required for the update badge and Copilot-powered failure analysis. Run `gh auth login` once to enable those features.
+
+General Kusto CLI administration is intentionally not bundled as a KO Lite
+skill. Developers can separately install or register a `kusto-cli` skill in
+their Copilot environment; KO Lite repository instructions require explicit
+cluster and database arguments when it is used.
 
 ## Quick start from source
 

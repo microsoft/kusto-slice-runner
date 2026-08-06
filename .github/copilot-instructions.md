@@ -47,6 +47,29 @@ For targeted changes, run the narrow relevant test project first, then decide wh
 - `description` is optional Markdown catalog metadata, limited to 65,536 characters. It round-trips through copy, import/export, catalog history, and the single-job API schedule; it is omitted from compact API job summaries and must never enter Kusto requests or function arguments. When the schedule contract changes, keep the C# parser, standalone PowerShell validator, both schedule-management skills and templates, API docs, and tests synchronized.
 - For `.csl` and `.kql`, follow `.github\instructions\kusto.instructions.md`.
 
+## External Kusto CLI skill
+
+KO Lite does not bundle a general Kusto CLI skill. When the external
+`kusto-cli` skill is available, use it for explicit Kusto CLI requests and
+control/management commands that read-only tools cannot perform. Run its
+bundled `scripts\Invoke-KustoCli.ps1` from the loaded skill's base directory.
+
+Always confirm and pass `-ClusterUri` and `-Database` explicitly. KO Lite jobs
+can target different clusters and databases, so do not infer a target from the
+repository or app name. The only phrase-specific default is: when the user says
+“the KO Lite database” without another target, use:
+
+```text
+Cluster:  https://sample-data.centralus.kusto.windows.net
+Database: KoLite
+Auth:     Federated/Azure CLI auth (`Fed=True`)
+```
+
+Do not look for the removed `src\KoLite.Functions\local.settings.json` path or
+use the retired `__PREFIX__` preprocessing convention. If a checked-in command
+contains a placeholder, stop and resolve the intended concrete value before
+execution rather than silently rewriting it.
+
 ## Git workflow (feature branches and worktrees)
 
 By default, commit on the current branch (normally `main`); do **not** create a git branch, worktree, or pull request unless the user explicitly asks for one. When the user does ask for a feature branch or worktree, use the following format unless they specify a different name or location.
