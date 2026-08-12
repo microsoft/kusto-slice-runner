@@ -14,7 +14,7 @@ If you're familiar with [scheduled Kusto jobs](https://learn.microsoft.com/kusto
 - You can rerun slices! Click on any slice in the colorful window history view and then click "Rerun this slice" to get into that experience. This will properly handle dependent jobs too, but you'll need to make sure the Kusto tables are ready to accept the new data. KO Lite only reruns the jobs, it doesn't delete old data.
 - You can both soft delete a job (keep the history to be resurrected in the future) or hard delete a job (permanently remove it and its history). Hard-delete avoids any problems around re-creating a job with the same id as a previous one.
 - Pausing a job immediately blocks any future scheduling from happening. This includes retry loops! So when you pause a job, it will continue any in-flight set-or-append command but if that fails, it won't retry. After you unpause, it will pick up where it left off in the retry logic.
-- Inside any job, open the Operations tab and click "Analyze failures" for a Copilot-written analysis of recent issues. It reuses your GitHub CLI sign-in to get access to powerful models without any extra resource deployments.
+- Inside any job, open the Operations tab and click "Analyze failures" for a Copilot-written analysis of recent issues. It invokes GitHub Copilot CLI in non-interactive, no-tools mode, so no separate model endpoint or resource deployment is needed.
 - You can visualize job dependencies and then also add Kusto functions and table schema depdendencies to the map.
 - You can now add tags to your jobs and then filter them in the UI. This helps you handle multiple workstreams in a single instance.
 - A combination of skills and an API make it easy to use GHCP to manage and maintain your jobs.
@@ -53,7 +53,7 @@ az login
 
 Open `http://127.0.0.1:5057` and check `http://127.0.0.1:5057/status/health`. Review the configured jobs and Kusto targets before restarting without the scheduler override. The local catalog and execution history remain in `%LOCALAPPDATA%\KoLite\ko-lite.db`, outside the extracted application folder, so replacing the application folder does not replace your runtime state.
 
-GitHub CLI is optional for basic execution but is required for the update badge and Copilot-powered failure analysis. Run `gh auth login` once to enable those features.
+GitHub CLI is optional for basic execution but is required for the update badge; run `gh auth login` once to enable update checks. Copilot-powered failure analysis separately requires [GitHub Copilot CLI](https://docs.github.com/copilot/how-tos/use-copilot-agents/use-copilot-cli); install the `copilot` command and run `copilot login` once.
 
 General Kusto CLI administration is intentionally not bundled as a KO Lite
 skill. Developers can separately install or register a `kusto-cli` skill in

@@ -8,6 +8,7 @@ This guide covers repository layout and local validation commands for KO Lite co
 - Node.js and npm for restoring the bundled browser assets (Chart.js, Cytoscape.js, and marked).
 - Azure CLI sign-in for default Kusto auth, or managed identity configuration for service-style runs.
 - Kusto permissions to execute the configured function and append to the configured output table when live scheduling is enabled.
+- Optional: GitHub Copilot CLI plus `copilot login` for the dashboard's on-demand failure analysis.
 
 ## Project layout
 

@@ -43,6 +43,8 @@ namespace KoLite.LocalApp.Tests
             Assert.Contains("data-analyze-status", page);
             Assert.Contains("data-analyze-output", page);
             Assert.Contains("__RequestVerificationToken", page);
+            Assert.Contains("GitHub Copilot CLI in no-tools mode", page);
+            Assert.Contains("copilot login", page);
         }
 
         [Fact]

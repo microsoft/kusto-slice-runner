@@ -339,21 +339,22 @@ LIMIT 30;
 
 ## Analyze failures with Copilot
 
-From a job's **Operations** tab, **Analyze failures** asks Copilot to explain the job's recent failures. KO Lite sends secret-sanitized failure evidence (error codes and messages, attempts, and recent slice states) to an OpenAI-compatible endpoint — **GitHub Models** by default — through the `Microsoft.Extensions.AI` `IChatClient`, then renders the returned Markdown in the panel. It writes nothing to Kusto and persists no analysis remotely.
+From a job's **Operations** tab, **Analyze failures** asks Copilot to explain the job's recent failures. KO Lite sends secret-sanitized failure evidence (error codes and messages, attempts, and recent slice states) to **GitHub Copilot CLI** through a non-interactive `copilot -p` child process, then renders the returned Markdown in the panel. It writes nothing to Kusto and KO Lite does not persist the analysis.
 
-Like the update check, authentication reuses the **GitHub CLI (`gh`)** sign-in: the token is fetched on demand via `gh auth token`, so there is no token to configure. When `gh` is missing or signed out, the panel shows `gh auth login` guidance. The feature requires **GitHub Models** to be enabled for your account or organization.
+Install GitHub Copilot CLI so the `copilot` command is on `PATH`, then run `copilot login` once. Failure analysis uses that CLI's Copilot subscription and sign-in; it does not reuse the separate GitHub CLI (`gh`) update-check token. When Copilot CLI is missing, signed out, or cannot access Copilot, the panel shows targeted install or login guidance.
+
+The child process is deliberately non-agentic: KO Lite disables all tools, built-in MCP servers, repository custom instructions, remote control/export, and automatic CLI updates for the invocation. Failure messages are treated as untrusted evidence, not instructions. Only the final text response is accepted.
 
 Configure it under `KoLite:CopilotAnalysis`:
 
 | Key | Default | Purpose |
 | --- | --- | --- |
 | `Enabled` | `true` | Set `false` to disable the feature. |
-| `Endpoint` | `https://models.github.ai/inference` | Any OpenAI-compatible inference endpoint. |
-| `Model` | `openai/gpt-4.1` | Model id served by the endpoint. |
+| `Executable` | `copilot` | Copilot CLI executable name or explicit path. |
+| `Model` | `auto` | Copilot model selection; `auto` lets Copilot choose, or set a supported model id. |
 | `TimeoutSeconds` | `120` | Per-request timeout. |
-| `MaxOutputTokens` | (unset) | Optional cap on response length. |
 
-Point `Endpoint`/`Model` at any OpenAI-compatible gateway to use a different or stronger model without a code change.
+GitHub Models and its inference API were retired on July 30, 2026, so KO Lite does not call `models.github.ai`.
 
 ## Rerun and cleanup
 

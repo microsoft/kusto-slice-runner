@@ -181,7 +181,7 @@ else
                     <button type="button" class="btn primary" data-analyze-failures>Analyze failures</button>
                 </div>
                 @Html.AntiForgeryToken()
-                <p class="muted">Sends this job's recent failure evidence (secret-sanitized) to Copilot via GitHub Models, using your GitHub CLI sign-in (<code>gh auth login</code>), and shows a root-cause analysis. Nothing is sent until you select <em>Analyze failures</em>.</p>
+                <p class="muted">Sends this job's recent failure evidence (secret-sanitized) to GitHub Copilot CLI in no-tools mode and shows a root-cause analysis. Install the <code>copilot</code> command and run <code>copilot login</code> once. Nothing is sent until you select <em>Analyze failures</em>.</p>
                 <div class="analyze-status" data-analyze-status hidden></div>
                 <div class="analyze-output markdown-body" data-analyze-output hidden></div>
             </div>

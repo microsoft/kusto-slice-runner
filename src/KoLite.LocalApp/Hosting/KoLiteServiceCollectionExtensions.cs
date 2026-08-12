@@ -125,17 +125,14 @@ namespace KoLite.LocalApp
             services.AddHostedService<LocalUpdateCheckBackgroundService>();
         }
 
-        // "Analyze failures with Copilot": an OpenAI-compatible IChatClient (GitHub Models by default)
-        // behind the existing IFailureSummaryRunner seam, plus the ephemeral in-memory run registry and
-        // the background orchestrator. Nothing here contacts the model until an operator triggers a run.
-        // Authentication is automatic: the token is resolved on demand from the operator's GitHub CLI
-        // sign-in (gh auth token) via ICopilotAnalysisTokenProvider, so no personal access token is stored.
+        // "Analyze failures with Copilot": a non-interactive, no-tools Copilot CLI process behind the
+        // existing IFailureSummaryRunner seam, plus the ephemeral in-memory run registry and background
+        // orchestrator. Nothing invokes Copilot until an operator triggers a run.
         private static void AddFailureAnalysis(IServiceCollection services, IConfiguration configuration)
         {
             services.AddSingleton(_ => CopilotAnalysisOptions.From(configuration));
-            services.AddSingleton<ICopilotAnalysisTokenProvider, GhCliCopilotAnalysisTokenProvider>();
-            services.AddSingleton<ICopilotAnalysisChatClientFactory, OpenAiChatClientFactory>();
-            services.AddSingleton<IFailureSummaryRunner, ChatClientFailureSummaryRunner>();
+            services.AddSingleton<ICopilotCliInvoker, CopilotCliInvoker>();
+            services.AddSingleton<IFailureSummaryRunner, CopilotCliFailureSummaryRunner>();
             services.AddSingleton<FailureAnalysisRunRegistry>();
             services.AddSingleton<FailureAnalysisOrchestrator>();
             services.AddScoped<FailureAnalysisPromptBuilder>();
