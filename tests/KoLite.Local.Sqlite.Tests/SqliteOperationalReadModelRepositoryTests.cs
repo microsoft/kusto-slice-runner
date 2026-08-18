@@ -180,6 +180,23 @@ namespace KoLite.Local.Sqlite.Tests
         }
 
         [Fact]
+        public void Recent_throughput_counts_complete_logical_windows_not_successful_chunks()
+        {
+            catalog.Create(Schedule("job.obs.chunks", chunks: 2));
+            state.Append("chunk-window-0", JobId("job.obs.chunks"), At(0), At(5), DurableSliceStatus.Completed, expectedVersion: 0);
+            state.Append("chunk-window-1", JobId("job.obs.chunks"), At(5), At(10), DurableSliceStatus.Queued, expectedVersion: 0);
+            readModels.RecordAttempt("chunk-0-0", JobId("job.obs.chunks"), At(0), At(5), 1, "Succeeded", "worker", At(50), At(59), chunkId: 0, totalChunks: 2);
+            readModels.RecordAttempt("chunk-0-1", JobId("job.obs.chunks"), At(0), At(5), 1, "Succeeded", "worker", At(61), At(71), chunkId: 1, totalChunks: 2);
+            readModels.RecordAttempt("chunk-1-0", JobId("job.obs.chunks"), At(5), At(10), 1, "Succeeded", "worker", At(80), At(90), chunkId: 0, totalChunks: 2);
+
+            var sample = readModels.GetRecentSucceededThroughput(JobId("job.obs.chunks"), At(60));
+
+            Assert.Equal(1, sample.SucceededCount);
+            Assert.Equal(At(71), sample.FirstCompletedUtc);
+            Assert.Equal(At(71), sample.LastCompletedUtc);
+        }
+
+        [Fact]
         public void Recent_slice_states_returns_newest_first_bounded_by_window()
         {
             catalog.Create(Schedule("job.obs2"));
@@ -233,7 +250,7 @@ namespace KoLite.Local.Sqlite.Tests
             return new Guid(bytes).ToString("N");
         }
 
-        private static string Schedule(string activityId) => $$"""
+        private static string Schedule(string activityId, int? chunks = null) => $$"""
         {
           "id": "{{JobId(activityId)}}",
           "activityId": "{{activityId}}",
@@ -243,6 +260,7 @@ namespace KoLite.Local.Sqlite.Tests
           "delayFromUtcNow": "00:00:00",
           "maxParallelism": 2,
           "queryTimeout": "00:01:00",
+          {{(chunks is null ? string.Empty : $"\"chunks\": {chunks},")}}
           "isPaused": false,
           "startFrom": "2026-01-01T00:00:00Z",
           "target": { "clusterUri": "https://kolite-example.invalid", "database": "DemoDb" }

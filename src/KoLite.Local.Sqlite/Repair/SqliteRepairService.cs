@@ -40,7 +40,8 @@ namespace KoLite.Local.Sqlite.Repair
         DateTimeOffset EndUtc,
         DurableSliceStatus CurrentStatus,
         RepairSliceOutcome Outcome,
-        string? Detail);
+        string? Detail,
+        IReadOnlyList<int>? ChunkIds = null);
 
     // Write-free projection of what PlanAndEnqueue would do for the same request.
     public sealed record RepairPreviewResult(
@@ -50,7 +51,9 @@ namespace KoLite.Local.Sqlite.Repair
         int Repairable,
         int Blocked,
         int Skipped,
-        IReadOnlyList<RepairSlicePreview> Slices);
+        IReadOnlyList<RepairSlicePreview> Slices,
+        int RepairableExecutions,
+        string PreviewToken);
 
     public sealed class SqliteRepairService
     {
@@ -59,14 +62,16 @@ namespace KoLite.Local.Sqlite.Repair
         private readonly SqliteSliceStateRepository state;
         private readonly SqliteWorkQueueRepository queue;
         private readonly IClock clock;
+        private readonly SqliteChunkStateRepository? chunkState;
 
-        public SqliteRepairService(IKoLiteSqliteConnectionFactory connectionFactory, SqliteJobCatalogRepository catalog, SqliteSliceStateRepository state, SqliteWorkQueueRepository queue, IClock clock)
+        public SqliteRepairService(IKoLiteSqliteConnectionFactory connectionFactory, SqliteJobCatalogRepository catalog, SqliteSliceStateRepository state, SqliteWorkQueueRepository queue, IClock clock, SqliteChunkStateRepository? chunkState = null)
         {
             this.connectionFactory = connectionFactory;
             this.catalog = catalog;
             this.state = state;
             this.queue = queue;
             this.clock = clock;
+            this.chunkState = chunkState;
         }
 
         public RepairPlanResult PlanAndEnqueue(RepairPlanRequest request)
@@ -113,6 +118,66 @@ namespace KoLite.Local.Sqlite.Repair
                     continue;
                 }
 
+                if (job.Definition.Chunks is { } totalChunks)
+                {
+                    var chunks = chunkState
+                        ?? throw new InvalidOperationException("Chunk state persistence is required to repair a chunked job.");
+                    var failedChunks = chunks.List(slice)
+                        .Where(child => child.Status is DurableSliceStatus.Failed or DurableSliceStatus.DeadLettered)
+                        .OrderBy(child => child.ChunkId)
+                        .ToArray();
+                    if (failedChunks.Length == 0)
+                    {
+                        skipped++;
+                        UpsertRepairSlice(batchId, slice, RepairSliceStatus.Skipped, null, "No failed chunks remain for this slice.");
+                        continue;
+                    }
+
+                    string? firstQueueItemId = null;
+                    foreach (var child in failedChunks)
+                    {
+                        var execution = child.Execution;
+                        var payloadJson = JsonSerializer.Serialize(new
+                        {
+                            workKind = "Repair",
+                            repairBatchId = batchId,
+                            outputStrategy = request.OutputStrategy.ToString(),
+                            sliceKey = slice.ToKey().Value,
+                            executionKey = execution.ExecutionKey,
+                            chunkId = execution.ChunkId,
+                            totalChunks,
+                        });
+                        var queueItemId = chunks.RequeueFailedAndEnqueue(
+                            $"repair-queue|{batchId}|{execution.ExecutionKey}",
+                            execution,
+                            request.RequestedBy,
+                            request.Reason,
+                            $"repair|{batchId}|{execution.ExecutionKey}",
+                            clock.UtcNow,
+                            priority: 100,
+                            queueName: "default",
+                            maxAttempts: 3,
+                            payloadJson);
+                        if (queueItemId is null)
+                        {
+                            continue;
+                        }
+
+                        firstQueueItemId ??= queueItemId;
+                    }
+
+                    if (firstQueueItemId is null)
+                    {
+                        skipped++;
+                        UpsertRepairSlice(batchId, slice, RepairSliceStatus.Skipped, null, "Chunk state changed while the repair was being applied.");
+                        continue;
+                    }
+
+                    queued++;
+                    UpsertRepairSlice(batchId, slice, RepairSliceStatus.Queued, firstQueueItemId, $"Requeued {failedChunks.Length} failed chunk(s).");
+                    continue;
+                }
+
                 // A worker can move this slice between classification and here (its state was read a moment
                 // ago). state.Append then throws on the version mismatch. Skipping that one slice - rather
                 // than letting the exception abort the loop - matters because earlier slices are already
@@ -151,13 +216,40 @@ namespace KoLite.Local.Sqlite.Repair
         public RepairPreviewResult Preview(RepairPlanRequest request)
         {
             var job = catalog.Get(request.JobId) ?? throw new InvalidOperationException($"Job '{request.JobId}' does not exist.");
-            var slices = Classify(job, request)
-                .Select(candidate => new RepairSlicePreview(
-                    candidate.Slice.StartUtc,
-                    candidate.Slice.EndUtc,
-                    candidate.Current.Status,
-                    candidate.Outcome,
-                    candidate.Detail))
+            var candidates = Classify(job, request).ToArray();
+            var tokenParts = new List<string> { request.JobId, SqliteStorage.Utc(request.StartUtc), SqliteStorage.Utc(request.EndUtc) };
+            var repairableExecutions = 0;
+            var slices = candidates
+                .Select(candidate =>
+                {
+                    IReadOnlyList<int>? chunkIds = null;
+                    if (candidate.Outcome == RepairSliceOutcome.Repairable && job.Definition.Chunks is not null)
+                    {
+                        var chunks = chunkState
+                            ?? throw new InvalidOperationException("Chunk state persistence is required to preview a chunked repair.");
+                        var failed = chunks.List(candidate.Slice)
+                            .Where(child => child.Status is DurableSliceStatus.Failed or DurableSliceStatus.DeadLettered)
+                            .OrderBy(child => child.ChunkId)
+                            .ToArray();
+                        chunkIds = failed.Select(child => child.ChunkId).ToArray();
+                        repairableExecutions += failed.Length;
+                        tokenParts.AddRange(failed.Select(child =>
+                            $"{child.Execution.ExecutionKey}:{child.Status}:{child.Attempt}:{SqliteStorage.Utc(child.UpdatedAtUtc)}"));
+                    }
+                    else if (candidate.Outcome == RepairSliceOutcome.Repairable)
+                    {
+                        repairableExecutions++;
+                        tokenParts.Add($"{candidate.Slice.ToKey().Value}:{candidate.Current.Status}:{candidate.Current.Version}");
+                    }
+
+                    return new RepairSlicePreview(
+                        candidate.Slice.StartUtc,
+                        candidate.Slice.EndUtc,
+                        candidate.Current.Status,
+                        candidate.Outcome,
+                        candidate.Detail,
+                        chunkIds);
+                })
                 .ToArray();
 
             return new RepairPreviewResult(
@@ -167,7 +259,9 @@ namespace KoLite.Local.Sqlite.Repair
                 slices.Count(s => s.Outcome == RepairSliceOutcome.Repairable),
                 slices.Count(s => s.Outcome == RepairSliceOutcome.Blocked),
                 slices.Count(s => s.Outcome == RepairSliceOutcome.Skipped),
-                slices);
+                slices,
+                repairableExecutions,
+                StableId(tokenParts.ToArray()));
         }
 
         // Single source of truth for repair eligibility, shared by Preview and PlanAndEnqueue.
@@ -313,6 +407,55 @@ namespace KoLite.Local.Sqlite.Repair
 
             var now = clock.UtcNow;
             var slice = new SliceRange(jobId, sliceStartUtc, sliceEndUtc);
+
+            if (job.Definition.Chunks is not null)
+            {
+                var chunks = chunkState
+                    ?? throw new InvalidOperationException("Chunk state persistence is required to recover a chunked job.");
+                var orphanedChunks = chunks.List(slice)
+                    .Where(child => child.Status == DurableSliceStatus.Running
+                        && (child.LeaseExpiresAtUtc is null || child.LeaseExpiresAtUtc <= now.ToUniversalTime()))
+                    .ToArray();
+                var queueRows = queue.List(jobId)
+                    .Where(item => item.SliceStartUtc == sliceStartUtc && item.SliceEndUtc == sliceEndUtc)
+                    .ToArray();
+                var queueRequeued = queue.RequeueExpiredLease(jobId, sliceStartUtc, sliceEndUtc, now, now);
+                var stateChanged = false;
+                foreach (var child in orphanedChunks)
+                {
+                    stateChanged |= chunks.RequeueExpiredLease(
+                        $"recover-orphan|{Guid.NewGuid():N}",
+                        child.Execution,
+                        requestedBy,
+                        reason,
+                        now);
+                    if (!queueRows.Any(item => item.ChunkId == child.ChunkId))
+                    {
+                        queue.Enqueue(
+                            jobId,
+                            sliceStartUtc,
+                            sliceEndUtc,
+                            $"recover|{Guid.NewGuid():N}|{child.Execution.ExecutionKey}",
+                            now,
+                            priority: 100,
+                            payloadJson: JsonSerializer.Serialize(new
+                            {
+                                workKind = "RecoverOrphan",
+                                recoveredBy = requestedBy,
+                                sliceKey = slice.ToKey().Value,
+                                executionKey = child.Execution.ExecutionKey,
+                                chunkId = child.ChunkId,
+                                totalChunks = child.TotalChunks,
+                            }),
+                            chunkId: child.ChunkId,
+                            totalChunks: child.TotalChunks);
+                        queueRequeued = true;
+                    }
+                }
+
+                return queueRequeued || stateChanged;
+            }
+
             var current = state.Get(jobId, sliceStartUtc, sliceEndUtc);
 
             var requeued = queue.RequeueExpiredLease(jobId, sliceStartUtc, sliceEndUtc, now, now);

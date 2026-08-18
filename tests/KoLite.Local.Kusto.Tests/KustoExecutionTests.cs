@@ -21,12 +21,76 @@ namespace KoLite.Local.Kusto.Tests
             Assert.Equal("OutputTable", request.OutputTable);
             Assert.Equal("https://kolite-example.invalid/", request.ClusterUri.ToString());
             Assert.Equal("job_kusto|2026-01-01T00:00:00.0000000Z|2026-01-01T00:05:00.0000000Z", request.SliceKey);
+            Assert.Equal(request.SliceKey, request.ExecutionKey);
+            Assert.Null(request.ChunkId);
+            Assert.Null(request.TotalChunks);
             Assert.Equal("ko-lite:job_kusto|2026-01-01T00:00:00.0000000Z|2026-01-01T00:05:00.0000000Z", request.IdempotencyKey);
             Assert.Contains(".set-or-append OutputTable with (ingestIfNotExists", request.CommandText);
             Assert.Contains("tags = \"[\\\"ingest-by:ko-lite:job_kusto", request.CommandText);
             Assert.Contains("KustoFunction(datetime(2026-01-01T00:00:00.0000000Z), datetime(2026-01-01T00:05:00.0000000Z), dynamic({ \"mode\": \"scalar\", \"limit\": 10 }))", request.CommandText);
             Assert.DoesNotContain("sliceStart", request.CommandText, StringComparison.Ordinal);
             Assert.DoesNotContain("sliceEnd", request.CommandText, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void Request_builder_constructs_distinct_stable_chunk_ingestion_identities()
+        {
+            var builder = new KustoRequestBuilder();
+            var job = Job() with { Chunks = 2 };
+            var slice = new SliceRange("job_kusto", At(0), At(5));
+
+            var first = builder.Build(job, SliceExecutionUnit.Chunk(slice, 0, 2));
+            var firstReplay = builder.Build(job, SliceExecutionUnit.Chunk(slice, 0, 2));
+            var second = builder.Build(job, SliceExecutionUnit.Chunk(slice, 1, 2));
+
+            Assert.Equal($"{slice.ToKey().Value}|chunk|0|2", first.ExecutionKey);
+            Assert.Equal(0, first.ChunkId);
+            Assert.Equal(2, first.TotalChunks);
+            Assert.Equal(first.IdempotencyKey, firstReplay.IdempotencyKey);
+            Assert.Equal(first.IngestByTag, firstReplay.IngestByTag);
+            Assert.NotEqual(first.IdempotencyKey, second.IdempotencyKey);
+            Assert.Equal($"ko-lite:{first.ExecutionKey}", first.IdempotencyKey);
+            Assert.Equal($"ingest-by:{first.IdempotencyKey}", first.IngestByTag);
+            Assert.Contains($"ingestIfNotExists = \"[\\\"{first.IdempotencyKey}\\\"]\"", first.CommandText, StringComparison.Ordinal);
+            Assert.Contains($"tags = \"[\\\"{first.IngestByTag}\\\"]\"", first.CommandText, StringComparison.Ordinal);
+            Assert.Contains("KustoFunction(datetime(2026-01-01T00:00:00.0000000Z), datetime(2026-01-01T00:05:00.0000000Z), 0, 2, dynamic({ \"mode\": \"scalar\", \"limit\": 10 }))", first.CommandText);
+        }
+
+        [Fact]
+        public void Request_builder_requires_chunk_identity_to_match_the_schedule()
+        {
+            var builder = new KustoRequestBuilder();
+            var slice = new SliceRange("job_kusto", At(0), At(5));
+
+            Assert.Throws<InvalidOperationException>(() => builder.Build(Job() with { Chunks = 2 }, slice));
+            Assert.Throws<InvalidOperationException>(() => builder.Build(Job(), SliceExecutionUnit.Chunk(slice, 0, 2)));
+            Assert.Throws<InvalidOperationException>(() => builder.Build(Job() with { Chunks = 2 }, SliceExecutionUnit.Chunk(slice, 0, 3)));
+        }
+
+        [Fact]
+        public void Request_builder_places_chunk_arguments_before_job_settings_and_supports_chunks_one()
+        {
+            var request = new KustoRequestBuilder().Build(
+                Job() with { Chunks = 1 },
+                SliceExecutionUnit.Chunk(new SliceRange("job_kusto", At(0), At(5)), 0, 1));
+
+            Assert.Contains(", 0, 1, dynamic({ \"mode\": \"scalar\", \"limit\": 10 }))", request.CommandText, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void Request_builder_generates_unique_ingestion_identity_for_all_32_chunks()
+        {
+            var builder = new KustoRequestBuilder();
+            var job = Job() with { Chunks = 32 };
+            var slice = new SliceRange("job_kusto", At(0), At(5));
+
+            var requests = Enumerable.Range(0, 32)
+                .Select(chunkId => builder.Build(job, SliceExecutionUnit.Chunk(slice, chunkId, 32)))
+                .ToArray();
+
+            Assert.Equal(32, requests.Select(request => request.IdempotencyKey).Distinct(StringComparer.Ordinal).Count());
+            Assert.Equal(32, requests.Select(request => request.IngestByTag).Distinct(StringComparer.Ordinal).Count());
+            Assert.All(requests, request => Assert.Equal($"ingest-by:{request.IdempotencyKey}", request.IngestByTag));
         }
 
         [Theory]

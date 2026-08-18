@@ -150,17 +150,40 @@ namespace KoLite.LocalApp.Ui
         {
             using var c = connectionFactory.OpenConnection();
             using var cmd = SqliteStorage.Command(c, null, """
+                WITH candidates AS (
+                  SELECT DISTINCT job_id, slice_start_utc, slice_end_utc
+                  FROM slice_attempts
+                  WHERE completed_at_utc IS NOT NULL
+                    AND completed_at_utc >= $d30
+                    AND status IN ('Succeeded','Failed','DeadLettered')
+                ),
+                logical_attempts AS (
+                  SELECT sa.job_id,
+                         sa.slice_start_utc,
+                         sa.slice_end_utc,
+                         MAX(sa.completed_at_utc) AS completed_at_utc,
+                         COALESCE(json_extract(jd.schedule_json, '$.chunks'), 1) AS expected_executions,
+                         COUNT(DISTINCT CASE WHEN sa.status='Succeeded' THEN COALESCE(sa.chunk_id, -1) END) AS succeeded_executions,
+                         MAX(CASE WHEN sa.status IN ('Failed','DeadLettered') THEN 1 ELSE 0 END) AS has_terminal_failure
+                  FROM slice_attempts sa
+                  JOIN candidates candidate
+                    ON candidate.job_id = sa.job_id
+                   AND candidate.slice_start_utc = sa.slice_start_utc
+                   AND candidate.slice_end_utc = sa.slice_end_utc
+                  JOIN job_definitions jd ON jd.job_id = sa.job_id
+                  WHERE sa.completed_at_utc IS NOT NULL
+                    AND sa.status IN ('Succeeded','Failed','DeadLettered')
+                  GROUP BY sa.job_id, sa.slice_start_utc, sa.slice_end_utc
+                )
                 SELECT
-                  SUM(CASE WHEN status='Succeeded' AND completed_at_utc >= $d1 THEN 1 ELSE 0 END),
-                  SUM(CASE WHEN status IN ('Failed','DeadLettered') AND completed_at_utc >= $d1 THEN 1 ELSE 0 END),
-                  SUM(CASE WHEN status='Succeeded' AND completed_at_utc >= $d7 THEN 1 ELSE 0 END),
-                  SUM(CASE WHEN status IN ('Failed','DeadLettered') AND completed_at_utc >= $d7 THEN 1 ELSE 0 END),
-                  SUM(CASE WHEN status='Succeeded' THEN 1 ELSE 0 END),
-                  SUM(CASE WHEN status IN ('Failed','DeadLettered') THEN 1 ELSE 0 END)
-                FROM slice_attempts
-                WHERE completed_at_utc IS NOT NULL
-                  AND completed_at_utc >= $d30
-                  AND status IN ('Succeeded','Failed','DeadLettered');
+                  SUM(CASE WHEN succeeded_executions >= expected_executions AND completed_at_utc >= $d1 THEN 1 ELSE 0 END),
+                  SUM(CASE WHEN succeeded_executions < expected_executions AND has_terminal_failure=1 AND completed_at_utc >= $d1 THEN 1 ELSE 0 END),
+                  SUM(CASE WHEN succeeded_executions >= expected_executions AND completed_at_utc >= $d7 THEN 1 ELSE 0 END),
+                  SUM(CASE WHEN succeeded_executions < expected_executions AND has_terminal_failure=1 AND completed_at_utc >= $d7 THEN 1 ELSE 0 END),
+                  SUM(CASE WHEN succeeded_executions >= expected_executions THEN 1 ELSE 0 END),
+                  SUM(CASE WHEN succeeded_executions < expected_executions AND has_terminal_failure=1 THEN 1 ELSE 0 END)
+                FROM logical_attempts
+                WHERE completed_at_utc >= $d30;
                 """);
             cmd.Add("$d1", SqliteStorage.Utc(now - TimeSpan.FromDays(1)));
             cmd.Add("$d7", SqliteStorage.Utc(now - TimeSpan.FromDays(7)));
@@ -183,13 +206,36 @@ namespace KoLite.LocalApp.Ui
             var failed = new int[window.Count];
 
             const string commandText = """
+                WITH candidates AS (
+                  SELECT DISTINCT job_id, slice_start_utc, slice_end_utc
+                  FROM slice_attempts
+                  WHERE completed_at_utc IS NOT NULL
+                    AND completed_at_utc >= $since AND completed_at_utc < $until
+                    AND status IN ('Succeeded','Failed','DeadLettered')
+                ),
+                logical_attempts AS (
+                  SELECT sa.job_id,
+                         sa.slice_start_utc,
+                         sa.slice_end_utc,
+                         MAX(sa.completed_at_utc) AS completed_at_utc,
+                         COALESCE(json_extract(jd.schedule_json, '$.chunks'), 1) AS expected_executions,
+                         COUNT(DISTINCT CASE WHEN sa.status='Succeeded' THEN COALESCE(sa.chunk_id, -1) END) AS succeeded_executions,
+                         MAX(CASE WHEN sa.status IN ('Failed','DeadLettered') THEN 1 ELSE 0 END) AS has_terminal_failure
+                  FROM slice_attempts sa
+                  JOIN candidates candidate
+                    ON candidate.job_id = sa.job_id
+                   AND candidate.slice_start_utc = sa.slice_start_utc
+                   AND candidate.slice_end_utc = sa.slice_end_utc
+                  JOIN job_definitions jd ON jd.job_id = sa.job_id
+                  WHERE sa.completed_at_utc IS NOT NULL
+                    AND sa.status IN ('Succeeded','Failed','DeadLettered')
+                  GROUP BY sa.job_id, sa.slice_start_utc, sa.slice_end_utc
+                )
                 SELECT (CAST(strftime('%s', completed_at_utc) AS INTEGER) / $bucket) * $bucket AS bucket_epoch,
-                       SUM(CASE WHEN status='Succeeded' THEN 1 ELSE 0 END) AS succeeded_count,
-                       SUM(CASE WHEN status IN ('Failed','DeadLettered') THEN 1 ELSE 0 END) AS failed_count
-                FROM slice_attempts
-                WHERE completed_at_utc IS NOT NULL
-                  AND completed_at_utc >= $since AND completed_at_utc < $until
-                  AND status IN ('Succeeded','Failed','DeadLettered')
+                       SUM(CASE WHEN succeeded_executions >= expected_executions THEN 1 ELSE 0 END) AS succeeded_count,
+                       SUM(CASE WHEN succeeded_executions < expected_executions AND has_terminal_failure=1 THEN 1 ELSE 0 END) AS failed_count
+                FROM logical_attempts
+                WHERE completed_at_utc >= $since AND completed_at_utc < $until
                 GROUP BY bucket_epoch;
                 """;
 

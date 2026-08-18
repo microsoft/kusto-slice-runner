@@ -31,6 +31,15 @@ namespace KoLite.Local.Sqlite.Schema
             // must run outside a transaction, so it is set before the schema statements run.
             ExecuteNonQuery(connection, "PRAGMA journal_mode = WAL;");
             ExecuteNonQuery(connection, SchemaSql);
+            EnsureColumn(connection, "work_queue", "chunk_id", "INTEGER NULL");
+            EnsureColumn(connection, "work_queue", "total_chunks", "INTEGER NULL");
+            EnsureColumn(connection, "slice_attempts", "chunk_id", "INTEGER NULL");
+            EnsureColumn(connection, "slice_attempts", "total_chunks", "INTEGER NULL");
+            EnsureColumn(connection, "operational_logs", "chunk_id", "INTEGER NULL");
+            EnsureColumn(connection, "operational_logs", "total_chunks", "INTEGER NULL");
+            EnsureColumn(connection, "ingestion_throttle_observations", "chunk_id", "INTEGER NULL");
+            EnsureColumn(connection, "ingestion_throttle_observations", "total_chunks", "INTEGER NULL");
+            ExecuteNonQuery(connection, AdditiveIndexSql);
         }
 
         private static void ExecuteNonQuery(SqliteConnection connection, string sql)
@@ -38,6 +47,19 @@ namespace KoLite.Local.Sqlite.Schema
             using var command = connection.CreateCommand();
             command.CommandText = sql;
             command.ExecuteNonQuery();
+        }
+
+        private static void EnsureColumn(SqliteConnection connection, string table, string column, string definition)
+        {
+            using var check = connection.CreateCommand();
+            check.CommandText = $"SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name = $column;";
+            check.Parameters.AddWithValue("$column", column);
+            if (Convert.ToInt32(check.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture) != 0)
+            {
+                return;
+            }
+
+            ExecuteNonQuery(connection, $"ALTER TABLE {table} ADD COLUMN {column} {definition};");
         }
 
         private const string SchemaSql = """
@@ -111,6 +133,47 @@ namespace KoLite.Local.Sqlite.Schema
                 FOREIGN KEY (last_event_id) REFERENCES slice_state_events(event_id) ON DELETE SET NULL
             );
 
+            CREATE TABLE IF NOT EXISTS slice_chunk_state_events (
+                event_id TEXT NOT NULL PRIMARY KEY,
+                job_id TEXT NOT NULL,
+                slice_start_utc TEXT NOT NULL,
+                slice_end_utc TEXT NOT NULL,
+                chunk_id INTEGER NOT NULL,
+                total_chunks INTEGER NOT NULL,
+                state TEXT NOT NULL,
+                reason TEXT NULL,
+                attempt INTEGER NOT NULL DEFAULT 0,
+                payload_json TEXT NOT NULL DEFAULT '{}',
+                actor TEXT NULL,
+                recorded_at_utc TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+                FOREIGN KEY (job_id, slice_start_utc, slice_end_utc)
+                    REFERENCES current_slice_state(job_id, slice_start_utc, slice_end_utc) ON DELETE CASCADE,
+                CHECK (total_chunks >= 1 AND total_chunks <= 32),
+                CHECK (chunk_id >= 0 AND chunk_id < total_chunks)
+            );
+
+            CREATE TABLE IF NOT EXISTS current_slice_chunk_state (
+                job_id TEXT NOT NULL,
+                slice_start_utc TEXT NOT NULL,
+                slice_end_utc TEXT NOT NULL,
+                chunk_id INTEGER NOT NULL,
+                total_chunks INTEGER NOT NULL,
+                state TEXT NOT NULL,
+                attempt INTEGER NOT NULL DEFAULT 0,
+                lease_owner TEXT NULL,
+                lease_expires_at_utc TEXT NULL,
+                last_event_id TEXT NULL,
+                last_error_code TEXT NULL,
+                last_error_message TEXT NULL,
+                updated_at_utc TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+                PRIMARY KEY (job_id, slice_start_utc, slice_end_utc, chunk_id),
+                FOREIGN KEY (job_id, slice_start_utc, slice_end_utc)
+                    REFERENCES current_slice_state(job_id, slice_start_utc, slice_end_utc) ON DELETE CASCADE,
+                FOREIGN KEY (last_event_id) REFERENCES slice_chunk_state_events(event_id) ON DELETE SET NULL,
+                CHECK (total_chunks >= 1 AND total_chunks <= 32),
+                CHECK (chunk_id >= 0 AND chunk_id < total_chunks)
+            );
+
             CREATE TABLE IF NOT EXISTS work_queue (
                 queue_item_id TEXT NOT NULL PRIMARY KEY,
                 job_id TEXT NOT NULL,
@@ -126,6 +189,8 @@ namespace KoLite.Local.Sqlite.Schema
                 max_attempts INTEGER NOT NULL DEFAULT 3,
                 idempotency_key TEXT NOT NULL UNIQUE,
                 payload_json TEXT NOT NULL DEFAULT '{}',
+                chunk_id INTEGER NULL,
+                total_chunks INTEGER NULL,
                 created_at_utc TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
                 updated_at_utc TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
                 FOREIGN KEY (job_id) REFERENCES job_definitions(job_id) ON DELETE CASCADE,
@@ -159,6 +224,8 @@ namespace KoLite.Local.Sqlite.Schema
                 category TEXT NULL,
                 exception TEXT NULL,
                 properties_json TEXT NOT NULL DEFAULT '{}',
+                chunk_id INTEGER NULL,
+                total_chunks INTEGER NULL,
                 recorded_at_utc TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
                 FOREIGN KEY (job_id) REFERENCES job_definitions(job_id) ON DELETE SET NULL
             );
@@ -188,6 +255,8 @@ namespace KoLite.Local.Sqlite.Schema
                 error_code TEXT NULL,
                 error_message TEXT NULL,
                 metrics_json TEXT NOT NULL DEFAULT '{}',
+                chunk_id INTEGER NULL,
+                total_chunks INTEGER NULL,
                 FOREIGN KEY (job_id, slice_start_utc, slice_end_utc)
                     REFERENCES current_slice_state(job_id, slice_start_utc, slice_end_utc) ON DELETE CASCADE
             );
@@ -300,6 +369,9 @@ namespace KoLite.Local.Sqlite.Schema
             CREATE UNIQUE INDEX IF NOT EXISTS ux_job_definitions_activity_id ON job_definitions(activity_id);
             CREATE INDEX IF NOT EXISTS ix_job_definition_events_job_recorded ON job_definition_events(job_id, recorded_at_utc);
             CREATE INDEX IF NOT EXISTS ix_slice_state_events_slice_recorded ON slice_state_events(job_id, slice_start_utc, slice_end_utc, recorded_at_utc);
+            CREATE INDEX IF NOT EXISTS ix_slice_chunk_state_events_slice_recorded ON slice_chunk_state_events(job_id, slice_start_utc, slice_end_utc, chunk_id, recorded_at_utc);
+            CREATE INDEX IF NOT EXISTS ix_current_slice_chunk_state_state ON current_slice_chunk_state(job_id, state, updated_at_utc);
+            CREATE INDEX IF NOT EXISTS ix_current_slice_chunk_state_last_event ON current_slice_chunk_state(last_event_id);
             CREATE INDEX IF NOT EXISTS ix_current_slice_state_state_due ON current_slice_state(state, updated_at_utc);
             CREATE INDEX IF NOT EXISTS ix_work_queue_ready ON work_queue(queue_name, state, available_at_utc, priority DESC);
             CREATE INDEX IF NOT EXISTS ix_work_queue_slice ON work_queue(job_id, slice_start_utc, slice_end_utc);
@@ -327,6 +399,8 @@ namespace KoLite.Local.Sqlite.Schema
                 slice_end_utc TEXT NOT NULL,
                 attempt INTEGER NOT NULL DEFAULT 0,
                 reported_capacity INTEGER NULL,
+                chunk_id INTEGER NULL,
+                total_chunks INTEGER NULL,
                 observed_at_utc TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
                 terminal INTEGER NOT NULL DEFAULT 0
             );
@@ -337,6 +411,13 @@ namespace KoLite.Local.Sqlite.Schema
 
             CREATE INDEX IF NOT EXISTS ix_current_slice_state_last_event ON current_slice_state(last_event_id);
             CREATE INDEX IF NOT EXISTS ix_repair_slices_enqueued_queue_item ON repair_slices(enqueued_queue_item_id);
+            """;
+
+        private const string AdditiveIndexSql = """
+            CREATE INDEX IF NOT EXISTS ix_work_queue_slice_chunk
+                ON work_queue(job_id, slice_start_utc, slice_end_utc, chunk_id);
+            CREATE INDEX IF NOT EXISTS ix_slice_attempts_slice_chunk
+                ON slice_attempts(job_id, slice_start_utc, slice_end_utc, chunk_id, attempt);
             """;
     }
 }

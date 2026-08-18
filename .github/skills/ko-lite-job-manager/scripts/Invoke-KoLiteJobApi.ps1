@@ -36,7 +36,7 @@
                    -ExpectedSliceCount (the preview's repairableSliceCount).
 
     Read-only diagnostics (no mutation; pass filters via -Query):
-    Per-job (require -JobId): Get-JobStatus, Get-Slices, Get-Attempts, Get-Events,
+    Per-job (require -JobId): Get-JobStatus, Get-Slices, Get-Chunks, Get-Attempts, Get-Events,
     Get-JobLogs, Get-JobQueue, Get-History, Get-JobThroughput, Get-Dependencies.
     Global: Get-WorkerPool, Get-RunningSlices, Get-Throughput, Get-Queue, Get-Logs,
     Get-Failures, Get-Audit, Get-Reruns, Get-Repairs.
@@ -86,6 +86,13 @@
     If the count no longer matches, the call returns HTTP 409 instead of repairing a
     different set than the one that was approved. Always preview first.
 
+.PARAMETER ExpectedExecutionCount
+    Chunked repair only: the preview's repairableExecutionCount.
+
+.PARAMETER PreviewToken
+    Chunked repair only: the preview's exact opaque previewToken. A changed child
+    identity/state/version causes HTTP 409 even if the parent slice count is unchanged.
+
 .PARAMETER Force
     Soft-Delete only: proceed even when active downstream jobs depend on the target.
     Without it, Soft-Delete returns HTTP 409 listing the blocking dependents.
@@ -121,7 +128,9 @@
     # Re-run failed slices: always preview, then repair with the previewed count.
     $p = .\Invoke-KoLiteJobApi.ps1 -Action Preview-Repair -JobId $id -From '2026-01-01T00:00:00Z' -To '2026-01-02T00:00:00Z'
     .\Invoke-KoLiteJobApi.ps1 -Action Repair -JobId $id -From '2026-01-01T00:00:00Z' -To '2026-01-02T00:00:00Z' `
-        -Reason 'Requeue slices that failed on a transient Kusto error' -ExpectedSliceCount $p.repairableSliceCount
+        -Reason 'Requeue slices that failed on a transient Kusto error' `
+        -ExpectedSliceCount $p.repairableSliceCount `
+        -ExpectedExecutionCount $p.repairableExecutionCount -PreviewToken $p.previewToken
 #>
 [CmdletBinding()]
 param(
@@ -129,7 +138,7 @@ param(
     [ValidateSet(
         'Health', 'Get-Jobs', 'Get-Job', 'Export', 'Import', 'Soft-Delete', 'Restore',
         'Preview-Repair', 'Repair',
-        'Get-JobStatus', 'Get-Slices', 'Get-Attempts', 'Get-Events', 'Get-JobLogs',
+        'Get-JobStatus', 'Get-Slices', 'Get-Chunks', 'Get-Attempts', 'Get-Events', 'Get-JobLogs',
         'Get-JobQueue', 'Get-History', 'Get-JobThroughput', 'Get-Dependencies',
         'Get-WorkerPool', 'Get-RunningSlices', 'Get-Throughput', 'Get-Queue',
         'Get-Logs', 'Get-Failures', 'Get-Audit', 'Get-Reruns', 'Get-Repairs')]
@@ -154,6 +163,10 @@ param(
     [Nullable[datetime]] $To,
 
     [int] $ExpectedSliceCount,
+
+    [int] $ExpectedExecutionCount,
+
+    [string] $PreviewToken,
 
     [switch] $Force,
 
@@ -303,6 +316,7 @@ $globalDiagnostics = [ordered]@{
 $perJobDiagnostics = [ordered]@{
     'Get-JobStatus'     = 'status'
     'Get-Slices'        = 'slices'
+    'Get-Chunks'        = 'chunks'
     'Get-Attempts'      = 'attempts'
     'Get-Events'        = 'events'
     'Get-JobLogs'       = 'logs'
@@ -318,7 +332,9 @@ $perJobDiagnostics = [ordered]@{
 function Get-RepairBounds {
     param(
         [string] $Reason,
-        [int] $ExpectedSliceCount
+        [int] $ExpectedSliceCount,
+        [int] $ExpectedExecutionCount,
+        [string] $PreviewToken
     )
 
     if ([string]::IsNullOrWhiteSpace($JobId)) {
@@ -335,6 +351,8 @@ function Get-RepairBounds {
     }
     if (-not [string]::IsNullOrWhiteSpace($Reason)) { $payload['reason'] = $Reason }
     if ($PSBoundParameters.ContainsKey('ExpectedSliceCount')) { $payload['expectedSliceCount'] = $ExpectedSliceCount }
+    if ($PSBoundParameters.ContainsKey('ExpectedExecutionCount')) { $payload['expectedExecutionCount'] = $ExpectedExecutionCount }
+    if (-not [string]::IsNullOrWhiteSpace($PreviewToken)) { $payload['previewToken'] = $PreviewToken }
 
     return [pscustomobject]@{
         EncodedJobId = [uri]::EscapeDataString($JobId)
@@ -407,7 +425,7 @@ switch ($Action) {
     'Preview-Repair' {
         $bounds = Get-RepairBounds
         $result = Invoke-KoLiteApi -Method 'POST' -RelativeUri "/api/jobs/$($bounds.EncodedJobId)/repair/preview" -Body $bounds.Body
-        Write-Host "Repair preview: $($result.repairableSliceCount) slice(s) would re-run, $($result.blockedSliceCount) blocked, $($result.skippedSliceCount) untouched. Nothing was changed."
+        Write-Host "Repair preview: $($result.repairableSliceCount) logical slice(s) / $($result.repairableExecutionCount) execution(s) would re-run, $($result.blockedSliceCount) blocked, $($result.skippedSliceCount) untouched. Nothing was changed."
         return $result
     }
     'Repair' {
@@ -418,7 +436,17 @@ switch ($Action) {
             throw "Repair requires -ExpectedSliceCount (the 'repairableSliceCount' from -Action Preview-Repair). Always preview first."
         }
 
-        $bounds = Get-RepairBounds -Reason $Reason -ExpectedSliceCount $ExpectedSliceCount
+        $repairArgs = @{
+            Reason = $Reason
+            ExpectedSliceCount = $ExpectedSliceCount
+        }
+        if ($PSBoundParameters.ContainsKey('ExpectedExecutionCount')) {
+            $repairArgs['ExpectedExecutionCount'] = $ExpectedExecutionCount
+        }
+        if (-not [string]::IsNullOrWhiteSpace($PreviewToken)) {
+            $repairArgs['PreviewToken'] = $PreviewToken
+        }
+        $bounds = Get-RepairBounds @repairArgs
         $result = Invoke-KoLiteApi -Method 'POST' -RelativeUri "/api/jobs/$($bounds.EncodedJobId)/repair" -Body $bounds.Body
         Write-Host "Repair batch $($result.repairBatchId): $($result.queued) slice(s) queued, $($result.blocked) blocked, $($result.skipped) untouched. The worker picks them up normally; re-running cannot duplicate Kusto output."
         return $result

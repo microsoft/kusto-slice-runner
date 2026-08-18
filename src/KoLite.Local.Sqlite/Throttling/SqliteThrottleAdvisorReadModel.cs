@@ -214,13 +214,17 @@ namespace KoLite.Local.Sqlite.Throttling
             }
 
             var (duration, _) = EstimateSliceDuration(jobId, clock.UtcNow - options.DurationLookback);
-            return ParallelismRecommendationEngine.ComputeKeepUpFloor(record.Definition.QueryWindowSize, duration, options.KeepUpSafetyFactor);
+            return ParallelismRecommendationEngine.ComputeKeepUpFloor(
+                record.Definition.QueryWindowSize,
+                ScaleForChunks(duration, record.Definition.Chunks),
+                options.KeepUpSafetyFactor);
         }
 
         private JobThrottleSnapshot ToSnapshot(JobCatalogRecord job, string clusterUri, int inFlightCount, DateTimeOffset durationSinceUtc, DateTimeOffset nowUtc)
         {
             var definition = job.Definition;
             var (duration, sampleCount) = EstimateSliceDuration(job.JobId, durationSinceUtc);
+            duration = ScaleForChunks(duration, definition.Chunks);
             var (backlogSlices, backlogDataTime, isBackfilling) = EstimateBacklog(job, nowUtc);
             return new JobThrottleSnapshot(
                 job.JobId,
@@ -342,6 +346,19 @@ namespace KoLite.Local.Sqlite.Throttling
             var rank = (int)Math.Ceiling(Math.Clamp(percentile, 0d, 1d) * sortedSeconds.Count);
             var index = Math.Clamp(rank - 1, 0, sortedSeconds.Count - 1);
             return TimeSpan.FromSeconds(sortedSeconds[index]);
+        }
+
+        private static TimeSpan? ScaleForChunks(TimeSpan? duration, int? chunks)
+        {
+            if (duration is not { } value || chunks is not { } count || count <= 1)
+            {
+                return duration;
+            }
+
+            var ticks = value.Ticks > TimeSpan.MaxValue.Ticks / count
+                ? TimeSpan.MaxValue.Ticks
+                : value.Ticks * count;
+            return TimeSpan.FromTicks(ticks);
         }
     }
 }

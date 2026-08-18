@@ -40,8 +40,9 @@ durable `id`, dependency edges, slice history, or output idempotency.
 | `outputTable` | Yes | Kusto table appended by `.set-or-append`. Must be a safe Kusto identifier when executed. |
 | `queryWindowSize` | Yes | Positive `TimeSpan`; each slice covers this window size. |
 | `delayFromUtcNow` | Yes | Non-negative `TimeSpan`; delays scheduling near-real-time windows. |
-| `maxParallelism` | Yes | Minimum `1`; hard per-job concurrency bound, enforced at claim time for scheduled and repair/rerun work. When a cluster is under sustained ingestion throttling, the [throttling advisor](operations-runbook.md#ingestion-throttling-advisor) may recommend reducing this (never below the job's keep-up floor); reductions are applied only when an operator confirms them. |
+| `maxParallelism` | Yes | Minimum `1`, with no upper limit. Hard per-job concurrency bound measured in execution units: chunks for chunked jobs, otherwise logical slices. Enforced at claim time across scheduled work, retries, repairs, and recovery. When a cluster is under sustained ingestion throttling, the [throttling advisor](operations-runbook.md#ingestion-throttling-advisor) may recommend reducing this (never below the job's keep-up floor); reductions are applied only when an operator confirms them. |
 | `queryTimeout` | Yes | Positive `TimeSpan`; used for Kusto server timeout and queue lease sizing. |
+| `chunks` | No | Integer `1..32`. Presence splits every logical window into 0-based chunks and changes the Kusto function signature. Immutable after the job starts. |
 | `isPaused` | No | Defaults to `false`. Paused jobs do not schedule or claim queued retries. |
 | `healthPolicy` | No | `"complete"` (default) or `"recent"`. Controls how the dashboard scores this job's health. `complete` (strict) additionally surfaces unaddressed historical gaps (terminal dead-lettered slices) as a "N gaps" segment on the status pill, even when recent slices are healthy. `recent` colors purely by the recent-slice trend and ignores old gaps. See [Dashboard status](operations-runbook.md#dashboard-status-model). |
 | `description` | No | Optional Markdown catalog metadata, limited to 65,536 characters. Rendered on the job details page with embedded raw HTML treated as text. Preserved by copy/import/export and catalog history; never passed to the Kusto function. |
@@ -50,13 +51,48 @@ durable `id`, dependency edges, slice history, or output idempotency.
 | `folder` | No | Existing output/Kusto-oriented metadata. It is not a UI grouping tag. |
 | `tags` | No | Optional array of job organization tags. Tags are trimmed, normalized to lowercase, deduplicated, and used by dashboard/catalog filters. |
 | `dependsOn` | No | Array of dependency objects, each referencing an upstream by `id` (GUID) and/or `activityId`. KO Lite resolves `activityId` to the upstream's GUID and stores edges by `id`, so renames don't break dependencies. Self-dependencies are rejected. |
-| `jobSettings` | No | Optional JSON value passed as the third function argument when non-empty. |
+| `jobSettings` | No | Optional JSON value passed after the time-window arguments; it is third when `chunks` is absent and fifth when `chunks` is present. |
 | `target.clusterUri` | Yes | Absolute HTTPS Kusto cluster URI. |
 | `target.database` | Yes | Kusto database name. |
 
 ## UTC timestamp rules
 
 `startFrom` and `endOn` must use `yyyy-MM-ddTHH:mm:ss[.fffffff][Z|+00:00]`. A missing offset is treated as UTC by the parser. Non-UTC offsets are rejected.
+
+## Chunks
+
+When `chunks` is absent, KO Lite preserves the existing function signatures:
+
+```kusto
+MyFunction(startTime:datetime, endTime:datetime)
+MyFunction(startTime:datetime, endTime:datetime, jobSettings:dynamic)
+```
+
+When `chunks` is present (including `chunks: 1`), KO Lite invokes the function once for every 0-based chunk:
+
+```kusto
+MyFunction(startTime:datetime, endTime:datetime, chunkId:long, chunks:long)
+MyFunction(startTime:datetime, endTime:datetime, chunkId:long, chunks:long, jobSettings:dynamic)
+```
+
+A typical function partitions deterministically with `hash(PartitionKey, chunks) == chunkId`.
+All chunks share the job's `maxParallelism`. A logical slice becomes `Completed` only after every
+chunk completes, so downstream dependencies never run on partial upstream output.
+
+Concurrency is counted per execution unit. For example, `chunks: 32` with
+`maxParallelism: 8` permits at most 8 chunks of the job to run simultaneously; with
+`maxParallelism: 32`, all 32 chunks of one window can run together when at least 32
+global worker slots are free. `maxParallelism` values above 32 are valid and can overlap
+chunks from later windows. KO Lite's global worker pool is unbounded by default, but an
+operator-configured `KoLite:WorkerPool:MaxConcurrency` may impose a lower all-up limit.
+
+Pause is immediate: already-running chunks finish, while unstarted chunks and retries wait for
+resume. `chunks` cannot be added, removed, or changed after the job has any scheduling history;
+create a new job identity when partition cardinality must change.
+
+Each chunk has a distinct stable Kusto idempotency key and matching `ingest-by:` tag. The same
+chunk reuses that identity across retry, repair, orphan recovery, and restart. Local queue keys are
+separate and may vary by work source.
 
 ## Dependencies
 

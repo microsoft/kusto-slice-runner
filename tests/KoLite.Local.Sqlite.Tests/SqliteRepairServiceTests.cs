@@ -22,6 +22,7 @@ namespace KoLite.Local.Sqlite.Tests
         private readonly KoLiteSqliteConnectionFactory factory;
         private readonly SqliteJobCatalogRepository catalog;
         private readonly SqliteSliceStateRepository state;
+        private readonly SqliteChunkStateRepository chunkState;
         private readonly SqliteWorkQueueRepository queue;
         private readonly SqliteOperationalReadModelRepository readModels;
         private readonly ManualClock clock = new(At(20));
@@ -33,6 +34,7 @@ namespace KoLite.Local.Sqlite.Tests
             new KoLiteSqliteSchema(factory).EnsureSchema();
             catalog = new SqliteJobCatalogRepository(factory);
             state = new SqliteSliceStateRepository(factory);
+            chunkState = new SqliteChunkStateRepository(factory);
             queue = new SqliteWorkQueueRepository(factory);
             readModels = new SqliteOperationalReadModelRepository(factory);
         }
@@ -67,6 +69,46 @@ namespace KoLite.Local.Sqlite.Tests
             Assert.Equal(1, result.Blocked);
             Assert.Empty(queue.List(JobId("downstream")));
             Assert.Single(Service().GetRepairSlices(result.RepairBatchId), s => s.Status == RepairSliceStatus.Blocked);
+        }
+
+        [Fact]
+        public void Chunked_repair_requeues_only_failed_chunks()
+        {
+            catalog.Create(Schedule("job.chunk-repair", chunks: 2));
+            var slice = new SliceRange(JobId("job.chunk-repair"), At(0), At(5));
+            var children = chunkState.EnsureWindow(slice, 2, "test");
+            foreach (var child in children)
+            {
+                chunkState.MarkQueued($"queued-{child.ChunkId}", child.Execution, actor: "test");
+                var lease = chunkState.AcquireLease($"lease-{child.ChunkId}", child.Execution, "worker", TimeSpan.FromMinutes(5), At(10))!;
+                if (child.ChunkId == 0)
+                {
+                    Assert.True(chunkState.CompleteLease("complete-0", child.Execution, "worker", lease.LeaseToken!, At(11)));
+                }
+                else
+                {
+                    Assert.True(chunkState.DeadLetterLease("dead-1", child.Execution, "worker", lease.LeaseToken!, At(11), "boom", "Permanent"));
+                }
+            }
+
+            var request = new RepairPlanRequest(
+                JobId("job.chunk-repair"),
+                At(0),
+                At(5),
+                "tester",
+                "repair failed chunk",
+                Scope: RepairSliceScope.FailedAndDeadLetteredOnly);
+            var preview = Service().Preview(request);
+            var result = Service().PlanAndEnqueue(request);
+
+            Assert.Equal(1, preview.Repairable);
+            Assert.Equal(1, result.Queued);
+            var work = Assert.Single(queue.List(JobId("job.chunk-repair")));
+            Assert.Equal(1, work.ChunkId);
+            Assert.Equal(2, work.TotalChunks);
+            Assert.Equal(DurableSliceStatus.Completed, chunkState.Get(SliceExecutionUnit.Chunk(slice, 0, 2))!.Status);
+            Assert.Equal(DurableSliceStatus.Queued, chunkState.Get(SliceExecutionUnit.Chunk(slice, 1, 2))!.Status);
+            Assert.Equal(DurableSliceStatus.Queued, state.Get(JobId("job.chunk-repair"), At(0), At(5)).Status);
         }
 
         [Fact]
@@ -364,7 +406,7 @@ namespace KoLite.Local.Sqlite.Tests
             Assert.Equal(DurableSliceStatus.Completed, state.Get(JobId("job.orphan.none"), At(0), At(5)).Status);
         }
 
-        private SqliteRepairService Service() => new(factory, catalog, state, queue, clock);
+        private SqliteRepairService Service() => new(factory, catalog, state, queue, clock, chunkState);
         private static DateTimeOffset At(int minutes) => new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero).AddMinutes(minutes);
 
         private static string JobId(string activityId)
@@ -396,7 +438,7 @@ namespace KoLite.Local.Sqlite.Tests
             return cmd.ExecuteScalar();
         }
 
-        private static string Schedule(string activityId, string? dependsOn = null) => $$"""
+        private static string Schedule(string activityId, string? dependsOn = null, int? chunks = null) => $$"""
         {
           "id": "{{JobId(activityId)}}",
           "activityId": "{{activityId}}",
@@ -406,6 +448,7 @@ namespace KoLite.Local.Sqlite.Tests
           "delayFromUtcNow": "00:00:00",
           "maxParallelism": 10,
           "queryTimeout": "00:01:00",
+          {{(chunks is null ? string.Empty : $"\"chunks\": {chunks},")}}
           "isPaused": false,
           "startFrom": "2026-01-01T00:00:00Z",
           "dependsOn": {{(dependsOn is null ? "[]" : $"[{{ \"activityId\": \"{dependsOn}\" }}]")}},

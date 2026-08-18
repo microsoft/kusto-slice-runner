@@ -170,16 +170,27 @@ namespace KoLite.Local.Sqlite.Observability
             var inClause = string.Join(", ", placeholders);
             using var c = connectionFactory.OpenConnection();
             using var cmd = SqliteStorage.Command(c, null, $"""
-                SELECT job_id, started_at_utc, completed_at_utc
+                SELECT job_id, started_at_utc, completed_at_utc, effective_waves
                 FROM (
-                    SELECT job_id, started_at_utc, completed_at_utc,
-                           ROW_NUMBER() OVER (PARTITION BY job_id ORDER BY completed_at_utc DESC) AS rn
-                    FROM slice_attempts
-                    WHERE status = 'Succeeded'
-                      AND started_at_utc IS NOT NULL
-                      AND completed_at_utc IS NOT NULL
-                      AND completed_at_utc >= $since
-                      AND job_id IN ({inClause})
+                    SELECT sa.job_id, sa.started_at_utc, sa.completed_at_utc,
+                           (
+                               COALESCE(json_extract(jd.schedule_json, '$.chunks'), 1)
+                               + MIN(
+                                   COALESCE(json_extract(jd.schedule_json, '$.chunks'), 1),
+                                   MAX(1, COALESCE(json_extract(jd.schedule_json, '$.maxParallelism'), 1)))
+                               - 1
+                           ) / MIN(
+                               COALESCE(json_extract(jd.schedule_json, '$.chunks'), 1),
+                               MAX(1, COALESCE(json_extract(jd.schedule_json, '$.maxParallelism'), 1))
+                           ) AS effective_waves,
+                           ROW_NUMBER() OVER (PARTITION BY sa.job_id ORDER BY sa.completed_at_utc DESC) AS rn
+                    FROM slice_attempts sa
+                    JOIN job_definitions jd ON jd.job_id = sa.job_id
+                    WHERE sa.status = 'Succeeded'
+                      AND sa.started_at_utc IS NOT NULL
+                      AND sa.completed_at_utc IS NOT NULL
+                      AND sa.completed_at_utc >= $since
+                      AND sa.job_id IN ({inClause})
                 )
                 WHERE rn <= $cap;
                 """);
@@ -197,7 +208,7 @@ namespace KoLite.Local.Sqlite.Observability
                 {
                     var started = SqliteStorage.ReadUtc(r, "started_at_utc");
                     var completed = SqliteStorage.ReadUtc(r, "completed_at_utc");
-                    var elapsed = (completed - started).TotalSeconds;
+                    var elapsed = (completed - started).TotalSeconds * r.GetInt32(3);
                     if (elapsed <= 0)
                     {
                         continue;
@@ -290,20 +301,37 @@ namespace KoLite.Local.Sqlite.Observability
         public IReadOnlyList<ThroughputBucket> GetThroughputSeries(string? jobId, DateTimeOffset fromUtc, DateTimeOffset toUtc, int bucketSeconds, bool groupByJob, int take)
         {
             var safeBucketSeconds = Math.Max(1, bucketSeconds);
-            var jobColumn = groupByJob ? "job_id" : "NULL";
-            var groupColumns = groupByJob ? "bucket_epoch, job_id" : "bucket_epoch";
             using var c = connectionFactory.OpenConnection();
             using var cmd = SqliteStorage.Command(c, null, $"""
                 SELECT bucket_epoch, bucket_job_id, succeeded_count
                 FROM (
-                    SELECT (CAST(strftime('%s', completed_at_utc) AS INTEGER) / $bucket) * $bucket AS bucket_epoch,
-                           {jobColumn} AS bucket_job_id,
+                    SELECT (CAST(strftime('%s', logical_completed_at) AS INTEGER) / $bucket) * $bucket AS bucket_epoch,
+                           {(groupByJob ? "logical.job_id" : "NULL")} AS bucket_job_id,
                            COUNT(*) AS succeeded_count
-                    FROM slice_attempts
-                    WHERE status = 'Succeeded' AND completed_at_utc IS NOT NULL
-                      AND completed_at_utc >= $from AND completed_at_utc < $to
-                      AND ($jobId IS NULL OR job_id = $jobId)
-                    GROUP BY {groupColumns}
+                    FROM (
+                        WITH candidates AS (
+                            SELECT DISTINCT job_id, slice_start_utc, slice_end_utc
+                            FROM slice_attempts
+                            WHERE status = 'Succeeded'
+                              AND completed_at_utc IS NOT NULL
+                              AND completed_at_utc >= $from AND completed_at_utc < $to
+                              AND ($jobId IS NULL OR job_id = $jobId)
+                        )
+                        SELECT sa.job_id, sa.slice_start_utc, sa.slice_end_utc, MAX(sa.completed_at_utc) AS logical_completed_at
+                        FROM slice_attempts sa
+                        JOIN candidates candidate
+                          ON candidate.job_id = sa.job_id
+                         AND candidate.slice_start_utc = sa.slice_start_utc
+                         AND candidate.slice_end_utc = sa.slice_end_utc
+                        JOIN job_definitions jd ON jd.job_id = sa.job_id
+                        WHERE sa.status = 'Succeeded' AND sa.completed_at_utc IS NOT NULL
+                          AND ($jobId IS NULL OR sa.job_id = $jobId)
+                        GROUP BY sa.job_id, sa.slice_start_utc, sa.slice_end_utc
+                        HAVING COUNT(DISTINCT COALESCE(sa.chunk_id, -1))
+                            >= COALESCE(json_extract(jd.schedule_json, '$.chunks'), 1)
+                    ) logical
+                    WHERE logical_completed_at >= $from AND logical_completed_at < $to
+                    GROUP BY {(groupByJob ? "bucket_epoch, logical.job_id" : "bucket_epoch")}
                     ORDER BY bucket_epoch DESC
                     LIMIT $take
                 )

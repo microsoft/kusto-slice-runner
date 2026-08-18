@@ -16,6 +16,9 @@ namespace KoLite.Local.Core.Orchestration
     public interface ILocalSliceOutputExecutor
     {
         Task<LocalSliceOutputResult> ExecuteAsync(JobDefinition job, SliceRange slice, CancellationToken cancellationToken = default);
+
+        Task<LocalSliceOutputResult> ExecuteAsync(JobDefinition job, SliceExecutionUnit execution, CancellationToken cancellationToken = default) =>
+            ExecuteAsync(job, execution.Slice, cancellationToken);
     }
 
     // MaxSlicesPerTick defaults to unbounded: a pass is already naturally bounded to the sum of each
@@ -96,7 +99,9 @@ namespace KoLite.Local.Core.Orchestration
         string? ClusterUri = null,
         // Human-facing job label (the job's ActivityId) resolved when the event is raised.
         // Used for readable log rendering; the opaque JobId stays the durable diagnostic key.
-        string? DisplayName = null);
+        string? DisplayName = null,
+        int? ChunkId = null,
+        int? TotalChunks = null);
 
     public interface ILocalWorkerProgressSink
     {

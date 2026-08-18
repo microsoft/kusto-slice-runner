@@ -89,6 +89,22 @@ namespace KoLite.LocalApp.Api
                         statusCode: StatusCodes.Status409Conflict);
                 }
 
+                if (record!.Definition.Chunks is not null
+                    && (request.ExpectedExecutionCount != preview.RepairableExecutions
+                        || !StringComparer.Ordinal.Equals(request.PreviewToken, preview.PreviewToken)))
+                {
+                    return Results.Json(
+                        new
+                        {
+                            error = "The repairable chunk set changed or was not acknowledged. Re-run the preview and retry with its repairableExecutionCount and previewToken.",
+                            expectedExecutionCount = request.ExpectedExecutionCount,
+                            actualExecutionCount = preview.RepairableExecutions,
+                            expectedPreviewToken = request.PreviewToken,
+                            actualPreviewToken = preview.PreviewToken,
+                        },
+                        statusCode: StatusCodes.Status409Conflict);
+                }
+
                 RepairPlanResult result;
                 try
                 {
@@ -147,6 +163,8 @@ namespace KoLite.LocalApp.Api
             fromUtc = preview.StartUtc,
             toUtc = preview.EndUtc,
             repairableSliceCount = preview.Repairable,
+            repairableExecutionCount = preview.RepairableExecutions,
+            previewToken = preview.PreviewToken,
             blockedSliceCount = preview.Blocked,
             skippedSliceCount = preview.Skipped,
             slices = preview.Slices
@@ -158,6 +176,7 @@ namespace KoLite.LocalApp.Api
                     currentState = slice.CurrentStatus.ToString(),
                     outcome = slice.Outcome.ToString(),
                     detail = slice.Detail,
+                    chunkIds = slice.ChunkIds,
                 }),
         };
 
@@ -242,7 +261,7 @@ namespace KoLite.LocalApp.Api
 
             if (!requireEnqueueFields)
             {
-                return (new RepairRequest(from, to, dto!.Reason, 0), null);
+                return (new RepairRequest(from, to, dto!.Reason, 0, null, null), null);
             }
 
             if (string.IsNullOrWhiteSpace(dto!.Reason))
@@ -260,7 +279,7 @@ namespace KoLite.LocalApp.Api
                 return (null, "'expectedSliceCount' must not be negative.");
             }
 
-            return (new RepairRequest(from, to, dto.Reason.Trim(), dto.ExpectedSliceCount.Value), null);
+            return (new RepairRequest(from, to, dto.Reason.Trim(), dto.ExpectedSliceCount.Value, dto.ExpectedExecutionCount, dto.PreviewToken), null);
         }
 
         private static bool TryParseUtc(string? value, string fieldName, out DateTimeOffset parsed, out string? error)
@@ -292,8 +311,8 @@ namespace KoLite.LocalApp.Api
 
         private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
-        private sealed record RepairRequestDto(string? From, string? To, string? Reason, int? ExpectedSliceCount);
+        private sealed record RepairRequestDto(string? From, string? To, string? Reason, int? ExpectedSliceCount, int? ExpectedExecutionCount, string? PreviewToken);
 
-        private sealed record RepairRequest(DateTimeOffset From, DateTimeOffset To, string? Reason, int ExpectedSliceCount);
+        private sealed record RepairRequest(DateTimeOffset From, DateTimeOffset To, string? Reason, int ExpectedSliceCount, int? ExpectedExecutionCount, string? PreviewToken);
     }
 }

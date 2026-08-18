@@ -13,7 +13,9 @@ namespace KoLite.LocalApp.Ui
         DateTimeOffset? StartedAtUtc,
         DateTimeOffset? CompletedAtUtc,
         string? ErrorCode,
-        string? ErrorMessage);
+        string? ErrorMessage,
+        int? ChunkId,
+        int? TotalChunks);
 
     public sealed record OperationalLogReadout(
         string LogId,
@@ -24,7 +26,9 @@ namespace KoLite.LocalApp.Ui
         string Message,
         string? Category,
         string? Exception,
-        DateTimeOffset RecordedAtUtc);
+        DateTimeOffset RecordedAtUtc,
+        int? ChunkId,
+        int? TotalChunks);
 
     public sealed record SliceEventReadout(
         string EventId,
@@ -60,7 +64,9 @@ namespace KoLite.LocalApp.Ui
                     row.StartedAtUtc,
                     row.CompletedAtUtc,
                     row.ErrorCode,
-                    row.ErrorMessage))
+                    row.ErrorMessage,
+                    row.ChunkId,
+                    row.TotalChunks))
                 .ToList();
 
         public IReadOnlyList<OperationalLogReadout> GetLogs(string jobId, DateTimeOffset? sliceStartUtc = null, DateTimeOffset? sliceEndUtc = null, int take = 50) =>
@@ -74,7 +80,9 @@ namespace KoLite.LocalApp.Ui
                     row.Message,
                     row.Category,
                     row.Exception,
-                    row.RecordedAtUtc))
+                    row.RecordedAtUtc,
+                    row.ChunkId,
+                    row.TotalChunks))
                 .ToList();
 
         public IReadOnlyList<SliceEventReadout> GetEvents(string jobId, DateTimeOffset? sliceStartUtc = null, DateTimeOffset? sliceEndUtc = null, int take = 50) =>

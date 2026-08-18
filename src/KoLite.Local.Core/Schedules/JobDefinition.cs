@@ -7,6 +7,12 @@ namespace KoLite.Local.Core.Schedules
         public const int MaxLength = 65_536;
     }
 
+    public static class JobChunks
+    {
+        public const int MinCount = 1;
+        public const int MaxCount = 32;
+    }
+
     public sealed record JobDefinition
     {
         // Durable, opaque job identity (GUID, "N" format). Null only for freshly authored
@@ -22,6 +28,7 @@ namespace KoLite.Local.Core.Schedules
         public required TimeSpan DelayFromUtcNow { get; init; }
         public required int MaxParallelism { get; init; }
         public required TimeSpan QueryTimeout { get; init; }
+        public int? Chunks { get; init; }
         public required DateTimeOffset StartFrom { get; init; }
         public required JobTarget Target { get; init; }
         public bool IsPaused { get; init; }

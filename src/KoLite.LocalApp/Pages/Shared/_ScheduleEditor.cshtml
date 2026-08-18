@@ -28,7 +28,14 @@
             <label>Output table<input name="Input.OutputTable" value="@Model.Input.OutputTable" /></label>
             <label>Query window size<input name="Input.QueryWindowSize" value="@Model.Input.QueryWindowSize" placeholder="01:00:00" @(Model.StartedFieldsReadOnly ? "readonly" : null) /></label>
             <label>Delay from UTC now<input name="Input.DelayFromUtcNow" value="@Model.Input.DelayFromUtcNow" placeholder="00:10:00" /></label>
-            <label>Max parallelism<input name="Input.MaxParallelism" type="number" min="1" value="@Model.Input.MaxParallelism" /></label>
+            <label>Max parallelism
+                <input name="Input.MaxParallelism" type="number" min="1" value="@Model.Input.MaxParallelism" aria-describedby="schedule-max-parallelism-help" />
+                <span id="schedule-max-parallelism-help" class="muted form-field-help">Concurrent execution units for this job: chunks for chunked jobs, otherwise slices. Minimum 1 with no upper limit. Set this to at least the chunk count to allow one window's chunks to run together when global worker capacity is available.</span>
+            </label>
+            <label>Chunks
+                <input name="Input.Chunks" type="number" min="@KoLite.Local.Core.Schedules.JobChunks.MinCount" max="@KoLite.Local.Core.Schedules.JobChunks.MaxCount" value="@Model.Input.Chunks" placeholder="optional" @(Model.StartedFieldsReadOnly ? "readonly" : null) aria-describedby="schedule-chunks-help" />
+                <span id="schedule-chunks-help" class="muted form-field-help">Optional, 1-32. Adds <code>chunkId</code> and <code>chunks</code> arguments to every function call; each chunk consumes one max-parallelism slot. Cannot change after the job starts.</span>
+            </label>
             <label>Query timeout<input name="Input.QueryTimeout" value="@Model.Input.QueryTimeout" placeholder="00:05:00" /></label>
             <label>Start from<input name="Input.StartFrom" value="@Model.Input.StartFrom" placeholder="2026-01-01T00:00:00Z" @(Model.StartedFieldsReadOnly ? "readonly" : null) /></label>
             <label>End on<input name="Input.EndOn" value="@Model.Input.EndOn" placeholder="optional" /></label>

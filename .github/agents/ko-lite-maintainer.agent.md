@@ -23,7 +23,9 @@ You are the KO Lite maintainer for this repository. Use this agent for KO Lite i
 - Test projects mirror the source projects under `tests\`.
 - The local app uses a real Kusto output writer for user-facing execution; do not invent fake/offline execution paths in the app. Test projects may use in-memory or fake executors where they already exist.
 - The scheduler and worker dispatcher are separate hosted services. Scheduler ticks enqueue eligible slices. Worker dispatch claims queued/retryable work continuously up to the configured worker cap.
-- Work is bounded by scheduler options, queue idempotency, per-job `maxParallelism`, worker concurrency, visibility/query timeout leases, and pause/delete state.
+- Work is bounded by scheduler options, queue idempotency, per-job `maxParallelism`, worker concurrency, visibility/query timeout leases, and pause/delete state. `maxParallelism` counts execution units (chunks for chunked jobs, otherwise slices), has no upper limit, and is independent of the global pool. Global concurrency defaults to unbounded; `MaxDispatchStartsPerCycle=100` is only a per-cycle start-rate limit.
+- Chunked jobs keep one logical parent slice with 0-based child executions. Dependencies, health, rerun, and history use the parent; queue claims, retries, leases, attempts, and Kusto ingest-by identity are per chunk. Never mark the parent complete until every child completes.
+- Preserve stable Kusto ingestion identity: unchunked keys remain byte-for-byte compatible; a chunk key includes parent slice, chunk id, and total chunks and is reused for retries, repair, recovery, and restart. Local queue keys may vary by work source and must not leak into Kusto tags.
 - Graceful drain shutdown should stop new scheduling/claims, let active work record final state, then stop the local app. Ctrl+C/process kill is the emergency path.
 - Rerun flow is intentionally two-step: KO Lite suggests Kusto cleanup commands, but users execute cleanup manually before acknowledging rerun.
 
@@ -75,7 +77,7 @@ The database path is resolved at runtime, so it cannot be read reliably from `ap
 
 - Inspect scheduler logs, worker-dispatch logs, queue rows, slice state, leases, retries, and active worker counts before proposing fixes.
 - Keep the scheduler enqueue path separate from worker claim/execution behavior.
-- Preserve per-job `maxParallelism` and global worker concurrency semantics.
+- Preserve per-job `maxParallelism` and global worker concurrency semantics: one slot per execution unit, no per-job maximum, unbounded global default, optional positive global cap, and a separate per-cycle dispatch-start limit.
 - Be careful with host shutdown tokens: graceful drain should not cancel already-started Kusto calls unless the task explicitly requires emergency cancellation behavior.
 
 ### SQLite state and migrations
@@ -109,10 +111,10 @@ The database path is resolved at runtime, so it cannot be read reliably from `ap
 ### Schedule JSON and catalog behavior
 
 - Preserve import/export compatibility: a single schedule object or an array is valid. Imports match an existing job by `id` when present (this is how a rename is applied — same `id`, new `activityId`), else by `activityId`, else create (preserving a supplied `id`, otherwise minting one).
-- The job's permanent identity is the opaque GUID `id` (immutable). `activityId` is a mutable, unique display label that can be renamed; `queryWindowSize` and `startFrom` remain read-only after a job has started.
+- The job's permanent identity is the opaque GUID `id` (immutable). `activityId` is a mutable, unique display label that can be renamed; `queryWindowSize`, `startFrom`, and optional `chunks` remain read-only after a job has started.
 - Dependencies are stored by upstream GUID; `dependsOn` entries may reference the upstream by `activityId` and/or `id`, resolved to the GUID at create/import.
 - `description` is optional Markdown catalog metadata, limited to 65,536 characters. Preserve it across copy, import/export, catalog history, and the single-job API schedule; keep it out of compact API job summaries and every Kusto request/function argument.
-- When adding or changing a schedule field, update the core parser, standalone PowerShell validator, `ko-lite-schedule-json` and `ko-lite-job-manager` guidance/templates, API docs, and matching tests together.
+- When adding or changing a schedule field, update the core parser, standalone PowerShell validator, `ko-lite-schedule-json` and `ko-lite-job-manager` guidance/templates, this agent profile, API docs, and matching tests together.
 - Preserve additive/update-only import behavior unless the user explicitly asks for replacement or deletion semantics.
 
 ## Validation

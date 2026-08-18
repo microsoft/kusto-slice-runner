@@ -14,8 +14,8 @@ namespace KoLite.Local.Sqlite.Observability
         public int TotalDeleted => LogsDeleted + AttemptsDeleted + ScheduledSlicesDeleted + IngestionThrottlesDeleted + QueueRowsDeleted;
     }
     public sealed record SliceThroughputSample(int SucceededCount, DateTimeOffset? FirstCompletedUtc, DateTimeOffset? LastCompletedUtc);
-    public sealed record SliceAttemptRow(string AttemptId, string JobId, DateTimeOffset SliceStartUtc, DateTimeOffset SliceEndUtc, int Attempt, string Status, string? WorkerId, DateTimeOffset? StartedAtUtc, DateTimeOffset? CompletedAtUtc, string? ErrorCode, string? ErrorMessage);
-    public sealed record OperationalLogRow(string LogId, string? JobId, DateTimeOffset? SliceStartUtc, DateTimeOffset? SliceEndUtc, string Level, string Message, string? Category, string? Exception, DateTimeOffset RecordedAtUtc);
+    public sealed record SliceAttemptRow(string AttemptId, string JobId, DateTimeOffset SliceStartUtc, DateTimeOffset SliceEndUtc, int Attempt, string Status, string? WorkerId, DateTimeOffset? StartedAtUtc, DateTimeOffset? CompletedAtUtc, string? ErrorCode, string? ErrorMessage, int? ChunkId, int? TotalChunks);
+    public sealed record OperationalLogRow(string LogId, string? JobId, DateTimeOffset? SliceStartUtc, DateTimeOffset? SliceEndUtc, string Level, string Message, string? Category, string? Exception, DateTimeOffset RecordedAtUtc, int? ChunkId, int? TotalChunks);
     public sealed record SliceStateEventRow(string EventId, string JobId, DateTimeOffset SliceStartUtc, DateTimeOffset SliceEndUtc, string EventType, string? State, int? Attempt, string? Reason, string? Actor, DateTimeOffset RecordedAtUtc);
 
     public sealed class SqliteOperationalReadModelRepository
@@ -24,11 +24,11 @@ namespace KoLite.Local.Sqlite.Observability
 
         public SqliteOperationalReadModelRepository(IKoLiteSqliteConnectionFactory connectionFactory) => this.connectionFactory = connectionFactory;
 
-        public void RecordLog(string level, string message, string? category = null, string? jobId = null, DateTimeOffset? sliceStartUtc = null, DateTimeOffset? sliceEndUtc = null, string propertiesJson = "{}", string? exception = null)
+        public void RecordLog(string level, string message, string? category = null, string? jobId = null, DateTimeOffset? sliceStartUtc = null, DateTimeOffset? sliceEndUtc = null, string propertiesJson = "{}", string? exception = null, int? chunkId = null, int? totalChunks = null)
         {
             using var c = connectionFactory.OpenConnection();
-            using var cmd = SqliteStorage.Command(c, null, "INSERT INTO operational_logs (log_id,job_id,slice_start_utc,slice_end_utc,level,message,category,exception,properties_json,recorded_at_utc) VALUES ($id,$j,$s,$e,$l,$m,$cat,$ex,$p,$n);");
-            cmd.Add("$id", Guid.NewGuid().ToString("N")); cmd.Add("$j", jobId); cmd.Add("$s", sliceStartUtc is null ? null : SqliteStorage.Utc(sliceStartUtc.Value)); cmd.Add("$e", sliceEndUtc is null ? null : SqliteStorage.Utc(sliceEndUtc.Value)); cmd.Add("$l", level); cmd.Add("$m", message); cmd.Add("$cat", category); cmd.Add("$ex", exception); cmd.Add("$p", propertiesJson); cmd.Add("$n", SqliteStorage.Utc(DateTimeOffset.UtcNow)); cmd.ExecuteNonQuery();
+            using var cmd = SqliteStorage.Command(c, null, "INSERT INTO operational_logs (log_id,job_id,slice_start_utc,slice_end_utc,level,message,category,exception,properties_json,chunk_id,total_chunks,recorded_at_utc) VALUES ($id,$j,$s,$e,$l,$m,$cat,$ex,$p,$chunk,$chunks,$n);");
+            cmd.Add("$id", Guid.NewGuid().ToString("N")); cmd.Add("$j", jobId); cmd.Add("$s", sliceStartUtc is null ? null : SqliteStorage.Utc(sliceStartUtc.Value)); cmd.Add("$e", sliceEndUtc is null ? null : SqliteStorage.Utc(sliceEndUtc.Value)); cmd.Add("$l", level); cmd.Add("$m", message); cmd.Add("$cat", category); cmd.Add("$ex", exception); cmd.Add("$p", propertiesJson); cmd.Add("$chunk", chunkId); cmd.Add("$chunks", totalChunks); cmd.Add("$n", SqliteStorage.Utc(DateTimeOffset.UtcNow)); cmd.ExecuteNonQuery();
         }
 
         public void RecordScheduledSlice(string jobId, DateTimeOffset sliceStartUtc, DateTimeOffset sliceEndUtc, string status, DateTimeOffset scheduledAtUtc, DateTimeOffset dueAtUtc, string? generationId = null)
@@ -38,11 +38,11 @@ namespace KoLite.Local.Sqlite.Observability
             cmd.Add("$j", jobId); cmd.Add("$s", SqliteStorage.Utc(sliceStartUtc)); cmd.Add("$e", SqliteStorage.Utc(sliceEndUtc)); cmd.Add("$g", generationId); cmd.Add("$st", status); cmd.Add("$sa", SqliteStorage.Utc(scheduledAtUtc)); cmd.Add("$d", SqliteStorage.Utc(dueAtUtc)); cmd.ExecuteNonQuery();
         }
 
-        public void RecordAttempt(string attemptId, string jobId, DateTimeOffset sliceStartUtc, DateTimeOffset sliceEndUtc, int attempt, string status, string? workerId, DateTimeOffset? startedAtUtc, DateTimeOffset? completedAtUtc, string? errorCode = null, string? errorMessage = null, string metricsJson = "{}")
+        public void RecordAttempt(string attemptId, string jobId, DateTimeOffset sliceStartUtc, DateTimeOffset sliceEndUtc, int attempt, string status, string? workerId, DateTimeOffset? startedAtUtc, DateTimeOffset? completedAtUtc, string? errorCode = null, string? errorMessage = null, string metricsJson = "{}", int? chunkId = null, int? totalChunks = null)
         {
             using var c = connectionFactory.OpenConnection();
-            using var cmd = SqliteStorage.Command(c, null, "INSERT INTO slice_attempts (attempt_id,job_id,slice_start_utc,slice_end_utc,attempt,status,worker_id,started_at_utc,completed_at_utc,error_code,error_message,metrics_json) VALUES ($id,$j,$s,$e,$a,$st,$w,$start,$done,$ec,$em,$m) ON CONFLICT(attempt_id) DO UPDATE SET status=excluded.status,worker_id=excluded.worker_id,started_at_utc=COALESCE(excluded.started_at_utc, slice_attempts.started_at_utc),completed_at_utc=excluded.completed_at_utc,error_code=excluded.error_code,error_message=excluded.error_message,metrics_json=excluded.metrics_json;");
-            cmd.Add("$id", attemptId); cmd.Add("$j", jobId); cmd.Add("$s", SqliteStorage.Utc(sliceStartUtc)); cmd.Add("$e", SqliteStorage.Utc(sliceEndUtc)); cmd.Add("$a", attempt); cmd.Add("$st", status); cmd.Add("$w", workerId); cmd.Add("$start", startedAtUtc is null ? null : SqliteStorage.Utc(startedAtUtc.Value)); cmd.Add("$done", completedAtUtc is null ? null : SqliteStorage.Utc(completedAtUtc.Value)); cmd.Add("$ec", errorCode); cmd.Add("$em", errorMessage); cmd.Add("$m", metricsJson); cmd.ExecuteNonQuery();
+            using var cmd = SqliteStorage.Command(c, null, "INSERT INTO slice_attempts (attempt_id,job_id,slice_start_utc,slice_end_utc,attempt,status,worker_id,started_at_utc,completed_at_utc,error_code,error_message,metrics_json,chunk_id,total_chunks) VALUES ($id,$j,$s,$e,$a,$st,$w,$start,$done,$ec,$em,$m,$chunk,$chunks) ON CONFLICT(attempt_id) DO UPDATE SET status=excluded.status,worker_id=excluded.worker_id,started_at_utc=COALESCE(excluded.started_at_utc, slice_attempts.started_at_utc),completed_at_utc=excluded.completed_at_utc,error_code=excluded.error_code,error_message=excluded.error_message,metrics_json=excluded.metrics_json,chunk_id=excluded.chunk_id,total_chunks=excluded.total_chunks;");
+            cmd.Add("$id", attemptId); cmd.Add("$j", jobId); cmd.Add("$s", SqliteStorage.Utc(sliceStartUtc)); cmd.Add("$e", SqliteStorage.Utc(sliceEndUtc)); cmd.Add("$a", attempt); cmd.Add("$st", status); cmd.Add("$w", workerId); cmd.Add("$start", startedAtUtc is null ? null : SqliteStorage.Utc(startedAtUtc.Value)); cmd.Add("$done", completedAtUtc is null ? null : SqliteStorage.Utc(completedAtUtc.Value)); cmd.Add("$ec", errorCode); cmd.Add("$em", errorMessage); cmd.Add("$m", metricsJson); cmd.Add("$chunk", chunkId); cmd.Add("$chunks", totalChunks); cmd.ExecuteNonQuery();
         }
 
         public IReadOnlyList<JobStatusSummary> GetJobStatusSummaries()
@@ -161,7 +161,7 @@ namespace KoLite.Local.Sqlite.Observability
         {
             using var c = connectionFactory.OpenConnection();
             using var cmd = SqliteStorage.Command(c, null, """
-                SELECT attempt_id, job_id, slice_start_utc, slice_end_utc, attempt, status, worker_id, started_at_utc, completed_at_utc, error_code, error_message
+                SELECT attempt_id, job_id, slice_start_utc, slice_end_utc, attempt, status, worker_id, started_at_utc, completed_at_utc, error_code, error_message, chunk_id, total_chunks
                 FROM slice_attempts
                 WHERE job_id=$jobId
                   AND ($sliceStart IS NULL OR slice_start_utc=$sliceStart)
@@ -188,7 +188,9 @@ namespace KoLite.Local.Sqlite.Observability
                     SqliteStorage.ReadNullableUtc(r, "started_at_utc"),
                     SqliteStorage.ReadNullableUtc(r, "completed_at_utc"),
                     r.IsDBNull(9) ? null : r.GetString(9),
-                    r.IsDBNull(10) ? null : r.GetString(10)));
+                    r.IsDBNull(10) ? null : r.GetString(10),
+                    r.IsDBNull(11) ? null : r.GetInt32(11),
+                    r.IsDBNull(12) ? null : r.GetInt32(12)));
             }
 
             return rows;
@@ -200,7 +202,7 @@ namespace KoLite.Local.Sqlite.Observability
         {
             using var c = connectionFactory.OpenConnection();
             using var cmd = SqliteStorage.Command(c, null, """
-                SELECT log_id, job_id, slice_start_utc, slice_end_utc, level, message, category, exception, recorded_at_utc
+                SELECT log_id, job_id, slice_start_utc, slice_end_utc, level, message, category, exception, recorded_at_utc, chunk_id, total_chunks
                 FROM operational_logs
                 WHERE job_id=$jobId
                   AND ($sliceStart IS NULL OR slice_start_utc=$sliceStart)
@@ -225,7 +227,9 @@ namespace KoLite.Local.Sqlite.Observability
                     r.GetString(5),
                     r.IsDBNull(6) ? null : r.GetString(6),
                     r.IsDBNull(7) ? null : r.GetString(7),
-                    SqliteStorage.ReadUtc(r, "recorded_at_utc")));
+                    SqliteStorage.ReadUtc(r, "recorded_at_utc"),
+                    r.IsDBNull(9) ? null : r.GetInt32(9),
+                    r.IsDBNull(10) ? null : r.GetInt32(10)));
             }
 
             return rows;
@@ -314,9 +318,31 @@ namespace KoLite.Local.Sqlite.Observability
         {
             using var c = connectionFactory.OpenConnection();
             using var cmd = SqliteStorage.Command(c, null, """
-                SELECT COUNT(*) AS succeeded_count, MIN(completed_at_utc) AS first_completed, MAX(completed_at_utc) AS last_completed
-                FROM slice_attempts
-                WHERE job_id = $j AND status = 'Succeeded' AND completed_at_utc IS NOT NULL AND completed_at_utc >= $since;
+                WITH candidates AS (
+                    SELECT DISTINCT job_id, slice_start_utc, slice_end_utc
+                    FROM slice_attempts
+                    WHERE job_id = $j
+                      AND status = 'Succeeded'
+                      AND completed_at_utc IS NOT NULL
+                      AND completed_at_utc >= $since
+                )
+                SELECT COUNT(*) AS succeeded_count, MIN(logical_completed_at) AS first_completed, MAX(logical_completed_at) AS last_completed
+                FROM (
+                    SELECT sa.job_id, sa.slice_start_utc, sa.slice_end_utc, MAX(sa.completed_at_utc) AS logical_completed_at
+                    FROM slice_attempts sa
+                    JOIN candidates candidate
+                      ON candidate.job_id = sa.job_id
+                     AND candidate.slice_start_utc = sa.slice_start_utc
+                     AND candidate.slice_end_utc = sa.slice_end_utc
+                    JOIN job_definitions jd ON jd.job_id = sa.job_id
+                    WHERE sa.job_id = $j
+                      AND sa.status = 'Succeeded'
+                      AND sa.completed_at_utc IS NOT NULL
+                    GROUP BY sa.job_id, sa.slice_start_utc, sa.slice_end_utc
+                    HAVING COUNT(DISTINCT COALESCE(sa.chunk_id, -1))
+                        >= COALESCE(json_extract(jd.schedule_json, '$.chunks'), 1)
+                )
+                WHERE logical_completed_at >= $since;
                 """);
             cmd.Add("$j", jobId); cmd.Add("$since", SqliteStorage.Utc(sinceUtc));
             using var r = cmd.ExecuteReader(); r.Read();

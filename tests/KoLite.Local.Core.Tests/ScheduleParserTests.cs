@@ -321,6 +321,37 @@ namespace KoLite.Local.Core.Tests
             Assert.Contains(result.Errors, e => e.Field == "healthPolicy");
         }
 
+        [Theory]
+        [InlineData(1)]
+        [InlineData(32)]
+        public void Parser_accepts_supported_chunk_counts(int chunks)
+        {
+            var result = ScheduleParser.Parse(WithTopLevel(MinimalSample, $"\"chunks\": {chunks}"));
+
+            Assert.True(result.IsValid, string.Join(Environment.NewLine, result.Errors.Select(e => $"{e.Field}: {e.Message}")));
+            Assert.Equal(chunks, result.Definition!.Chunks);
+        }
+
+        [Theory]
+        [InlineData(0)]
+        [InlineData(33)]
+        public void Parser_rejects_out_of_range_chunk_counts(int chunks)
+        {
+            var result = ScheduleParser.Parse(WithTopLevel(MinimalSample, $"\"chunks\": {chunks}"));
+
+            Assert.False(result.IsValid);
+            Assert.Contains(result.Errors, e => e.Field == "chunks");
+        }
+
+        [Fact]
+        public void Parser_rejects_non_integer_chunk_counts()
+        {
+            var result = ScheduleParser.Parse(WithTopLevel(MinimalSample, "\"chunks\": 2.5"));
+
+            Assert.False(result.IsValid);
+            Assert.Contains(result.Errors, e => e.Field == "chunks");
+        }
+
         private const string MinimalSample = """
         {
           "activityId": "demo.minimal",

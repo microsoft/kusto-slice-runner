@@ -21,6 +21,7 @@ namespace KoLite.Local.Sqlite.Tests
         private readonly KoLiteSqliteConnectionFactory factory;
         private readonly SqliteJobCatalogRepository catalog;
         private readonly SqliteSliceStateRepository state;
+        private readonly SqliteChunkStateRepository chunkState;
         private readonly SqliteWorkQueueRepository queue;
         private readonly SqliteOperationalReadModelRepository readModels;
         private readonly ManualClock clock = new(At(5));
@@ -32,6 +33,7 @@ namespace KoLite.Local.Sqlite.Tests
             new KoLiteSqliteSchema(factory).EnsureSchema();
             catalog = new SqliteJobCatalogRepository(factory);
             state = new SqliteSliceStateRepository(factory);
+            chunkState = new SqliteChunkStateRepository(factory);
             queue = new SqliteWorkQueueRepository(factory);
             readModels = new SqliteOperationalReadModelRepository(factory);
         }
@@ -121,6 +123,30 @@ namespace KoLite.Local.Sqlite.Tests
             Assert.Equal(DurableSliceStatus.Completed, state.Get(JobId("downstream"), At(0), At(5)).Status);
         }
 
+        [Fact]
+        public void Rerun_resets_every_chunk_in_the_logical_window()
+        {
+            catalog.Create(Schedule("chunked-root", "ChunkedOutput", maxParallelism: 2, chunks: 2));
+            var slice = new SliceRange(JobId("chunked-root"), At(0), At(5));
+            foreach (var child in chunkState.EnsureWindow(slice, 2, "test"))
+            {
+                chunkState.MarkQueued($"queued-{child.ChunkId}", child.Execution, actor: "test");
+                var lease = chunkState.AcquireLease($"lease-{child.ChunkId}", child.Execution, "worker", TimeSpan.FromMinutes(5), At(1))!;
+                Assert.True(chunkState.CompleteLease($"complete-{child.ChunkId}", child.Execution, "worker", lease.LeaseToken!, At(2)));
+            }
+
+            var plan = Service().CreatePlan(new RerunPlanRequest(JobId("chunked-root"), At(0), At(5), "tester", "recompute chunked output"));
+            var result = Service().Execute(new RerunExecuteRequest(plan.RerunBatchId, "tester", KustoCleanupAcknowledged: true));
+
+            Assert.Equal(1, result.ResetSlices);
+            Assert.Empty(chunkState.List(slice));
+            Assert.Equal(DurableSliceStatus.Missing, state.Get(JobId("chunked-root"), At(0), At(5)).Status);
+
+            var scheduler = new SqliteLocalScheduler(catalog, state, queue, readModels, clock, new LocalSchedulerOptions(MaxSlicesPerTick: 10), chunkState);
+            Assert.Equal(2, scheduler.Tick().Enqueued);
+            Assert.Equal([0, 1], queue.List(JobId("chunked-root")).Select(item => item.ChunkId).Order().ToArray());
+        }
+
         public void Dispose()
         {
             TestCleanup.DeleteDirectoryWithRetry(testDirectory);
@@ -154,7 +180,7 @@ namespace KoLite.Local.Sqlite.Tests
             return command.ExecuteScalar();
         }
 
-        private static string Schedule(string activityId, string outputTable, string? dependsOn = null, int maxParallelism = 1) => $$"""
+        private static string Schedule(string activityId, string outputTable, string? dependsOn = null, int maxParallelism = 1, int? chunks = null) => $$"""
         {
           "id": "{{JobId(activityId)}}",
           "activityId": "{{activityId}}",
@@ -164,6 +190,7 @@ namespace KoLite.Local.Sqlite.Tests
           "delayFromUtcNow": "00:00:00",
           "maxParallelism": {{maxParallelism}},
           "queryTimeout": "00:01:00",
+          {{(chunks is null ? string.Empty : $"\"chunks\": {chunks},")}}
           "isPaused": false,
           "startFrom": "2026-01-01T00:00:00Z",
           "dependsOn": {{(dependsOn is null ? "[]" : $"[{{ \"activityId\": \"{dependsOn}\" }}]")}},

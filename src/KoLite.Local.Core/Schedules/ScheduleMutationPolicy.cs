@@ -34,6 +34,11 @@ namespace KoLite.Local.Core.Schedules
                 violations.Add(Violation("startFrom", Format(current.StartFrom), Format(proposed.StartFrom), current.ActivityId));
             }
 
+            if (current.Chunks != proposed.Chunks)
+            {
+                violations.Add(Violation("chunks", Format(current.Chunks), Format(proposed.Chunks), current.ActivityId));
+            }
+
             return violations;
         }
 
@@ -43,5 +48,7 @@ namespace KoLite.Local.Core.Schedules
         private static string Format(TimeSpan value) => value.ToString("c", CultureInfo.InvariantCulture);
 
         private static string Format(DateTimeOffset value) => value.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture);
+
+        private static string Format(int? value) => value?.ToString(CultureInfo.InvariantCulture) ?? "<absent>";
     }
 }

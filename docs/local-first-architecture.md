@@ -7,8 +7,8 @@ KO Lite runs as a local ASP.NET Core Razor Pages app with hosted background serv
 | Component | Project | Responsibility |
 | --- | --- | --- |
 | Web dashboard | `src\KoLite.LocalApp` | Razor Pages UI for catalog management, dashboard views, slice history, the job dependency graph, rerun planning, repair, health, and shutdown. |
-| Scheduler service | `src\KoLite.LocalApp` + `src\KoLite.Local.Core` | Each pass tops up every enabled job's queue to its `maxParallelism` (dependency-ready slices only). There is no global per-tick enqueue throttle; a pass is naturally bounded by the sum of per-job `maxParallelism`. |
-| Worker pool | `src\KoLite.LocalApp` + `src\KoLite.Local.Core` | Claims queued work, extends leases, executes output writes, records progress, retries, and terminal state. |
+| Scheduler service | `src\KoLite.LocalApp` + `src\KoLite.Local.Core` | Each pass tops up every enabled job's queue to its `maxParallelism` in execution units (chunks for chunked jobs, slices otherwise; dependency-ready work only). There is no global per-tick enqueue throttle; a pass is naturally bounded by the sum of per-job `maxParallelism`. |
+| Worker pool | `src\KoLite.LocalApp` + `src\KoLite.Local.Core` | Claims queued execution units, extends leases, executes output writes, records progress, retries, and terminal state. Global concurrency is unbounded by default and can be limited with `KoLite:WorkerPool:MaxConcurrency`; the separate 100-start default is per dispatch cycle, not a concurrency ceiling. |
 | SQLite persistence | `src\KoLite.Local.Sqlite` | Owns the SQLite schema, catalog, queue, state, operational read models, rerun snapshots, failure summaries, and repair services. |
 | Kusto execution | `src\KoLite.Local.Kusto` | Builds `.set-or-append` commands, configures auth, executes live Kusto writes, and classifies Kusto errors. |
 | Ingestion throttling advisor | `src\KoLite.LocalApp` + `src\KoLite.Local.Sqlite` + `src\KoLite.Local.Core` | Records Kusto ingestion-capacity throttles (`ingestion_throttle_observations`, with a `terminal` dead-letter flag) and surfaces a severity view (throttled-attempt rate + chart) plus read-only `maxParallelism` reduction recommendations. A cluster shows when the throttled-attempt rate crosses a threshold with enough volume (and clears after a clean period), or whenever a slice has recently dead-lettered on throttling. Recommendations are guarded by a per-job keep-up floor, and a backfilling job is only trimmed to the catch-up floor that still clears its backlog within the target. Operators apply reductions explicitly. |
@@ -22,8 +22,8 @@ KO Lite runs as a local ASP.NET Core Razor Pages app with hosted background serv
 
 1. A user creates or imports schedule JSON through the dashboard.
 2. The catalog stores canonical schedule JSON and lifecycle metadata in SQLite.
-3. The scheduler enumerates due slices from enabled jobs and inserts idempotent queue rows.
-4. The worker pool claims claimable queue rows, enforcing each job's `maxParallelism` at claim time. Global worker concurrency is unbounded by default, so total in-flight work equals the sum of each job's `maxParallelism`.
+3. The scheduler enumerates due logical slices. For a chunked job it materializes 0-based child executions for the oldest eligible window and inserts queue rows up to the job's remaining `maxParallelism`.
+4. The worker pool claims execution-unit queue rows, enforcing each job's `maxParallelism` across normal slices, chunks, retries, repairs, and recovery. Each chunk consumes one slot. Per-job values have no upper limit; global worker concurrency is unbounded by default, so total in-flight work can reach the sum of each job's `maxParallelism`.
 5. The Kusto executor runs the configured function for the slice window and appends results to the schedule output table.
 6. Slice state, queue state, attempts, events, and operational logs are updated in SQLite.
 7. Dashboard read models query SQLite to show job status, history, failures, and worker/scheduler health.
@@ -55,6 +55,7 @@ Each execution attempt has a client-side deadline (job `queryTimeout` plus a sma
 - User-facing fake/offline execution is not registered in the local app.
 - Live Kusto execution uses the configured `target`, `functionName`, and `outputTable`.
 - Kusto append commands use idempotency tags so duplicate slice execution can be suppressed by Kusto.
+- Unchunked ingest-by identities are unchanged. A chunk's identity includes parent slice, chunk id, and total chunks and remains stable across retry, repair, recovery, and restart.
 - Pausing a job prevents new scheduling and queued retry claims; already-running slices are allowed to finish.
 - Rerun planning suggests Kusto cleanup commands but leaves execution of cleanup to the operator.
 - The ingestion throttling advisor only recommends `maxParallelism` reductions; applying one is an explicit, audited operator action scoped to the throttled cluster, and a server-side keep-up floor prevents reducing a job below the parallelism it needs to keep up with real time. A job that is behind real time (a real backlog) is treated as a backfill and only trimmed to the catch-up floor that still clears its backlog within the configured target, with the catch-up ETA trade-off shown.

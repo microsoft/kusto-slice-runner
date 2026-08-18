@@ -29,6 +29,7 @@ Before enabling scheduler dispatch:
 2. Confirm every enabled job points to the intended cluster, database, function, and output table.
 3. Confirm `queryWindowSize`, `delayFromUtcNow`, `startFrom`, and `maxParallelism` are safe for the target workload.
 4. Keep unreviewed jobs paused.
+5. For chunked jobs, confirm the function accepts `chunkId:long` and `chunks:long` before optional `jobSettings:dynamic`, and confirm `chunks * query cost` is safe for the cluster.
 
 Then run with scheduler dispatch enabled:
 
@@ -47,9 +48,9 @@ dotnet run --project .\src\KoLite.LocalApp\KoLite.LocalApp.csproj -- --Connectio
 | `KoLite:Scheduler:Enabled` | `true` | Disable for UI-only or safe first-run review. |
 | `KoLite:Scheduler:TickInterval` | `00:00:10` | Scheduler cadence. Must be greater than zero. |
 | `KoLite:Scheduler:LogEveryPass` | `false` | Writes durable scheduler/worker diagnostic rows when enabled. |
-| `KoLite:WorkerPool:MaxConcurrency` | `Unbounded` | Global worker-pool concurrency cap. Unbounded by default so total concurrency equals the sum of each job's `maxParallelism` (enforced per job at claim time); set a positive integer to impose a global cap. |
+| `KoLite:WorkerPool:MaxConcurrency` | `Unbounded` | Global execution-unit concurrency cap across all jobs. Unbounded by default (`int.MaxValue` internally), so total concurrency is governed by the sum of each job's `maxParallelism`; set any positive integer to impose a global cap. There is no hard product maximum. |
 | `KoLite:WorkerPool:IdleDelay` | `00:00:00.250` | Delay between idle dispatcher cycles. |
-| `KoLite:WorkerPool:MaxDispatchStartsPerCycle` | `100` | Per-cycle dispatch start cap. |
+| `KoLite:WorkerPool:MaxDispatchStartsPerCycle` | `100` | Maximum execution units started in one dispatcher cycle. This controls start rate, not total in-flight concurrency; the default can launch all 32 chunks of one window in a cycle. |
 | `KoLite:Kusto:AuthMode` | `AzureCli` | Supported values: `AzureCli`, `ManagedIdentity`. |
 | `KoLite:Kusto:ManagedIdentityClientId` | Empty | Optional user-assigned managed identity client ID. |
 | `KoLite:Throttling:Enabled` | `true` | Surfaces the ingestion-throttling advisory page and dashboard banner. Detection/recording is always on; this only gates the advisory surface. |
@@ -178,6 +179,26 @@ Use **Export all** on the home dashboard to export an import-compatible JSON arr
 After a job has execution history, `activityId`, `queryWindowSize`, and `startFrom` are read-only. The edit page marks those fields read-only, and the backend rejects raw JSON or import payloads that try to change them for a started job.
 
 See [schedule-json.md](schedule-json.md) for the schedule contract.
+
+### Chunked jobs
+
+`chunks` is an optional integer from 1 through 32. It changes the Kusto function signature and is
+therefore read-only after a job starts. Create chunked jobs paused, review the function and target,
+then resume explicitly.
+
+One colored history cell remains one logical time window. Open it to see child chunk state,
+attempts, leases, queue rows, and errors. `maxParallelism` limits concurrent child executions.
+Pausing lets in-flight chunks finish but prevents new chunks and retries from starting. Resume
+continues the incomplete children without rerunning successful siblings.
+
+`maxParallelism` counts execution units, not parent windows: each chunk consumes one slot, while
+an unchunked slice consumes one slot. It has no upper limit beyond the minimum of 1. Full fan-out
+of a 32-chunk window requires `maxParallelism >= 32` and at least 32 free global worker slots.
+The global pool is unbounded by default; if `KoLite:WorkerPool:MaxConcurrency` is configured, all
+jobs share that finite cap. `MaxDispatchStartsPerCycle` is separate and defaults to 100.
+
+Repair requeues only failed/dead-lettered chunks and reuses their stable ingest-by identities.
+Rerun still resets every chunk in the selected logical window because cleanup is time-window based.
 
 ## Local management API
 

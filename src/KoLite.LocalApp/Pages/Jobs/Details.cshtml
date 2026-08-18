@@ -199,12 +199,13 @@ else
                 {
                     <div class="table-wrap scroll-panel">
                         <table class="ko-table compact">
-                            <thead><tr><th>Slice</th><th>Attempt</th><th>Status</th><th>Completed</th><th>Error</th></tr></thead>
+                            <thead><tr><th>Slice</th><th>Chunk</th><th>Attempt</th><th>Status</th><th>Completed</th><th>Error</th></tr></thead>
                             <tbody>
                             @foreach (var attempt in data.RecentAttempts)
                             {
                                 <tr>
                                     <td><a href="/jobs/@Uri.EscapeDataString(data.Job.JobId)/slices?start=@Uri.EscapeDataString(AppFormatting.Iso(attempt.SliceStartUtc))&end=@Uri.EscapeDataString(AppFormatting.Iso(attempt.SliceEndUtc))">@AppFormatting.Iso(attempt.SliceStartUtc)</a></td>
+                                    <td>@(attempt.ChunkId is null ? "-" : $"{attempt.ChunkId}/{attempt.TotalChunks}")</td>
                                     <td>@attempt.Attempt</td>
                                     <td><span class="badge @AppFormatting.BadgeCss(attempt.Status)">@attempt.Status</span></td>
                                     <td>@AppFormatting.Local(attempt.CompletedAtUtc)</td>

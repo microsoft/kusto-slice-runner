@@ -92,6 +92,61 @@ namespace KoLite.LocalApp.Tests
         }
 
         [Fact]
+        public async Task Chunked_repair_requires_exact_preview_token_and_requeues_only_failed_child()
+        {
+            CreateJob("repair.chunks", chunks: 2);
+            var slice = new KoLite.Local.Core.Scheduling.SliceRange(JobId("repair.chunks"), At(0), At(5));
+            var chunks = new SqliteChunkStateRepository(sqlite);
+            foreach (var child in chunks.EnsureWindow(slice, 2, "test"))
+            {
+                chunks.MarkQueued($"queued-{child.ChunkId}", child.Execution, actor: "test");
+                var lease = chunks.AcquireLease($"lease-{child.ChunkId}", child.Execution, "worker", TimeSpan.FromMinutes(5), At(10))!;
+                if (child.ChunkId == 0)
+                {
+                    chunks.CompleteLease("complete-0", child.Execution, "worker", lease.LeaseToken!, At(11));
+                }
+                else
+                {
+                    chunks.DeadLetterLease("dead-1", child.Execution, "worker", lease.LeaseToken!, At(11), "boom", "Permanent");
+                }
+            }
+
+            using var client = factory.CreateClient();
+            using var previewResponse = await client.PostAsJsonAsync(
+                $"/api/jobs/{JobId("repair.chunks")}/repair/preview",
+                new { from = At(0), to = At(5) });
+            using var previewBody = JsonDocument.Parse(await previewResponse.Content.ReadAsStringAsync());
+            var preview = previewBody.RootElement;
+
+            Assert.Equal(1, preview.GetProperty("repairableSliceCount").GetInt32());
+            Assert.Equal(1, preview.GetProperty("repairableExecutionCount").GetInt32());
+            Assert.Equal([1], preview.GetProperty("slices").EnumerateArray().Single().GetProperty("chunkIds").EnumerateArray().Select(value => value.GetInt32()).ToArray());
+
+            using var missingToken = await client.PostAsJsonAsync(
+                $"/api/jobs/{JobId("repair.chunks")}/repair",
+                new { from = At(0), to = At(5), reason = "repair one chunk", expectedSliceCount = 1 });
+            Assert.Equal(HttpStatusCode.Conflict, missingToken.StatusCode);
+
+            using var repaired = await client.PostAsJsonAsync(
+                $"/api/jobs/{JobId("repair.chunks")}/repair",
+                new
+                {
+                    from = At(0),
+                    to = At(5),
+                    reason = "repair one chunk",
+                    expectedSliceCount = 1,
+                    expectedExecutionCount = preview.GetProperty("repairableExecutionCount").GetInt32(),
+                    previewToken = preview.GetProperty("previewToken").GetString(),
+                });
+
+            Assert.Equal(HttpStatusCode.OK, repaired.StatusCode);
+            var work = Assert.Single(new SqliteWorkQueueRepository(sqlite).List(JobId("repair.chunks")));
+            Assert.Equal(1, work.ChunkId);
+            Assert.Equal(DurableSliceStatus.Completed, chunks.Get(KoLite.Local.Core.Scheduling.SliceExecutionUnit.Chunk(slice, 0, 2))!.Status);
+            Assert.Equal(DurableSliceStatus.Queued, chunks.Get(KoLite.Local.Core.Scheduling.SliceExecutionUnit.Chunk(slice, 1, 2))!.Status);
+        }
+
+        [Fact]
         public async Task Repair_accepts_the_activity_id_as_well_as_the_guid()
         {
             CreateJob("alias.job");
@@ -305,8 +360,8 @@ namespace KoLite.LocalApp.Tests
             Assert.Equal("local-api", entry.GetProperty("actor").GetString());
         }
 
-        private void CreateJob(string activityId, bool isPaused = false) =>
-            new SqliteJobCatalogRepository(sqlite).Create(Schedule(activityId, isPaused));
+        private void CreateJob(string activityId, bool isPaused = false, int? chunks = null) =>
+            new SqliteJobCatalogRepository(sqlite).Create(Schedule(activityId, isPaused, chunks));
 
         private static DateTimeOffset At(int minutes) => new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero).AddMinutes(minutes);
 
@@ -331,7 +386,7 @@ namespace KoLite.LocalApp.Tests
             return new Guid(bytes).ToString("N");
         }
 
-        private static string Schedule(string activityId, bool isPaused) =>
+        private static string Schedule(string activityId, bool isPaused, int? chunks) =>
             "{\n" +
             $"  \"id\": \"{JobId(activityId)}\",\n" +
             $"  \"activityId\": \"{activityId}\",\n" +
@@ -341,6 +396,7 @@ namespace KoLite.LocalApp.Tests
             "  \"delayFromUtcNow\": \"00:00:00\",\n" +
             "  \"maxParallelism\": 4,\n" +
             "  \"queryTimeout\": \"00:01:00\",\n" +
+            (chunks is null ? string.Empty : $"  \"chunks\": {chunks.Value.ToString(CultureInfo.InvariantCulture)},\n") +
             $"  \"isPaused\": {(isPaused ? "true" : "false")},\n" +
             "  \"startFrom\": \"2026-01-01T00:00:00Z\",\n" +
             "  \"target\": { \"clusterUri\": \"https://kolite-example.invalid\", \"database\": \"DemoDb\" }\n" +

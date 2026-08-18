@@ -393,14 +393,36 @@ namespace KoLite.LocalApp.Ui
         private IReadOnlyList<AttemptOutcome> ReadAttemptOutcomes(BucketWindow window)
         {
             const string commandText = """
-                SELECT sa.job_id, sa.completed_at_utc, sa.status
+                WITH candidates AS (
+                    SELECT DISTINCT job_id, slice_start_utc, slice_end_utc, attempt
+                    FROM slice_attempts
+                    WHERE completed_at_utc IS NOT NULL
+                      AND completed_at_utc >= $since
+                      AND completed_at_utc < $until
+                      AND status IN ('Succeeded','Failed','FailedRetryable','DeadLettered','LeaseLost')
+                )
+                SELECT sa.job_id,
+                       MAX(sa.completed_at_utc) AS logical_completed_at,
+                       CASE
+                         WHEN COUNT(DISTINCT COALESCE(sa.chunk_id, -1))
+                              >= COALESCE(json_extract(jd.schedule_json, '$.chunks'), 1)
+                          AND SUM(CASE WHEN sa.status='Succeeded' THEN 1 ELSE 0 END)
+                              = COUNT(*)
+                         THEN 'Succeeded'
+                         ELSE 'Failed'
+                       END AS logical_status
                 FROM slice_attempts sa
+                JOIN candidates candidate
+                  ON candidate.job_id = sa.job_id
+                 AND candidate.slice_start_utc = sa.slice_start_utc
+                 AND candidate.slice_end_utc = sa.slice_end_utc
+                 AND candidate.attempt = sa.attempt
                 INNER JOIN job_definitions jd ON jd.job_id = sa.job_id
                 WHERE sa.completed_at_utc IS NOT NULL
-                  AND sa.completed_at_utc >= $since
-                  AND sa.completed_at_utc < $until
                   AND sa.status IN ('Succeeded','Failed','FailedRetryable','DeadLettered','LeaseLost')
-                ORDER BY sa.job_id, sa.completed_at_utc, sa.attempt;
+                GROUP BY sa.job_id, sa.slice_start_utc, sa.slice_end_utc, sa.attempt
+                HAVING logical_completed_at >= $since AND logical_completed_at < $until
+                ORDER BY sa.job_id, logical_completed_at;
                 """;
             return timeSeries.ReadWindow(
                 commandText,

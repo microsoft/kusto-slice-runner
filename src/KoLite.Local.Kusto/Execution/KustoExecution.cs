@@ -17,6 +17,9 @@ namespace KoLite.Local.Kusto.Execution
         string OutputTable,
         SliceRange Slice,
         string SliceKey,
+        string ExecutionKey,
+        int? ChunkId,
+        int? TotalChunks,
         string OperationId,
         string IdempotencyKey,
         string IngestByTag,
@@ -24,30 +27,40 @@ namespace KoLite.Local.Kusto.Execution
         TimeSpan Timeout)
     {
         public string ClientRequestId => $"KoLite.Local.Output;{OperationId}";
-        public string OutputReference => $"ko-lite:{SliceKey}";
+        public string OutputReference => $"ko-lite:{ExecutionKey}";
     }
 
     public sealed record KustoExecutionResult(bool Succeeded, string? OutputReference, IReadOnlyDictionary<string, string> Metadata, KustoExecutionError? Error = null);
     public sealed record KustoExecutionError(string Code, string Message, bool IsRetryable, bool? IsPermanent = null, int? FailureCode = null, string? FailureSubCode = null);
-    public interface IKustoRequestBuilder { KustoExecutionRequest Build(JobDefinition job, SliceRange slice); }
+    public interface IKustoRequestBuilder
+    {
+        KustoExecutionRequest Build(JobDefinition job, SliceRange slice);
+        KustoExecutionRequest Build(JobDefinition job, SliceExecutionUnit execution);
+    }
     public interface IKustoExecutor { Task<KustoExecutionResult> ExecuteAsync(KustoExecutionRequest request, CancellationToken cancellationToken = default); }
 
     public sealed partial class KustoRequestBuilder : IKustoRequestBuilder
     {
-        public KustoExecutionRequest Build(JobDefinition job, SliceRange slice)
+        public KustoExecutionRequest Build(JobDefinition job, SliceRange slice) =>
+            Build(job, SliceExecutionUnit.Unchunked(slice));
+
+        public KustoExecutionRequest Build(JobDefinition job, SliceExecutionUnit execution)
         {
             if (!Uri.TryCreate(job.Target.ClusterUri, UriKind.Absolute, out var clusterUri) || clusterUri.Scheme != Uri.UriSchemeHttps) throw new InvalidOperationException("Kusto cluster URI must be an absolute https URI.");
             ValidateIdentifier(job.Target.Database, nameof(job.Target.Database)); ValidateIdentifier(job.FunctionName, nameof(job.FunctionName)); ValidateIdentifier(job.OutputTable, nameof(job.OutputTable));
+            var slice = execution.Slice;
             if (!StringComparer.Ordinal.Equals(job.Id, slice.JobId)) throw new InvalidOperationException("Slice job id must match the job id.");
+            ValidateChunkIdentity(job, execution);
 
             var sliceKey = slice.ToKey().Value;
-            var idempotencyKey = $"ko-lite:{sliceKey}";
+            var executionKey = execution.ExecutionKey;
+            var idempotencyKey = $"ko-lite:{executionKey}";
             var ingestByTag = $"ingest-by:{idempotencyKey}";
             var ingestIfNotExists = KustoString(JsonSerializer.Serialize(new[] { idempotencyKey }));
             var tags = KustoString(JsonSerializer.Serialize(new[] { ingestByTag }));
             var commandText = string.Create(CultureInfo.InvariantCulture, $$"""
                 .set-or-append {{job.OutputTable}} with (ingestIfNotExists = {{ingestIfNotExists}}, tags = {{tags}}) <|
-                {{job.FunctionName}}({{BuildFunctionArguments(job, slice)}})
+                {{job.FunctionName}}({{BuildFunctionArguments(job, execution)}})
                 """);
 
             return new KustoExecutionRequest(
@@ -57,23 +70,47 @@ namespace KoLite.Local.Kusto.Execution
                 job.OutputTable,
                 slice,
                 sliceKey,
-                $"output|{sliceKey}",
+                executionKey,
+                execution.ChunkId,
+                execution.TotalChunks,
+                $"output|{executionKey}",
                 idempotencyKey,
                 ingestByTag,
                 commandText,
                 job.QueryTimeout);
         }
 
-        private static string BuildFunctionArguments(JobDefinition job, SliceRange slice)
+        private static string BuildFunctionArguments(JobDefinition job, SliceExecutionUnit execution)
         {
+            var slice = execution.Slice;
             var start = FormatDateTime(slice.StartUtc);
             var end = FormatDateTime(slice.EndUtc);
-            if (job.JobSettings is not { } settings || !HasNonEmptyJobSettings(settings))
+            var arguments = $"datetime({start}), datetime({end})";
+            if (execution.IsChunked)
             {
-                return $"datetime({start}), datetime({end})";
+                arguments += string.Create(CultureInfo.InvariantCulture, $", {execution.ChunkId!.Value}, {execution.TotalChunks!.Value}");
             }
 
-            return $"datetime({start}), datetime({end}), dynamic({settings.GetRawText()})";
+            if (job.JobSettings is { } settings && HasNonEmptyJobSettings(settings))
+            {
+                arguments += $", dynamic({settings.GetRawText()})";
+            }
+
+            return arguments;
+        }
+
+        private static void ValidateChunkIdentity(JobDefinition job, SliceExecutionUnit execution)
+        {
+            if (job.Chunks is null && execution.IsChunked)
+            {
+                throw new InvalidOperationException("Chunk metadata cannot be supplied for a job without chunks.");
+            }
+
+            if (job.Chunks is { } chunks
+                && (!execution.IsChunked || execution.TotalChunks != chunks))
+            {
+                throw new InvalidOperationException($"Chunked job '{job.ActivityId}' requires execution metadata with total chunks {chunks}.");
+            }
         }
 
         private static bool HasNonEmptyJobSettings(JsonElement settings) =>
@@ -111,11 +148,14 @@ namespace KoLite.Local.Kusto.Execution
         }
 
         public async Task<LocalSliceOutputResult> ExecuteAsync(JobDefinition job, SliceRange slice, CancellationToken cancellationToken = default)
+            => await ExecuteAsync(job, SliceExecutionUnit.Unchunked(slice), cancellationToken).ConfigureAwait(false);
+
+        public async Task<LocalSliceOutputResult> ExecuteAsync(JobDefinition job, SliceExecutionUnit execution, CancellationToken cancellationToken = default)
         {
             KustoExecutionRequest request;
             try
             {
-                request = requestBuilder.Build(job, slice);
+                request = requestBuilder.Build(job, execution);
             }
             catch (InvalidOperationException ex)
             {

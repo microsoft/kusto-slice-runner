@@ -118,6 +118,23 @@ namespace KoLite.LocalApp.Tests
         }
 
         [Fact]
+        public void Worker_pool_options_accept_a_configured_global_cap_above_the_chunk_limit()
+        {
+            var configuration = new ConfigurationBuilder()
+                .AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["KoLite:WorkerPool:MaxConcurrency"] = "64"
+                })
+                .Build();
+
+            var schedulerOptions = LocalBackgroundSchedulerOptions.From(configuration);
+            var options = LocalBackgroundWorkerPoolOptions.From(configuration, schedulerOptions);
+
+            Assert.Equal(64, options.MaxConcurrency);
+            Assert.False(options.MaxConcurrencyUnbounded);
+        }
+
+        [Fact]
         public void Worker_pool_options_reject_invalid_worker_pool_values()
         {
             var configuration = new ConfigurationBuilder()
@@ -859,6 +876,19 @@ namespace KoLite.LocalApp.Tests
             var newJobHtml = await client.GetStringAsync("/catalog/new");
             Assert.Contains("data-tag-picker", newJobHtml, StringComparison.Ordinal);
             Assert.Contains("name=\"Input.Tags\" data-tag-hidden", newJobHtml, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public async Task Schedule_editor_explains_execution_unit_concurrency_and_chunk_fanout()
+        {
+            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+
+            var html = await client.GetStringAsync("/catalog/new");
+
+            Assert.Contains("Concurrent execution units for this job: chunks for chunked jobs, otherwise slices.", html, StringComparison.Ordinal);
+            Assert.Contains("Minimum 1 with no upper limit.", html, StringComparison.Ordinal);
+            Assert.Contains("Set this to at least the chunk count", html, StringComparison.Ordinal);
+            Assert.Contains("each chunk consumes one max-parallelism slot", html, StringComparison.Ordinal);
         }
 
         [Fact]
@@ -1987,6 +2017,108 @@ namespace KoLite.LocalApp.Tests
         }
 
         [Fact]
+        public async Task Unbounded_worker_pool_starts_all_32_chunks_when_job_parallelism_allows_it()
+        {
+            new SqliteJobCatalogRepository(sqlite).Create(
+                Schedule("job.chunks.unbounded32", "ChunkFunction", isPaused: false, maxParallelism: 32, chunks: 32));
+            var executor = new BlockingSliceOutputExecutor(expectedStarts: 32);
+            using var runFactory = CreateFactory(
+                enableScheduler: true,
+                tickInterval: "00:00:00.050",
+                configureServices: services =>
+                {
+                    services.AddSingleton(executor);
+                    services.AddScoped<ILocalSliceOutputExecutor>(sp => sp.GetRequiredService<BlockingSliceOutputExecutor>());
+                });
+            using var client = runFactory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+            var slice = new SliceRange(JobId("job.chunks.unbounded32"), At(0), At(5));
+
+            try
+            {
+                await client.GetStringAsync("/");
+                await executor.WaitForStartsAsync(TimeSpan.FromSeconds(15));
+                await Task.Delay(250);
+
+                Assert.Equal(32, executor.StartedCount);
+                Assert.Equal(
+                    32,
+                    new SqliteChunkStateRepository(sqlite).List(slice)
+                        .Count(chunk => chunk.Status == DurableSliceStatus.Running));
+                var work = new SqliteWorkQueueRepository(sqlite).List(JobId("job.chunks.unbounded32"));
+                Assert.Equal(32, work.Count(item => item.State == DurableWorkQueueState.Leased));
+                Assert.DoesNotContain(work, item => item.State == DurableWorkQueueState.Queued);
+
+                using var health = JsonDocument.Parse(await client.GetStringAsync("/status/health"));
+                var workerPool = health.RootElement.GetProperty("workerPool");
+                Assert.Equal(JsonValueKind.Null, workerPool.GetProperty("maxConcurrency").ValueKind);
+                Assert.Equal("Unbounded", workerPool.GetProperty("maxConcurrencyDisplay").GetString());
+                Assert.Equal("Default", workerPool.GetProperty("maxConcurrencySource").GetString());
+                Assert.Equal(100, workerPool.GetProperty("maxDispatchStartsPerCycle").GetInt32());
+                Assert.Equal(32, workerPool.GetProperty("activeWorkerCount").GetInt32());
+                Assert.Equal(32, workerPool.GetProperty("starts").GetInt64());
+            }
+            finally
+            {
+                executor.Release();
+            }
+
+            await WaitUntilAsync(
+                () => new SqliteSliceStateRepository(sqlite)
+                    .Get(JobId("job.chunks.unbounded32"), At(0), At(5)).Status == DurableSliceStatus.Completed,
+                TimeSpan.FromSeconds(15));
+        }
+
+        [Fact]
+        public async Task Configured_global_worker_cap_limits_chunk_concurrency_below_job_parallelism()
+        {
+            new SqliteJobCatalogRepository(sqlite).Create(
+                Schedule("job.chunks.global8", "ChunkFunction", isPaused: false, maxParallelism: 32, chunks: 32));
+            var executor = new BlockingSliceOutputExecutor(expectedStarts: 8);
+            using var runFactory = CreateFactory(
+                enableScheduler: true,
+                tickInterval: "00:00:00.050",
+                workerPoolMaxConcurrency: 8,
+                configureServices: services =>
+                {
+                    services.AddSingleton(executor);
+                    services.AddScoped<ILocalSliceOutputExecutor>(sp => sp.GetRequiredService<BlockingSliceOutputExecutor>());
+                });
+            using var client = runFactory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+            var slice = new SliceRange(JobId("job.chunks.global8"), At(0), At(5));
+
+            try
+            {
+                await client.GetStringAsync("/");
+                await executor.WaitForStartsAsync(TimeSpan.FromSeconds(10));
+                await Task.Delay(250);
+
+                Assert.Equal(8, executor.StartedCount);
+                var chunks = new SqliteChunkStateRepository(sqlite).List(slice);
+                Assert.Equal(8, chunks.Count(chunk => chunk.Status == DurableSliceStatus.Running));
+                Assert.Equal(24, chunks.Count(chunk => chunk.Status == DurableSliceStatus.Queued));
+                var work = new SqliteWorkQueueRepository(sqlite).List(JobId("job.chunks.global8"));
+                Assert.Equal(8, work.Count(item => item.State == DurableWorkQueueState.Leased));
+                Assert.Equal(24, work.Count(item => item.State == DurableWorkQueueState.Queued));
+
+                using var health = JsonDocument.Parse(await client.GetStringAsync("/status/health"));
+                var workerPool = health.RootElement.GetProperty("workerPool");
+                Assert.Equal(8, workerPool.GetProperty("maxConcurrency").GetInt32());
+                Assert.Equal("KoLite:WorkerPool:MaxConcurrency", workerPool.GetProperty("maxConcurrencySource").GetString());
+                Assert.Equal(8, workerPool.GetProperty("activeWorkerCount").GetInt32());
+                Assert.Equal(0, workerPool.GetProperty("availableSlots").GetInt32());
+            }
+            finally
+            {
+                executor.Release();
+            }
+
+            await WaitUntilAsync(
+                () => new SqliteSliceStateRepository(sqlite)
+                    .Get(JobId("job.chunks.global8"), At(0), At(5)).Status == DurableSliceStatus.Completed,
+                TimeSpan.FromSeconds(15));
+        }
+
+        [Fact]
         public async Task Background_worker_pool_applies_global_cap_across_jobs_and_uses_unique_worker_ids()
         {
             var catalog = new SqliteJobCatalogRepository(sqlite);
@@ -2902,7 +3034,7 @@ namespace KoLite.LocalApp.Tests
             return new Guid(bytes).ToString("N");
         }
 
-        private static string Schedule(string activityId, string functionName, bool isPaused, string outputTable = "Output", int maxParallelism = 1, string queryWindowSize = "00:05:00", string? folder = null, IReadOnlyList<string>? tags = null, string? endOn = null, string? healthPolicy = null, string? description = null)
+        private static string Schedule(string activityId, string functionName, bool isPaused, string outputTable = "Output", int maxParallelism = 1, string queryWindowSize = "00:05:00", string? folder = null, IReadOnlyList<string>? tags = null, string? endOn = null, string? healthPolicy = null, string? description = null, int? chunks = null)
         {
             var schedule = $$"""
             {
@@ -2944,6 +3076,11 @@ namespace KoLite.LocalApp.Tests
             if (healthPolicy is not null)
             {
                 metadata.Add($"  \"healthPolicy\": {JsonSerializer.Serialize(healthPolicy)},");
+            }
+
+            if (chunks is not null)
+            {
+                metadata.Add($"  \"chunks\": {chunks.Value},");
             }
 
             return metadata.Count == 0

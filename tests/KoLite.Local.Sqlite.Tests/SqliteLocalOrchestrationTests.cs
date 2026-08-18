@@ -19,6 +19,7 @@ namespace KoLite.Local.Sqlite.Tests
         private readonly KoLiteSqliteConnectionFactory factory;
         private readonly SqliteJobCatalogRepository catalog;
         private readonly SqliteSliceStateRepository state;
+        private readonly SqliteChunkStateRepository chunkState;
         private readonly SqliteWorkQueueRepository queue;
         private readonly SqliteOperationalReadModelRepository observability;
         private readonly ManualClock clock = new(At(15));
@@ -30,6 +31,7 @@ namespace KoLite.Local.Sqlite.Tests
             new KoLiteSqliteSchema(factory).EnsureSchema();
             catalog = new SqliteJobCatalogRepository(factory);
             state = new SqliteSliceStateRepository(factory);
+            chunkState = new SqliteChunkStateRepository(factory);
             queue = new SqliteWorkQueueRepository(factory);
             observability = new SqliteOperationalReadModelRepository(factory);
         }
@@ -56,6 +58,167 @@ namespace KoLite.Local.Sqlite.Tests
             Assert.Equal(DurableSliceStatus.Completed, state.Get(JobId("job.happy"), At(0), At(5)).Status);
             Assert.Equal(DurableSliceStatus.Completed, state.Get(JobId("job.happy"), At(5), At(10)).Status);
             Assert.All(queue.List(JobId("job.happy")), item => Assert.Equal(DurableWorkQueueState.Completed, item.State));
+        }
+
+        [Fact]
+        public async Task Chunked_scheduler_fills_oldest_window_and_parent_completes_after_all_chunks()
+        {
+            catalog.Create(Schedule("job.chunks", maxParallelism: 2, chunks: 3));
+            var scheduler = Scheduler(maxSlicesPerTick: 10);
+            var executor = new RecordingExecutor();
+            var worker = Worker(executor);
+
+            var firstTick = scheduler.Tick();
+
+            Assert.Equal(2, firstTick.Enqueued);
+            Assert.Equal([0, 1], queue.List(JobId("job.chunks")).Select(item => item.ChunkId).Order().ToArray());
+            Assert.All(queue.List(JobId("job.chunks")), item => Assert.Equal(3, item.TotalChunks));
+
+            Assert.True((await worker.RunOnceAsync()).Succeeded);
+            var secondTick = scheduler.Tick();
+
+            Assert.Equal(1, secondTick.Enqueued);
+            Assert.Equal([0, 1, 2], queue.List(JobId("job.chunks")).Select(item => item.ChunkId).Order().ToArray());
+            Assert.All(queue.List(JobId("job.chunks")), item => Assert.Equal(At(0), item.SliceStartUtc));
+
+            Assert.True((await worker.RunOnceAsync()).Succeeded);
+            Assert.True((await worker.RunOnceAsync()).Succeeded);
+
+            Assert.Equal(DurableSliceStatus.Completed, state.Get(JobId("job.chunks"), At(0), At(5)).Status);
+            Assert.All(chunkState.List(new SliceRange(JobId("job.chunks"), At(0), At(5))), child => Assert.Equal(DurableSliceStatus.Completed, child.Status));
+            Assert.Equal([0, 1, 2], executor.Executions.Select(execution => execution.ChunkId).Order().ToArray());
+
+            var nextTick = scheduler.Tick();
+            Assert.Equal(2, nextTick.Enqueued);
+            Assert.All(queue.List(JobId("job.chunks")).Where(item => item.State == DurableWorkQueueState.Queued), item => Assert.Equal(At(5), item.SliceStartUtc));
+        }
+
+        [Theory]
+        [InlineData(8)]
+        [InlineData(32)]
+        public void Chunked_scheduler_counts_each_chunk_against_job_parallelism(int maxParallelism)
+        {
+            catalog.Create(Schedule($"job.chunks.capacity.{maxParallelism}", maxParallelism, chunks: 32));
+
+            var tick = Scheduler(maxSlicesPerTick: 100).Tick();
+            var work = queue.List(JobId($"job.chunks.capacity.{maxParallelism}"));
+
+            Assert.Equal(maxParallelism, tick.Enqueued);
+            Assert.Equal(maxParallelism, work.Count);
+            Assert.All(work, item =>
+            {
+                Assert.Equal(At(0), item.SliceStartUtc);
+                Assert.InRange(item.ChunkId!.Value, 0, maxParallelism - 1);
+                Assert.Equal(32, item.TotalChunks);
+            });
+        }
+
+        [Fact]
+        public void Queue_claim_guard_allows_all_32_chunks_when_job_parallelism_is_32()
+        {
+            catalog.Create(Schedule("job.chunks.claim32", maxParallelism: 32, chunks: 32));
+            Assert.Equal(32, Scheduler(maxSlicesPerTick: 100).Tick().Enqueued);
+
+            var claims = Enumerable.Range(0, 32)
+                .Select(index => queue.Claim(
+                    "default",
+                    $"worker-{index}",
+                    TimeSpan.FromMinutes(5),
+                    clock.UtcNow,
+                    enforceJobParallelism: true))
+                .ToArray();
+
+            Assert.All(claims, claim => Assert.NotNull(claim));
+            Assert.Equal(32, claims.Select(claim => claim!.ChunkId).Distinct().Count());
+            Assert.Null(queue.Claim(
+                "default",
+                "worker-over-cap",
+                TimeSpan.FromMinutes(5),
+                clock.UtcNow,
+                enforceJobParallelism: true));
+        }
+
+        [Fact]
+        public void Parallelism_above_chunk_count_is_valid_and_can_overlap_logical_windows()
+        {
+            catalog.Create(Schedule("job.chunks.capacity64", maxParallelism: 64, chunks: 32));
+
+            var tick = Scheduler(maxSlicesPerTick: 100).Tick();
+            var work = queue.List(JobId("job.chunks.capacity64"));
+
+            Assert.Equal(64, tick.Enqueued);
+            Assert.Equal(64, work.Count);
+            Assert.Equal(32, work.Count(item => item.SliceStartUtc == At(0)));
+            Assert.Equal(32, work.Count(item => item.SliceStartUtc == At(5)));
+        }
+
+        [Fact]
+        public async Task Chunk_failure_is_isolated_and_parent_deadletters_only_after_siblings_finish()
+        {
+            catalog.Create(Schedule("job.chunk-failure", maxParallelism: 2, chunks: 2));
+            Scheduler(maxSlicesPerTick: 10).Tick();
+            var executor = new RecordingExecutor(
+                LocalSliceOutputResult.Success("test://chunk-0"),
+                LocalSliceOutputResult.Failure("Permanent", "bad chunk", isRetryable: false));
+            var worker = Worker(executor);
+
+            Assert.True((await worker.RunOnceAsync()).Succeeded);
+            var failed = await worker.RunOnceAsync();
+
+            Assert.True(failed.DeadLettered);
+            var children = chunkState.List(new SliceRange(JobId("job.chunk-failure"), At(0), At(5)));
+            Assert.Equal(DurableSliceStatus.Completed, children[0].Status);
+            Assert.Equal(DurableSliceStatus.DeadLettered, children[1].Status);
+            Assert.Equal(DurableSliceStatus.DeadLettered, state.Get(JobId("job.chunk-failure"), At(0), At(5)).Status);
+        }
+
+        [Fact]
+        public async Task Downstream_waits_for_every_upstream_chunk()
+        {
+            catalog.Create(Schedule("upstream.chunks", maxParallelism: 2, chunks: 2));
+            catalog.Create(Schedule("downstream.chunks", maxParallelism: 1, dependsOn: "upstream.chunks"));
+            var scheduler = Scheduler(maxSlicesPerTick: 10, new ManualClock(At(5)));
+            var worker = Worker(new RecordingExecutor());
+
+            var firstTick = scheduler.Tick();
+            Assert.Equal(2, firstTick.Enqueued);
+            Assert.Equal(DurableSliceStatus.DependencyBlocked, state.Get(JobId("downstream.chunks"), At(0), At(5)).Status);
+
+            Assert.True((await worker.RunOnceAsync()).Succeeded);
+            scheduler.Tick();
+            Assert.Equal(DurableSliceStatus.DependencyBlocked, state.Get(JobId("downstream.chunks"), At(0), At(5)).Status);
+
+            Assert.True((await worker.RunOnceAsync()).Succeeded);
+            var readyTick = scheduler.Tick();
+
+            Assert.Equal(1, readyTick.Enqueued);
+            Assert.Equal(DurableSliceStatus.Queued, state.Get(JobId("downstream.chunks"), At(0), At(5)).Status);
+        }
+
+        [Fact]
+        public async Task Pausing_chunked_job_blocks_unstarted_chunks_until_resume()
+        {
+            var created = catalog.Create(Schedule("job.chunk-pause", maxParallelism: 2, chunks: 3));
+            var scheduler = Scheduler(maxSlicesPerTick: 10);
+            var worker = Worker(new RecordingExecutor());
+            Assert.Equal(2, scheduler.Tick().Enqueued);
+
+            var paused = catalog.Update(
+                created.JobId,
+                Schedule("job.chunk-pause", maxParallelism: 2, chunks: 3, isPaused: true),
+                created.CatalogVersion);
+
+            var pausedRun = await worker.RunOnceAsync();
+            Assert.False(pausedRun.ClaimedWork);
+            Assert.All(queue.List(created.JobId), item => Assert.Equal(0, item.Attempts));
+            Assert.Equal(0, scheduler.Tick().Enqueued);
+
+            catalog.Update(
+                created.JobId,
+                Schedule("job.chunk-pause", maxParallelism: 2, chunks: 3),
+                paused.CatalogVersion);
+            Assert.True((await worker.RunOnceAsync()).Succeeded);
+            Assert.Equal(1, scheduler.Tick().Enqueued);
         }
 
         [Fact]
@@ -632,8 +795,8 @@ namespace KoLite.Local.Sqlite.Tests
             Assert.Equal(DurableSliceStatus.Running, state.Get(JobId("job.cancel"), At(0), At(5)).Status);
         }
 
-        private SqliteLocalScheduler Scheduler(int maxSlicesPerTick, IClock? schedulerClock = null) => new(catalog, state, queue, observability, schedulerClock ?? clock, new LocalSchedulerOptions(MaxSlicesPerTick: maxSlicesPerTick));
-        private SqliteLocalWorker Worker(ILocalSliceOutputExecutor executor, LocalWorkerOptions? options = null, ILocalWorkerProgressSink? progressSink = null) => new(catalog, state, queue, observability, executor, clock, options, progressSink);
+        private SqliteLocalScheduler Scheduler(int maxSlicesPerTick, IClock? schedulerClock = null) => new(catalog, state, queue, observability, schedulerClock ?? clock, new LocalSchedulerOptions(MaxSlicesPerTick: maxSlicesPerTick), chunkState);
+        private SqliteLocalWorker Worker(ILocalSliceOutputExecutor executor, LocalWorkerOptions? options = null, ILocalWorkerProgressSink? progressSink = null) => new(catalog, state, queue, observability, executor, clock, options, progressSink, chunkState);
 
         private static DateTimeOffset At(int minutes) => new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero).AddMinutes(minutes);
 
@@ -643,7 +806,7 @@ namespace KoLite.Local.Sqlite.Tests
             return new Guid(bytes).ToString("N");
         }
 
-        private static string Schedule(string activityId, int maxParallelism, string? dependsOn = null, string queryTimeout = "00:01:00") => $$"""
+        private static string Schedule(string activityId, int maxParallelism, string? dependsOn = null, string queryTimeout = "00:01:00", int? chunks = null, bool isPaused = false) => $$"""
         {
           "id": "{{JobId(activityId)}}",
           "activityId": "{{activityId}}",
@@ -653,7 +816,8 @@ namespace KoLite.Local.Sqlite.Tests
           "delayFromUtcNow": "00:00:00",
           "maxParallelism": {{maxParallelism}},
           "queryTimeout": "{{queryTimeout}}",
-          "isPaused": false,
+          {{(chunks is null ? string.Empty : $"\"chunks\": {chunks},")}}
+          "isPaused": {{isPaused.ToString().ToLowerInvariant()}},
           "startFrom": "2026-01-01T00:00:00Z",
           "dependsOn": {{(dependsOn is null ? "[]" : $"[{{ \"activityId\": \"{dependsOn}\" }}]")}},
           "target": { "clusterUri": "https://kolite-example.invalid", "database": "DemoDb" }
@@ -664,11 +828,19 @@ namespace KoLite.Local.Sqlite.Tests
         {
             private readonly Queue<LocalSliceOutputResult> results;
             public List<SliceRange> Requests { get; } = [];
+            public List<SliceExecutionUnit> Executions { get; } = [];
             public RecordingExecutor(params LocalSliceOutputResult[] results) => this.results = new Queue<LocalSliceOutputResult>(results);
             public Task<LocalSliceOutputResult> ExecuteAsync(JobDefinition job, SliceRange slice, CancellationToken cancellationToken = default)
             {
                 Requests.Add(slice);
                 return Task.FromResult(results.Count == 0 ? LocalSliceOutputResult.Success($"test://{slice.ToKey().Value}") : results.Dequeue());
+            }
+
+            public Task<LocalSliceOutputResult> ExecuteAsync(JobDefinition job, SliceExecutionUnit execution, CancellationToken cancellationToken = default)
+            {
+                Executions.Add(execution);
+                Requests.Add(execution.Slice);
+                return Task.FromResult(results.Count == 0 ? LocalSliceOutputResult.Success($"test://{execution.ExecutionKey}") : results.Dequeue());
             }
         }
 

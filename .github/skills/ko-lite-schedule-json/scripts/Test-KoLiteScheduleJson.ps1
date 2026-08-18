@@ -67,7 +67,7 @@ $DescriptionMaxLength = 65536
 $AllowedTopLevel = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
 @(
     'id','activityId','description','functionName','outputTable','queryWindowSize',
-    'delayFromUtcNow','maxParallelism','queryTimeout','isPaused',
+    'delayFromUtcNow','maxParallelism','queryTimeout','chunks','isPaused',
     'startFrom','endOn','folder','tags','dependsOn','jobSettings','target','healthPolicy'
 ) | ForEach-Object { [void]$AllowedTopLevel.Add($_) }
 
@@ -299,6 +299,22 @@ function Test-Definition {
         }
         elseif ($mp -lt 1) {
             Add-Error $errors 'maxParallelism' "maxParallelism must be at least 1 (got $mp)."
+        }
+    }
+
+    $chunksProp = Get-Property -Element $Root -Name 'chunks'
+    if ($null -ne $chunksProp -and $chunksProp.ValueKind -ne [System.Text.Json.JsonValueKind]::Null) {
+        if ($chunksProp.ValueKind -ne [System.Text.Json.JsonValueKind]::Number) {
+            Add-Error $errors 'chunks' "chunks must be an integer (got $($chunksProp.ValueKind))."
+        }
+        else {
+            $chunks = 0
+            if (-not $chunksProp.TryGetInt32([ref]$chunks)) {
+                Add-Error $errors 'chunks' 'chunks must be a 32-bit integer.'
+            }
+            elseif ($chunks -lt 1 -or $chunks -gt 32) {
+                Add-Error $errors 'chunks' "chunks must be between 1 and 32 (got $chunks)."
+            }
         }
     }
 

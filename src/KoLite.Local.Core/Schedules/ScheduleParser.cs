@@ -10,7 +10,7 @@ namespace KoLite.Local.Core.Schedules
         private static readonly HashSet<string> AllowedTopLevel = new(StringComparer.Ordinal)
         {
             "id", "activityId", "description", "functionName", "outputTable", "queryWindowSize", "delayFromUtcNow",
-            "maxParallelism", "queryTimeout", "isPaused", "startFrom", "endOn", "folder",
+            "maxParallelism", "queryTimeout", "chunks", "isPaused", "startFrom", "endOn", "folder",
             "tags", "dependsOn", "jobSettings", "target", "healthPolicy"
         };
 
@@ -349,6 +349,10 @@ namespace KoLite.Local.Core.Schedules
             if (dto.DelayFromUtcNow is { } d && d < TimeSpan.Zero) errors.Add(new ScheduleValidationError(activityId, "delayFromUtcNow", "delayFromUtcNow must be greater than or equal to zero."));
             if (dto.MaxParallelism is { } mp && mp < 1) errors.Add(new ScheduleValidationError(activityId, "maxParallelism", "maxParallelism must be at least 1."));
             if (dto.QueryTimeout is { } qt && qt <= TimeSpan.Zero) errors.Add(new ScheduleValidationError(activityId, "queryTimeout", "queryTimeout must be strictly greater than zero."));
+            if (dto.Chunks is { } chunks && (chunks < JobChunks.MinCount || chunks > JobChunks.MaxCount))
+            {
+                errors.Add(new ScheduleValidationError(activityId, "chunks", $"chunks must be between {JobChunks.MinCount} and {JobChunks.MaxCount}."));
+            }
             if (dto.Description is { Length: > JobDescription.MaxLength })
             {
                 errors.Add(new ScheduleValidationError(activityId, "description", $"description must not exceed {JobDescription.MaxLength.ToString(CultureInfo.InvariantCulture)} characters."));
@@ -378,6 +382,7 @@ namespace KoLite.Local.Core.Schedules
             DelayFromUtcNow = dto.DelayFromUtcNow!.Value,
             MaxParallelism = dto.MaxParallelism!.Value,
             QueryTimeout = dto.QueryTimeout!.Value,
+            Chunks = dto.Chunks,
             StartFrom = startFrom,
             EndOn = endOn,
             IsPaused = dto.IsPaused ?? false,
@@ -409,6 +414,7 @@ namespace KoLite.Local.Core.Schedules
             public TimeSpan? DelayFromUtcNow { get; set; }
             public int? MaxParallelism { get; set; }
             public TimeSpan? QueryTimeout { get; set; }
+            public int? Chunks { get; set; }
             public bool? IsPaused { get; set; }
             public string? StartFrom { get; set; }
             public string? EndOn { get; set; }

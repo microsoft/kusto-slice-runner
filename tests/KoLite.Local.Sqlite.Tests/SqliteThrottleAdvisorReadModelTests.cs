@@ -72,6 +72,17 @@ namespace KoLite.Local.Sqlite.Tests
         }
 
         [Fact]
+        public void Keep_up_floor_accounts_for_every_chunk_in_a_logical_window()
+        {
+            var job = Create("job.chunk-floor", ClusterA, maxParallelism: 8, chunks: 3);
+            SeedSuccessfulDurations(job, minutes: 2, count: 6);
+
+            var floor = BuildAdvisor().EstimateKeepUpFloor(job);
+
+            Assert.Equal(2, floor);
+        }
+
+        [Fact]
         public void Includes_an_in_flight_job_that_did_not_itself_throttle()
         {
             var noisy = Create("job.noisy", ClusterA, maxParallelism: 8);
@@ -232,9 +243,9 @@ namespace KoLite.Local.Sqlite.Tests
             KeepUpSafetyFactor = 1.0
         };
 
-        private string Create(string activityId, string cluster, int maxParallelism)
+        private string Create(string activityId, string cluster, int maxParallelism, int? chunks = null)
         {
-            var record = catalog.Create(Schedule(activityId, cluster, maxParallelism));
+            var record = catalog.Create(Schedule(activityId, cluster, maxParallelism, chunks));
             return record.JobId;
         }
 
@@ -301,7 +312,7 @@ namespace KoLite.Local.Sqlite.Tests
             Assert.NotNull(claimed);
         }
 
-        private static string Schedule(string activityId, string cluster, int maxParallelism) => $$"""
+        private static string Schedule(string activityId, string cluster, int maxParallelism, int? chunks = null) => $$"""
         {
           "id": "{{JobGuid(activityId)}}",
           "activityId": "{{activityId}}",
@@ -311,6 +322,7 @@ namespace KoLite.Local.Sqlite.Tests
           "delayFromUtcNow": "00:00:00",
           "maxParallelism": {{maxParallelism}},
           "queryTimeout": "00:01:00",
+          {{(chunks is null ? string.Empty : $"\"chunks\": {chunks},")}}
           "isPaused": false,
           "startFrom": "2026-06-23T00:00:00Z",
           "target": { "clusterUri": "{{cluster}}", "database": "DemoDb" }

@@ -107,6 +107,48 @@ namespace KoLite.LocalApp.Api
                 return Results.Json(new { jobId = record.JobId, attempts });
             });
 
+            api.MapGet("/jobs/{jobId}/chunks", (
+                string jobId,
+                HttpContext http,
+                SqliteJobCatalogRepository catalog,
+                SqliteChunkStateRepository chunks) =>
+            {
+                var record = ResolveJob(catalog, jobId);
+                if (record is null)
+                {
+                    return NotFound(jobId);
+                }
+
+                var start = DiagnosticsQuery.Instant(http.Request, "start");
+                var end = DiagnosticsQuery.Instant(http.Request, "end");
+                if (start is null || end is null || end <= start)
+                {
+                    return Results.Json(
+                        new { error = "Both 'start' and 'end' UTC query parameters are required, and end must be after start." },
+                        statusCode: StatusCodes.Status400BadRequest);
+                }
+
+                var slice = new SliceRange(record.JobId, start.Value, end.Value);
+                return Results.Json(new
+                {
+                    jobId = record.JobId,
+                    sliceStartUtc = start,
+                    sliceEndUtc = end,
+                    chunks = chunks.List(slice).Select(chunk => new
+                    {
+                        chunk.ChunkId,
+                        chunk.TotalChunks,
+                        status = chunk.Status.ToString(),
+                        chunk.Attempt,
+                        chunk.LeaseOwner,
+                        chunk.LeaseExpiresAtUtc,
+                        chunk.LastErrorCode,
+                        chunk.LastErrorMessage,
+                        chunk.UpdatedAtUtc,
+                    }),
+                });
+            });
+
             api.MapGet("/jobs/{jobId}/events", (
                 string jobId,
                 HttpContext http,

@@ -58,8 +58,9 @@ Base URL defaults to `http://127.0.0.1:5057`.
 | POST | `/api/jobs/import` | Body is schedule JSON (single object **or** array). Returns `{ "created", "updated", "total", "items": [ { "jobId", "action", "catalogVersion" } ] }`. `400` with `{ "error" }` on JSON, validation, or mutation-policy failure. |
 | POST | `/api/jobs/{jobId}/soft-delete` | Soft-delete (hide) a job — reversible. `{jobId}` is the permanent GUID. Body `{ "expectedVersion": <current catalogVersion, required>, "reason"?, "force"? }`. Returns `{ "job": { ...summary, "isSoftDeleted": true } }`. Errors: `400` (missing/invalid body or absent `expectedVersion`), `404` (unknown job), `409` (version conflict), or `409` `{ "error", "dependents": [ { "jobId", "activityId" } ] }` when active downstream jobs depend on it and `force` is not `true`. |
 | POST | `/api/jobs/{jobId}/restore` | Restore (un-hide) a soft-deleted job. `{jobId}` is the permanent GUID. Body `{ "expectedVersion": <required>, "reason"? }`. Returns `{ "job": { ...summary, "isEnabled": true } }`. Errors: `400`/`404`/`409` as above (no dependents check). |
-| POST | `/api/jobs/{jobId}/repair/preview` | Dry run of a repair. Body `{ "from", "to" }` (ISO-8601 UTC). Returns `{ "job", "fromUtc", "toUtc", "repairableSliceCount", "blockedSliceCount", "skippedSliceCount", "slices": [ ... ] }`. Writes nothing. |
-| POST | `/api/jobs/{jobId}/repair` | Re-queue the `Failed`/`DeadLettered` slices in the range. Body `{ "from", "to", "reason": <required>, "expectedSliceCount": <required> }`. Returns `{ "repairBatchId", "queued", "blocked", "skipped", "slices": [ ... ] }`. |
+| POST | `/api/jobs/{jobId}/repair/preview` | Dry run of a repair. Body `{ "from", "to" }` (ISO-8601 UTC). Returns logical-slice and execution counts plus an exact `previewToken`; chunked slices list failed child ids. Writes nothing. |
+| POST | `/api/jobs/{jobId}/repair` | Re-queue the `Failed`/`DeadLettered` slices in the range. Body always includes `from`, `to`, `reason`, and `expectedSliceCount`; chunked jobs additionally require the preview's `expectedExecutionCount` and `previewToken`. |
+| GET | `/api/jobs/{jobId}/chunks?start=...&end=...` | Bounded child-state detail for one logical slice. Returns 0-32 chunks with state, attempt, lease, and error fields. |
 
 The potentially large `description` value is not duplicated into `GET /api/jobs`
 summaries. Read it from the single-job `schedule` object or an export. It is Markdown
@@ -151,9 +152,12 @@ slices at all.
   (anchored at `startFrom`, stepped by `queryWindowSize`). An unaligned range is a
   `400` naming the nearest aligned range. This matters because slice enumeration
   steps from the supplied start rather than snapping to the grid.
-- **Preview first, then echo the count.** `expectedSliceCount` must equal the
+- **Preview first, then echo the approved set.** `expectedSliceCount` must equal the
   preview's `repairableSliceCount`; a mismatch is a `409` reporting both numbers, so
   a repair can never act on a different set than the one that was approved.
+  For chunked jobs, also echo `repairableExecutionCount` as `expectedExecutionCount`
+  and the opaque `previewToken`; either mismatch rejects the write even when the
+  parent-window count stayed the same.
 - **`reason` is required** and is recorded on the repair batch and as a
   `RepairEnqueued` row in the system audit trail (`GET /api/diagnostics/audit`).
 - **Enabled jobs only.** Pause and soft-delete both clear `is_enabled`, and the
@@ -180,7 +184,12 @@ $preview = Invoke-RestMethod -Method Post -Uri "$base/api/jobs/$jobId/repair/pre
 $preview.slices | Format-Table startUtc, currentState, outcome
 
 # 3. Repair, echoing the previewed count.
-$body = $range + @{ reason = 'Requeue transient Kusto failures'; expectedSliceCount = $preview.repairableSliceCount }
+$body = $range + @{
+    reason = 'Requeue transient Kusto failures'
+    expectedSliceCount = $preview.repairableSliceCount
+    expectedExecutionCount = $preview.repairableExecutionCount
+    previewToken = $preview.previewToken
+}
 Invoke-RestMethod -Method Post -Uri "$base/api/jobs/$jobId/repair" `
     -ContentType 'application/json' -Body ($body | ConvertTo-Json)
 
@@ -194,7 +203,8 @@ Or through the skill helper, which previews, guards, and reports for you:
 $skill = '.\.github\skills\ko-lite-job-manager\scripts\Invoke-KoLiteJobApi.ps1'
 $p = & $skill -Action Preview-Repair -JobId $jobId -From '2026-01-01T00:00:00Z' -To '2026-01-02T00:00:00Z'
 & $skill -Action Repair -JobId $jobId -From '2026-01-01T00:00:00Z' -To '2026-01-02T00:00:00Z' `
-    -Reason 'Requeue transient Kusto failures' -ExpectedSliceCount $p.repairableSliceCount
+    -Reason 'Requeue transient Kusto failures' -ExpectedSliceCount $p.repairableSliceCount `
+    -ExpectedExecutionCount $p.repairableExecutionCount -PreviewToken $p.previewToken
 ```
 
 ## Read-only diagnostics
@@ -224,8 +234,9 @@ dashboard's bookmark redirect). Unknown jobs return `404` with `{ "error" }`.
 
 | Route | Returns |
 | --- | --- |
-| `GET …/status` | Identity + `maxParallelism`/paused/started + slice-state counts (`missing/queued/running/completed/failed/deadLettered/dependencyBlocked`) + queue counts. |
+| `GET …/status` | Identity + `maxParallelism`/paused/started + logical slice-state counts (`missing/queued/running/completed/failed/deadLettered/dependencyBlocked`) + queue counts. `maxParallelism` is execution-unit concurrency (one slot per chunk or unchunked slice), minimum 1 with no maximum. |
 | `GET …/slices` | Materialized slice states **with lease fields** (`leaseOwner`, `leaseExpiresAtUtc`, `leaseExpired`, `attempt`, `lastError*`). Filters: `state`, `from`, `to`, `take`. |
+| `GET …/chunks` | Per-chunk child state for one logical slice. Requires exact `start` and `end` query parameters. |
 | `GET …/attempts` | Recent slice attempts (incl. in-flight `Started` rows with no `completedAtUtc`). Optional exact slice via `start`/`end`; `take`. |
 | `GET …/events` | Slice-state event timeline. Optional exact slice via `start`/`end`; `take`. |
 | `GET …/logs` | Operational logs. Filters: `level`, `category`, `from`, `to`, `take`. |

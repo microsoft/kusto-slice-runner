@@ -1,4 +1,5 @@
 using System.Globalization;
+using KoLite.Local.Core.Schedules;
 
 namespace KoLite.Local.Core.Scheduling
 {
@@ -39,5 +40,42 @@ namespace KoLite.Local.Core.Scheduling
     {
         public SliceKey ToKey() => SliceKey.Create(JobId, StartUtc, EndUtc);
         public bool Overlaps(DateTimeOffset startUtc, DateTimeOffset endUtc) => StartUtc < endUtc && EndUtc > startUtc;
+    }
+
+    public sealed record SliceExecutionUnit
+    {
+        public SliceExecutionUnit(SliceRange slice, int? chunkId = null, int? totalChunks = null)
+        {
+            Slice = slice ?? throw new ArgumentNullException(nameof(slice));
+            if (chunkId.HasValue != totalChunks.HasValue)
+            {
+                throw new ArgumentException("Chunk id and total chunks must either both be present or both be absent.");
+            }
+
+            if (totalChunks is { } count
+                && (count < JobChunks.MinCount
+                    || count > JobChunks.MaxCount
+                    || chunkId < 0
+                    || chunkId >= count))
+            {
+                throw new ArgumentOutOfRangeException(nameof(chunkId), $"Chunk id must be between 0 and total chunks - 1, and total chunks must be between {JobChunks.MinCount} and {JobChunks.MaxCount}.");
+            }
+
+            ChunkId = chunkId;
+            TotalChunks = totalChunks;
+        }
+
+        public SliceRange Slice { get; }
+        public int? ChunkId { get; }
+        public int? TotalChunks { get; }
+        public bool IsChunked => ChunkId.HasValue;
+
+        public string ExecutionKey => IsChunked
+            ? string.Create(CultureInfo.InvariantCulture, $"{Slice.ToKey().Value}|chunk|{ChunkId!.Value}|{TotalChunks!.Value}")
+            : Slice.ToKey().Value;
+
+        public static SliceExecutionUnit Unchunked(SliceRange slice) => new(slice);
+
+        public static SliceExecutionUnit Chunk(SliceRange slice, int chunkId, int totalChunks) => new(slice, chunkId, totalChunks);
     }
 }

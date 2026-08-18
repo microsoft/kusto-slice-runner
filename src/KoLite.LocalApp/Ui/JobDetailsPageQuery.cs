@@ -58,6 +58,7 @@ namespace KoLite.LocalApp.Ui
         IReadOnlyList<SliceAttemptReadout> Attempts,
         IReadOnlyList<OperationalLogReadout> Logs,
         IReadOnlyList<SliceEventReadout> Events,
+        IReadOnlyList<DurableChunkState> Chunks,
         bool IsOrphaned);
 
     public sealed class JobDetailsPageQuery
@@ -66,6 +67,7 @@ namespace KoLite.LocalApp.Ui
         private readonly SqliteOperationalReadModelRepository readModels;
         private readonly SqliteWorkQueueRepository queue;
         private readonly SqliteSliceStateRepository? sliceState;
+        private readonly SqliteChunkStateRepository? chunkState;
         private readonly LifecycleReadModel lifecycle;
         private readonly OperationalDetailsReadModel operationalDetails;
         private readonly IClock clock;
@@ -80,12 +82,14 @@ namespace KoLite.LocalApp.Ui
             LifecycleReadModel lifecycle,
             OperationalDetailsReadModel operationalDetails,
             IClock clock,
-            SqliteSliceStateRepository? sliceState = null)
+            SqliteSliceStateRepository? sliceState = null,
+            SqliteChunkStateRepository? chunkState = null)
         {
             this.catalog = catalog;
             this.readModels = readModels;
             this.queue = queue;
             this.sliceState = sliceState;
+            this.chunkState = chunkState;
             this.lifecycle = lifecycle;
             this.operationalDetails = operationalDetails;
             this.clock = clock;
@@ -181,7 +185,12 @@ namespace KoLite.LocalApp.Ui
 
             var now = clock.UtcNow;
             var queueItems = queue.List(jobId).Where(q => q.SliceStartUtc == sliceStartUtc && q.SliceEndUtc == sliceEndUtc).ToList();
-            var isOrphaned = queueItems.Any(q => IsOrphanedLease(q, now));
+            var chunks = job.Definition.Chunks is null || chunkState is null
+                ? Array.Empty<DurableChunkState>()
+                : chunkState.List(new SliceRange(jobId, sliceStartUtc, sliceEndUtc));
+            var isOrphaned = queueItems.Any(q => IsOrphanedLease(q, now))
+                || chunks.Any(chunk => chunk.Status == DurableSliceStatus.Running
+                    && (chunk.LeaseExpiresAtUtc is null || chunk.LeaseExpiresAtUtc <= now.ToUniversalTime()));
 
             return new SliceDetailsPageData(
                 job,
@@ -192,6 +201,7 @@ namespace KoLite.LocalApp.Ui
                 operationalDetails.GetAttempts(jobId, sliceStartUtc, sliceEndUtc, 100),
                 operationalDetails.GetLogs(jobId, sliceStartUtc, sliceEndUtc, 100),
                 operationalDetails.GetEvents(jobId, sliceStartUtc, sliceEndUtc, 100),
+                chunks,
                 isOrphaned);
         }
 

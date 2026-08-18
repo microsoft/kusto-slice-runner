@@ -49,6 +49,7 @@ namespace KoLite.LocalApp
             services.AddScoped<SqliteDiagnosticsReadModelRepository>();
             services.AddScoped<SqliteWorkQueueRepository>();
             services.AddScoped<SqliteSliceStateRepository>();
+            services.AddScoped<SqliteChunkStateRepository>();
             services.AddScoped<SqliteJobLifecycleService>();
             services.AddSingleton<SqliteIngestionThrottleRepository>();
             services.AddSingleton<IngestionThrottleObserver>();
@@ -89,7 +90,8 @@ namespace KoLite.LocalApp
                 sp.GetRequiredService<SqliteWorkQueueRepository>(),
                 sp.GetRequiredService<SqliteOperationalReadModelRepository>(),
                 sp.GetRequiredService<IClock>(),
-                new LocalSchedulerOptions()));
+                new LocalSchedulerOptions(),
+                sp.GetRequiredService<SqliteChunkStateRepository>()));
             services.AddScoped(sp => sp.GetRequiredService<LocalWorkerFactory>().Create(sp.GetRequiredService<LocalWorkerOptions>().WorkerId));
             services.AddSingleton<ILocalWorkerProgressSink, LoggingLocalWorkerProgressSink>();
         }

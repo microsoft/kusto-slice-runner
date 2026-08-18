@@ -1,21 +1,26 @@
 using KoLite.Local.Sqlite.Connections;
 using KoLite.Local.Sqlite.Infrastructure;
+using KoLite.Local.Core.Scheduling;
 using Microsoft.Data.Sqlite;
 
 namespace KoLite.Local.Sqlite.Queue
 {
     public enum DurableWorkQueueState { Queued, Leased, Completed, DeadLettered }
-    public sealed record DurableWorkItem(string QueueItemId, string JobId, DateTimeOffset SliceStartUtc, DateTimeOffset SliceEndUtc, string QueueName, int Priority, DurableWorkQueueState State, DateTimeOffset AvailableAtUtc, string? LockedBy, DateTimeOffset? LockedUntilUtc, int Attempts, int MaxAttempts, string IdempotencyKey, string PayloadJson, DateTimeOffset CreatedAtUtc, DateTimeOffset UpdatedAtUtc);
+    public sealed record DurableWorkItem(string QueueItemId, string JobId, DateTimeOffset SliceStartUtc, DateTimeOffset SliceEndUtc, string QueueName, int Priority, DurableWorkQueueState State, DateTimeOffset AvailableAtUtc, string? LockedBy, DateTimeOffset? LockedUntilUtc, int Attempts, int MaxAttempts, string IdempotencyKey, string PayloadJson, DateTimeOffset CreatedAtUtc, DateTimeOffset UpdatedAtUtc, int? ChunkId, int? TotalChunks)
+    {
+        public SliceExecutionUnit Execution => new(new SliceRange(JobId, SliceStartUtc, SliceEndUtc), ChunkId, TotalChunks);
+    }
 
     public sealed class SqliteWorkQueueRepository
     {
         private readonly IKoLiteSqliteConnectionFactory connectionFactory;
         public SqliteWorkQueueRepository(IKoLiteSqliteConnectionFactory connectionFactory) => this.connectionFactory = connectionFactory;
-        public DurableWorkItem Enqueue(string jobId, DateTimeOffset sliceStartUtc, DateTimeOffset sliceEndUtc, string idempotencyKey, DateTimeOffset availableAtUtc, int priority = 0, string queueName = "default", int maxAttempts = 3, string payloadJson = "{}")
+        public DurableWorkItem Enqueue(string jobId, DateTimeOffset sliceStartUtc, DateTimeOffset sliceEndUtc, string idempotencyKey, DateTimeOffset availableAtUtc, int priority = 0, string queueName = "default", int maxAttempts = 3, string payloadJson = "{}", int? chunkId = null, int? totalChunks = null)
         {
+            _ = new SliceExecutionUnit(new SliceRange(jobId, sliceStartUtc, sliceEndUtc), chunkId, totalChunks);
             using var c = connectionFactory.OpenConnection(); using var tx = c.BeginTransaction(System.Data.IsolationLevel.Serializable); var existing = ByKey(c, tx, idempotencyKey); if (existing is not null) { tx.Commit(); return existing; }
-            var id = Guid.NewGuid().ToString("N"); using var cmd = SqliteStorage.Command(c, tx, "INSERT INTO work_queue (queue_item_id,job_id,slice_start_utc,slice_end_utc,queue_name,priority,state,available_at_utc,attempts,max_attempts,idempotency_key,payload_json,created_at_utc,updated_at_utc) VALUES ($id,$j,$s,$e,$q,$p,'Queued',$a,0,$m,$k,$payload,$n,$n);");
-            cmd.Add("$id", id); cmd.Add("$j", jobId); cmd.Add("$s", SqliteStorage.Utc(sliceStartUtc)); cmd.Add("$e", SqliteStorage.Utc(sliceEndUtc)); cmd.Add("$q", queueName); cmd.Add("$p", priority); cmd.Add("$a", SqliteStorage.Utc(availableAtUtc)); cmd.Add("$m", maxAttempts); cmd.Add("$k", idempotencyKey); cmd.Add("$payload", payloadJson); cmd.Add("$n", SqliteStorage.Utc(DateTimeOffset.UtcNow)); cmd.ExecuteNonQuery(); tx.Commit(); return Get(id)!;
+            var id = Guid.NewGuid().ToString("N"); using var cmd = SqliteStorage.Command(c, tx, "INSERT INTO work_queue (queue_item_id,job_id,slice_start_utc,slice_end_utc,queue_name,priority,state,available_at_utc,attempts,max_attempts,idempotency_key,payload_json,chunk_id,total_chunks,created_at_utc,updated_at_utc) VALUES ($id,$j,$s,$e,$q,$p,'Queued',$a,0,$m,$k,$payload,$chunk,$chunks,$n,$n);");
+            cmd.Add("$id", id); cmd.Add("$j", jobId); cmd.Add("$s", SqliteStorage.Utc(sliceStartUtc)); cmd.Add("$e", SqliteStorage.Utc(sliceEndUtc)); cmd.Add("$q", queueName); cmd.Add("$p", priority); cmd.Add("$a", SqliteStorage.Utc(availableAtUtc)); cmd.Add("$m", maxAttempts); cmd.Add("$k", idempotencyKey); cmd.Add("$payload", payloadJson); cmd.Add("$chunk", chunkId); cmd.Add("$chunks", totalChunks); cmd.Add("$n", SqliteStorage.Utc(DateTimeOffset.UtcNow)); cmd.ExecuteNonQuery(); tx.Commit(); return Get(id)!;
         }
         public DurableWorkItem? Claim(string queueName, string workerId, TimeSpan visibilityTimeout, DateTimeOffset nowUtc, bool enforceJobParallelism = false, TimeSpan expiredLeaseGrace = default)
         {
@@ -167,6 +172,6 @@ namespace KoLite.Local.Sqlite.Queue
         }
         private bool Terminal(string id, string worker, DurableWorkQueueState state) { using var c = connectionFactory.OpenConnection(); using var cmd = SqliteStorage.Command(c, null, "UPDATE work_queue SET state=$s, locked_by=NULL, locked_until_utc=NULL, updated_at_utc=$u WHERE queue_item_id=$id AND state='Leased' AND locked_by=$w;"); cmd.Add("$s", state.ToString()); cmd.Add("$u", SqliteStorage.Utc(DateTimeOffset.UtcNow)); cmd.Add("$id", id); cmd.Add("$w", worker); return cmd.ExecuteNonQuery() == 1; }
         private static DurableWorkItem? ByKey(SqliteConnection c, SqliteTransaction tx, string key) { using var cmd = SqliteStorage.Command(c, tx, "SELECT * FROM work_queue WHERE idempotency_key=$k;"); cmd.Add("$k", key); using var r = cmd.ExecuteReader(); return r.Read() ? Read(r) : null; }
-        private static DurableWorkItem Read(SqliteDataReader r) => new(r.GetString(r.GetOrdinal("queue_item_id")), r.GetString(r.GetOrdinal("job_id")), SqliteStorage.ReadUtc(r, "slice_start_utc"), SqliteStorage.ReadUtc(r, "slice_end_utc"), r.GetString(r.GetOrdinal("queue_name")), r.GetInt32(r.GetOrdinal("priority")), Enum.Parse<DurableWorkQueueState>(r.GetString(r.GetOrdinal("state"))), SqliteStorage.ReadUtc(r, "available_at_utc"), r.IsDBNull(r.GetOrdinal("locked_by")) ? null : r.GetString(r.GetOrdinal("locked_by")), SqliteStorage.ReadNullableUtc(r, "locked_until_utc"), r.GetInt32(r.GetOrdinal("attempts")), r.GetInt32(r.GetOrdinal("max_attempts")), r.GetString(r.GetOrdinal("idempotency_key")), r.GetString(r.GetOrdinal("payload_json")), SqliteStorage.ReadUtc(r, "created_at_utc"), SqliteStorage.ReadUtc(r, "updated_at_utc"));
+        private static DurableWorkItem Read(SqliteDataReader r) => new(r.GetString(r.GetOrdinal("queue_item_id")), r.GetString(r.GetOrdinal("job_id")), SqliteStorage.ReadUtc(r, "slice_start_utc"), SqliteStorage.ReadUtc(r, "slice_end_utc"), r.GetString(r.GetOrdinal("queue_name")), r.GetInt32(r.GetOrdinal("priority")), Enum.Parse<DurableWorkQueueState>(r.GetString(r.GetOrdinal("state"))), SqliteStorage.ReadUtc(r, "available_at_utc"), r.IsDBNull(r.GetOrdinal("locked_by")) ? null : r.GetString(r.GetOrdinal("locked_by")), SqliteStorage.ReadNullableUtc(r, "locked_until_utc"), r.GetInt32(r.GetOrdinal("attempts")), r.GetInt32(r.GetOrdinal("max_attempts")), r.GetString(r.GetOrdinal("idempotency_key")), r.GetString(r.GetOrdinal("payload_json")), SqliteStorage.ReadUtc(r, "created_at_utc"), SqliteStorage.ReadUtc(r, "updated_at_utc"), r.IsDBNull(r.GetOrdinal("chunk_id")) ? null : r.GetInt32(r.GetOrdinal("chunk_id")), r.IsDBNull(r.GetOrdinal("total_chunks")) ? null : r.GetInt32(r.GetOrdinal("total_chunks")));
     }
 }

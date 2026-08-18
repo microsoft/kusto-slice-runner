@@ -15,7 +15,9 @@ namespace KoLite.Local.Sqlite.Throttling
         int Attempt,
         int? ReportedCapacity,
         DateTimeOffset ObservedAtUtc,
-        bool Terminal = false);
+        bool Terminal = false,
+        int? ChunkId = null,
+        int? TotalChunks = null);
 
     // Per-cluster aggregation of throttle observations within a rolling window. Drives the
     // sustained-throttle trigger (ThrottledSliceCount counts distinct slices, so retries of a single
@@ -58,8 +60,8 @@ namespace KoLite.Local.Sqlite.Throttling
             using var c = connectionFactory.OpenConnection();
             using var cmd = SqliteStorage.Command(c, null, """
                 INSERT INTO ingestion_throttle_observations
-                    (observation_id, job_id, cluster_uri, slice_start_utc, slice_end_utc, attempt, reported_capacity, observed_at_utc, terminal)
-                VALUES ($id, $job, $cluster, $s, $e, $attempt, $capacity, $observed, $terminal);
+                    (observation_id, job_id, cluster_uri, slice_start_utc, slice_end_utc, attempt, reported_capacity, observed_at_utc, terminal, chunk_id, total_chunks)
+                VALUES ($id, $job, $cluster, $s, $e, $attempt, $capacity, $observed, $terminal, $chunk, $chunks);
                 """);
             cmd.Add("$id", Guid.NewGuid().ToString("N"));
             cmd.Add("$job", observation.JobId);
@@ -70,6 +72,8 @@ namespace KoLite.Local.Sqlite.Throttling
             cmd.Add("$capacity", observation.ReportedCapacity.HasValue ? observation.ReportedCapacity.Value : (object?)null);
             cmd.Add("$observed", SqliteStorage.Utc(observation.ObservedAtUtc));
             cmd.Add("$terminal", observation.Terminal ? 1 : 0);
+            cmd.Add("$chunk", observation.ChunkId);
+            cmd.Add("$chunks", observation.TotalChunks);
             cmd.ExecuteNonQuery();
         }
 
@@ -80,7 +84,7 @@ namespace KoLite.Local.Sqlite.Throttling
             using var c = connectionFactory.OpenConnection();
             using var cmd = SqliteStorage.Command(c, null, """
                 SELECT o.cluster_uri AS cluster_uri,
-                       COUNT(DISTINCT o.job_id || '|' || o.slice_start_utc || '|' || o.slice_end_utc) AS throttled_slice_count,
+                       COUNT(DISTINCT o.job_id || '|' || o.slice_start_utc || '|' || o.slice_end_utc || '|' || COALESCE(CAST(o.chunk_id AS TEXT), '-')) AS throttled_slice_count,
                        COUNT(*) AS observation_count,
                        MIN(o.observed_at_utc) AS first_observed,
                        MAX(o.observed_at_utc) AS latest_observed,

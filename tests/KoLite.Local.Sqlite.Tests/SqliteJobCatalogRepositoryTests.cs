@@ -191,6 +191,21 @@ namespace KoLite.Local.Sqlite.Tests
         }
 
         [Fact]
+        public void Update_rejects_adding_chunks_after_job_has_started()
+        {
+            var created = repository.Create(Schedule("job.chunks.readonly", paused: false));
+            MarkStarted(created.JobId);
+
+            var ex = Assert.Throws<InvalidOperationException>(() => repository.Update(
+                created.JobId,
+                Schedule("job.chunks.readonly", paused: false, chunks: 2),
+                expectedVersion: created.CatalogVersion));
+
+            Assert.Contains("chunks", ex.Message, StringComparison.Ordinal);
+            Assert.Null(repository.Get(created.JobId)!.Definition.Chunks);
+        }
+
+        [Fact]
         public void Update_allows_tag_changes_after_job_has_started()
         {
             var created = repository.Create(Schedule("job.catalog", paused: false));
@@ -403,7 +418,7 @@ namespace KoLite.Local.Sqlite.Tests
             return new Guid(bytes).ToString("N");
         }
 
-        private static string Schedule(string activityId, bool paused, int maxParallelism = 1, string queryWindowSize = "00:05:00", string startFrom = "2026-01-01T00:00:00Z", IReadOnlyList<string>? tags = null, string? id = null, string? description = null)
+        private static string Schedule(string activityId, bool paused, int maxParallelism = 1, string queryWindowSize = "00:05:00", string startFrom = "2026-01-01T00:00:00Z", IReadOnlyList<string>? tags = null, string? id = null, string? description = null, int? chunks = null)
         {
             var jobId = id ?? JobId(activityId);
             var schedule = $$"""
@@ -416,6 +431,7 @@ namespace KoLite.Local.Sqlite.Tests
               "delayFromUtcNow": "00:00:00",
               "maxParallelism": {{maxParallelism}},
               "queryTimeout": "00:01:00",
+              {{(chunks is null ? string.Empty : $"\"chunks\": {chunks},")}}
               "isPaused": {{paused.ToString().ToLowerInvariant()}},
               "startFrom": "{{startFrom}}",
               "target": { "clusterUri": "https://kolite-example.invalid", "database": "DemoDb" }

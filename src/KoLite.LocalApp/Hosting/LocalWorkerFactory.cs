@@ -12,6 +12,7 @@ namespace KoLite.LocalApp
     {
         private readonly SqliteJobCatalogRepository catalog;
         private readonly SqliteSliceStateRepository state;
+        private readonly SqliteChunkStateRepository chunkState;
         private readonly SqliteWorkQueueRepository queue;
         private readonly SqliteOperationalReadModelRepository observability;
         private readonly ILocalSliceOutputExecutor executor;
@@ -22,6 +23,7 @@ namespace KoLite.LocalApp
         public LocalWorkerFactory(
             SqliteJobCatalogRepository catalog,
             SqliteSliceStateRepository state,
+            SqliteChunkStateRepository chunkState,
             SqliteWorkQueueRepository queue,
             SqliteOperationalReadModelRepository observability,
             ILocalSliceOutputExecutor executor,
@@ -31,6 +33,7 @@ namespace KoLite.LocalApp
         {
             this.catalog = catalog;
             this.state = state;
+            this.chunkState = chunkState;
             this.queue = queue;
             this.observability = observability;
             this.executor = executor;
@@ -42,7 +45,7 @@ namespace KoLite.LocalApp
         public SqliteLocalWorker Create(string workerId)
         {
             if (string.IsNullOrWhiteSpace(workerId)) throw new InvalidOperationException("Local worker ID must not be empty.");
-            return new SqliteLocalWorker(catalog, state, queue, observability, executor, clock, options with { WorkerId = workerId }, progressSink);
+            return new SqliteLocalWorker(catalog, state, queue, observability, executor, clock, options with { WorkerId = workerId }, progressSink, chunkState);
         }
     }
 }

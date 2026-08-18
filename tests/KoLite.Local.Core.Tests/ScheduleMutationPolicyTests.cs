@@ -6,19 +6,20 @@ namespace KoLite.Local.Core.Tests
     public sealed class ScheduleMutationPolicyTests
     {
         [Fact]
-        public void Started_job_allows_rename_but_rejects_window_and_start_changes()
+        public void Started_job_allows_rename_but_rejects_window_start_and_chunk_changes()
         {
             var current = Job("job.policy", "2026-01-01T00:00:00Z", TimeSpan.FromMinutes(5));
             var proposed = current with
             {
                 ActivityId = "job.policy.renamed",
                 QueryWindowSize = TimeSpan.FromMinutes(10),
-                StartFrom = Utc("2026-01-01T00:05:00Z")
+                StartFrom = Utc("2026-01-01T00:05:00Z"),
+                Chunks = 4
             };
 
             var violations = ScheduleMutationPolicy.ValidateUpdate(current, proposed, hasStarted: true);
 
-            Assert.Equal(["queryWindowSize", "startFrom"], violations.Select(v => v.Field).ToArray());
+            Assert.Equal(["queryWindowSize", "startFrom", "chunks"], violations.Select(v => v.Field).ToArray());
             Assert.All(violations, v => Assert.Contains("cannot change", v.Message, StringComparison.OrdinalIgnoreCase));
         }
 
@@ -30,7 +31,8 @@ namespace KoLite.Local.Core.Tests
             {
                 QueryWindowSize = TimeSpan.FromMinutes(10),
                 StartFrom = Utc("2026-01-01T00:05:00Z"),
-                ActivityId = "job.policy.renamed"
+                ActivityId = "job.policy.renamed",
+                Chunks = 4
             };
 
             Assert.Empty(ScheduleMutationPolicy.ValidateUpdate(current, changed, hasStarted: false));
@@ -70,6 +72,16 @@ namespace KoLite.Local.Core.Tests
             var violations = ScheduleMutationPolicy.ValidateUpdate(current, proposed, hasStarted: true);
 
             Assert.Empty(violations);
+        }
+
+        [Fact]
+        public void Started_job_rejects_removing_chunks()
+        {
+            var current = Job("job.policy", "2026-01-01T00:00:00Z", TimeSpan.FromMinutes(5)) with { Chunks = 2 };
+
+            var violations = ScheduleMutationPolicy.ValidateUpdate(current, current with { Chunks = null }, hasStarted: true);
+
+            Assert.Equal(["chunks"], violations.Select(v => v.Field).ToArray());
         }
 
         private static JobDefinition Job(string activityId, string start, TimeSpan window) => new()

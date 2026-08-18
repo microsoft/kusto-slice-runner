@@ -3,7 +3,7 @@ name: ko-lite-job-manager
 description: "Use when the user wants an agent to read KO Lite jobs, inspect read-only operational diagnostics (slice states, leases, throughput, catalog history, logs, audit), re-run slices that failed, or create/update job schedules directly in a running KO Lite app (instead of clicking through the dashboard). Drives the KO Lite localhost JSON API; it reads state, upserts schedules - including pausing or resuming a job via the schedule's isPaused field - can soft-delete or restore a job (reversible), and can repair (re-run) Failed/DeadLettered slices after a dry-run preview; it never hard-deletes jobs, runs Kusto by hand, reruns, or overwrites existing output. Requires the KO Lite app to be running locally."
 metadata:
   author: Azure Core Team
-  version: "1.4.0"
+  version: "1.5.0"
 ---
 
 # KO Lite job manager
@@ -67,7 +67,7 @@ dashboard; do not attempt a workaround.
 Every write goes to `POST /api/jobs/import`, which calls the same
 `SqliteJobCatalogRepository.Import` path as the dashboard. That gives you, for
 free: strict schedule parsing (unknown fields rejected), started-job mutation
-policy (immutable permanent `id`; `queryWindowSize` and `startFrom` read-only
+policy (immutable permanent `id`; `queryWindowSize`, `startFrom`, and `chunks` read-only
 once a job has started; `activityId` is a mutable display label that may be
 renamed), catalog versioning, audit events, and tag normalization - all in one
 transaction. Import is **additive and update-only**: an item matches an existing
@@ -146,8 +146,8 @@ again with `"isPaused": false` to resume. An import always re-activates an
 | POST | `/api/jobs/import` | Body is schedule JSON (single object or array). Returns `{ created, updated, total, items[] }`. 400 with `{ error }` on validation/mutation failure. |
 | POST | `/api/jobs/{jobId}/soft-delete` | Soft-delete (hide) a job — reversible. `{jobId}` is the permanent GUID. Body `{ expectedVersion (required), reason?, force? }`. Returns `{ job }`. 400/404/409; 409 `{ error, dependents[] }` when active dependents block it and `force` is not set. |
 | POST | `/api/jobs/{jobId}/restore` | Restore a soft-deleted job. Body `{ expectedVersion (required), reason? }`. Returns `{ job }`. 400/404/409 (no dependents check). |
-| POST | `/api/jobs/{jobId}/repair/preview` | Dry run. Body `{ from, to }` (ISO-8601 UTC, aligned to the job's slice grid). Returns `{ repairableSliceCount, blockedSliceCount, skippedSliceCount, slices[] }`. Writes nothing. |
-| POST | `/api/jobs/{jobId}/repair` | Enqueue the previewed `Failed`/`DeadLettered` slices. Body `{ from, to, reason (required), expectedSliceCount (required) }`. Returns `{ repairBatchId, queued, blocked, skipped, slices[] }`. 409 when the count no longer matches or the job is paused/soft-deleted. |
+| POST | `/api/jobs/{jobId}/repair/preview` | Dry run. Returns logical-slice/execution counts and an exact `previewToken`; chunked slices identify failed child ids. Writes nothing. |
+| POST | `/api/jobs/{jobId}/repair` | Enqueue the previewed failures. Always echo `expectedSliceCount`; chunked jobs also echo `expectedExecutionCount` and `previewToken`. A changed set returns 409. |
 
 ## Read-only diagnostics
 
@@ -166,7 +166,8 @@ it accepts the GUID **or** the `activityId`):
 | Script action | Route | Returns |
 | --- | --- | --- |
 | `Get-JobStatus` | `…/status` | Slice-state counts + `maxParallelism`/paused/started + queue counts. |
-| `Get-Slices` | `…/slices` | Slice states **with lease owner/expiry/attempt** (`-Query @{ state='Running' }`). |
+| `Get-Slices` | `…/slices` | Logical slice states **with lease owner/expiry/attempt** (`-Query @{ state='Running' }`). |
+| `Get-Chunks` | `…/chunks` | Per-chunk child state for one logical slice; requires `-Query @{ start='...'; end='...' }`. |
 | `Get-Attempts` | `…/attempts` | Recent attempts (incl. in-flight `Started` rows with no completion). |
 | `Get-Events` | `…/events` | Slice-state event timeline. |
 | `Get-JobLogs` | `…/logs` | Operational logs (`-Query @{ level='Warning' }`). |
@@ -207,14 +208,18 @@ detailed field-by-field guide. Key points:
   `delayFromUtcNow`, `maxParallelism`, `queryTimeout`, `startFrom`, `target`
   (`clusterUri` + `database`).
 - Optional: `id` (GUID permanent identity — omit when creating; KO Lite mints it),
-  `endOn`, `isPaused`, `description` (Markdown catalog metadata, maximum 65,536
+  `endOn`, `chunks` (integer 1-32, immutable after start), `isPaused`, `description` (Markdown catalog metadata, maximum 65,536
   characters, never passed to Kusto), `folder`, `tags`, `dependsOn`, `jobSettings`,
   `healthPolicy` (`complete` default, or `recent`).
 - Unknown top-level, `target`, or `dependsOn` fields are rejected. `dependsOn`
   entries reference an upstream by `id` and/or `activityId`.
+- `maxParallelism` is per-job execution-unit concurrency: one slot per chunk, or
+  one per unchunked slice. It has no upper limit. The all-up worker pool is
+  unbounded by default but can be configured lower; the default 100 dispatch
+  starts per cycle is not a concurrency ceiling.
 - For an **update**, fetch the current job first (`Get-Job`), keep its `id`, edit
-  the `schedule` object, and re-import it. Never change `id`; `queryWindowSize` and
-  `startFrom` are rejected on a job whose `hasStarted` is `true`. To **rename**,
+  the `schedule` object, and re-import it. Never change `id`; `queryWindowSize`,
+  `startFrom`, and `chunks` are rejected on a job whose `hasStarted` is `true`. To **rename**,
   keep the same `id` and change `activityId` (allowed even after the job started).
 
 ## Workflow (create or update a schedule)
@@ -275,9 +280,10 @@ running a repair that appears to work and changes nothing.
    rejected with the nearest aligned range in the error — use that.
 4. **Preview.** `Preview-Repair` reports exactly which slices would re-run. It
    writes nothing.
-5. **Show the user and get approval.** List the slice windows and the count.
+5. **Show the user and get approval.** List the logical windows and, for chunked jobs, the exact child ids.
 6. **Repair.** Pass a meaningful `-Reason` (recorded on the batch and in the audit
-   trail) and `-ExpectedSliceCount` from the preview. If state moved in between,
+   trail), `-ExpectedSliceCount`, and for chunked jobs `-ExpectedExecutionCount`
+   plus `-PreviewToken` from the preview. If state moved in between,
    the call returns `409` with the current count — re-preview rather than guessing.
 7. **Verify.** `Get-JobStatus`, `Get-Slices -Query @{ state = 'Running' }`, and
    `Get-Repairs -Query @{ batchId = '...' }`.
@@ -384,7 +390,8 @@ $preview.slices | Format-Table startUtc, currentState, outcome
 & $skill -Action Repair -JobId 'SampleAnalytics.BuildEcu5MinProfile' `
     -From '2026-01-01T00:00:00Z' -To '2026-01-02T00:00:00Z' `
     -Reason 'Requeue slices that failed on a transient Kusto error' `
-    -ExpectedSliceCount $preview.repairableSliceCount
+    -ExpectedSliceCount $preview.repairableSliceCount `
+    -ExpectedExecutionCount $preview.repairableExecutionCount -PreviewToken $preview.previewToken
 
 # Point at a non-default instance
 & $skill -Action Get-Jobs -BaseUrl 'http://127.0.0.1:5099'
@@ -400,12 +407,13 @@ unreachable it tells you to start it.
   Schedule create/update goes through Import (including pause/resume via the
   `isPaused` field); soft-delete and restore go through their own endpoints and
   always require `expectedVersion`; repair re-runs `Failed`/`DeadLettered` slices
-  only, after a preview, with a `reason` and the previewed `expectedSliceCount`.
+  only, after a preview, with a `reason` and the previewed logical/execution counts
+  plus exact token for chunked jobs.
   Never **hard-delete** a job (no API surface — that stays a dashboard action), and
   never call any direct Kusto, rerun, or cleanup surface, or edit the SQLite file
   directly. Reading diagnostics (including rerun/repair/audit **history**) is fine.
-- **Always preview before repairing.** Never send a guessed `expectedSliceCount`;
-  take it from the preview response and show the user the slice list first.
+- **Always preview before repairing.** Never send guessed counts or tokens; take
+  them from the preview response and show the user the logical slices and chunk ids first.
 - **Never present repair as a replay.** Repair fills gaps. It cannot recompute or
   overwrite a `Completed` slice — Kusto's `ingest-by` dedup discards the repeat. If
   the user wants completed history recomputed, say that it requires the dashboard

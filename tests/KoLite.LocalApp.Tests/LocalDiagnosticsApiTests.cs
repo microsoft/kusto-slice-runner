@@ -118,6 +118,29 @@ namespace KoLite.LocalApp.Tests
         }
 
         [Fact]
+        public async Task Chunks_endpoint_returns_child_state_for_one_logical_slice()
+        {
+            var catalog = new SqliteJobCatalogRepository(sqlite);
+            catalog.Create(Schedule("chunks.job", "ChunksFunction", chunks: 2));
+            var slice = new KoLite.Local.Core.Scheduling.SliceRange(JobId("chunks.job"), At(0), At(5));
+            var chunks = new SqliteChunkStateRepository(sqlite);
+            var children = chunks.EnsureWindow(slice, 2, "test");
+            chunks.MarkQueued("chunk-queued", children[0].Execution, actor: "test");
+
+            using var client = factory.CreateClient();
+            var start = Uri.EscapeDataString(At(0).ToString("O", CultureInfo.InvariantCulture));
+            var end = Uri.EscapeDataString(At(5).ToString("O", CultureInfo.InvariantCulture));
+            using var document = JsonDocument.Parse(await client.GetStringAsync($"/api/jobs/{JobId("chunks.job")}/chunks?start={start}&end={end}"));
+
+            var rows = document.RootElement.GetProperty("chunks").EnumerateArray().ToList();
+            Assert.Equal(2, rows.Count);
+            Assert.Equal(0, rows[0].GetProperty("chunkId").GetInt32());
+            Assert.Equal("Queued", rows[0].GetProperty("status").GetString());
+            Assert.Equal(1, rows[1].GetProperty("chunkId").GetInt32());
+            Assert.Equal("Missing", rows[1].GetProperty("status").GetString());
+        }
+
+        [Fact]
         public async Task Throughput_endpoint_buckets_succeeded_completions()
         {
             var catalog = new SqliteJobCatalogRepository(sqlite);
@@ -264,7 +287,7 @@ namespace KoLite.LocalApp.Tests
             return new Guid(bytes).ToString("N");
         }
 
-        private static string Schedule(string activityId, string functionName, bool isPaused = false, int maxParallelism = 1, IReadOnlyList<string>? dependsOnIds = null)
+        private static string Schedule(string activityId, string functionName, bool isPaused = false, int maxParallelism = 1, IReadOnlyList<string>? dependsOnIds = null, int? chunks = null)
         {
             var dependsOnLine = dependsOnIds is { Count: > 0 }
                 ? "  \"dependsOn\": [" + string.Join(",", dependsOnIds.Select(id => $"{{ \"id\": \"{id}\" }}")) + "],\n"
@@ -279,6 +302,7 @@ namespace KoLite.LocalApp.Tests
                 "  \"delayFromUtcNow\": \"00:00:00\",\n" +
                 $"  \"maxParallelism\": {maxParallelism.ToString(CultureInfo.InvariantCulture)},\n" +
                 "  \"queryTimeout\": \"00:01:00\",\n" +
+                (chunks is null ? string.Empty : $"  \"chunks\": {chunks.Value.ToString(CultureInfo.InvariantCulture)},\n") +
                 $"  \"isPaused\": {(isPaused ? "true" : "false")},\n" +
                 "  \"startFrom\": \"2026-01-01T00:00:00Z\",\n" +
                 dependsOnLine +

@@ -25,6 +25,33 @@ namespace KoLite.Local.Core.Tests
         }
 
         [Fact]
+        public void Execution_keys_preserve_legacy_slices_and_distinguish_chunks()
+        {
+            var slice = new SliceRange("job", Utc("2024-01-01T00:00:00Z"), Utc("2024-01-01T01:00:00Z"));
+
+            var unchunked = SliceExecutionUnit.Unchunked(slice);
+            var first = SliceExecutionUnit.Chunk(slice, 0, 2);
+            var second = SliceExecutionUnit.Chunk(slice, 1, 2);
+
+            Assert.Equal(slice.ToKey().Value, unchunked.ExecutionKey);
+            Assert.Equal($"{slice.ToKey().Value}|chunk|0|2", first.ExecutionKey);
+            Assert.Equal($"{slice.ToKey().Value}|chunk|1|2", second.ExecutionKey);
+            Assert.NotEqual(first.ExecutionKey, second.ExecutionKey);
+        }
+
+        [Theory]
+        [InlineData(-1, 2)]
+        [InlineData(2, 2)]
+        [InlineData(0, 0)]
+        [InlineData(0, 33)]
+        public void Execution_units_reject_invalid_chunk_metadata(int chunkId, int totalChunks)
+        {
+            var slice = new SliceRange("job", Utc("2024-01-01T00:00:00Z"), Utc("2024-01-01T01:00:00Z"));
+
+            Assert.Throws<ArgumentOutOfRangeException>(() => SliceExecutionUnit.Chunk(slice, chunkId, totalChunks));
+        }
+
+        [Fact]
         public void Slice_enumeration_respects_delay_endOn_and_whole_utc_boundaries()
         {
             var job = Job("demo", start: "2024-01-01T00:30:00Z", window: TimeSpan.FromHours(1), delay: TimeSpan.FromMinutes(15), endOn: "2024-01-01T03:45:00Z");

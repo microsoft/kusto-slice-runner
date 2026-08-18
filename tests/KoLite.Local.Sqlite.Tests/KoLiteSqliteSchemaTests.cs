@@ -50,6 +50,75 @@ namespace KoLite.Local.Sqlite.Tests
         }
 
         [Fact]
+        public void EnsureSchemaUpgradesPreChunkTablesWithoutLosingQueueData()
+        {
+            var factory = CreateFactory();
+            using (var connection = factory.OpenConnection())
+            {
+                ExecuteNonQuery(connection, """
+                    CREATE TABLE job_definitions (
+                        job_id TEXT NOT NULL PRIMARY KEY, activity_id TEXT NOT NULL, display_name TEXT NOT NULL,
+                        description TEXT NULL, query_ref TEXT NULL, schedule_json TEXT NOT NULL,
+                        parameters_json TEXT NOT NULL DEFAULT '{}', is_enabled INTEGER NOT NULL DEFAULT 1,
+                        catalog_version INTEGER NOT NULL DEFAULT 1, created_at_utc TEXT NOT NULL, updated_at_utc TEXT NOT NULL);
+                    CREATE TABLE slice_state_events (
+                        event_id TEXT NOT NULL PRIMARY KEY, job_id TEXT NOT NULL, slice_start_utc TEXT NOT NULL,
+                        slice_end_utc TEXT NOT NULL, generation_id TEXT NULL, event_type TEXT NOT NULL,
+                        state TEXT NULL, reason TEXT NULL, attempt INTEGER NULL, payload_json TEXT NOT NULL DEFAULT '{}',
+                        actor TEXT NULL, recorded_at_utc TEXT NOT NULL);
+                    CREATE TABLE current_slice_state (
+                        job_id TEXT NOT NULL, slice_start_utc TEXT NOT NULL, slice_end_utc TEXT NOT NULL,
+                        generation_id TEXT NULL, state TEXT NOT NULL, attempt INTEGER NOT NULL DEFAULT 0,
+                        lease_owner TEXT NULL, lease_expires_at_utc TEXT NULL, last_event_id TEXT NULL,
+                        last_error_code TEXT NULL, last_error_message TEXT NULL, updated_at_utc TEXT NOT NULL,
+                        PRIMARY KEY (job_id, slice_start_utc, slice_end_utc));
+                    CREATE TABLE work_queue (
+                        queue_item_id TEXT NOT NULL PRIMARY KEY, job_id TEXT NOT NULL, slice_start_utc TEXT NOT NULL,
+                        slice_end_utc TEXT NOT NULL, queue_name TEXT NOT NULL DEFAULT 'default', priority INTEGER NOT NULL DEFAULT 0,
+                        state TEXT NOT NULL, available_at_utc TEXT NOT NULL, locked_by TEXT NULL, locked_until_utc TEXT NULL,
+                        attempts INTEGER NOT NULL DEFAULT 0, max_attempts INTEGER NOT NULL DEFAULT 3,
+                        idempotency_key TEXT NOT NULL UNIQUE, payload_json TEXT NOT NULL DEFAULT '{}',
+                        created_at_utc TEXT NOT NULL, updated_at_utc TEXT NOT NULL);
+                    CREATE TABLE operational_logs (
+                        log_id TEXT NOT NULL PRIMARY KEY, job_id TEXT NULL, slice_start_utc TEXT NULL,
+                        slice_end_utc TEXT NULL, level TEXT NOT NULL, message TEXT NOT NULL, category TEXT NULL,
+                        exception TEXT NULL, properties_json TEXT NOT NULL DEFAULT '{}', recorded_at_utc TEXT NOT NULL);
+                    CREATE TABLE slice_attempts (
+                        attempt_id TEXT NOT NULL PRIMARY KEY, job_id TEXT NOT NULL, slice_start_utc TEXT NOT NULL,
+                        slice_end_utc TEXT NOT NULL, attempt INTEGER NOT NULL, status TEXT NOT NULL, worker_id TEXT NULL,
+                        started_at_utc TEXT NULL, completed_at_utc TEXT NULL, error_code TEXT NULL, error_message TEXT NULL,
+                        metrics_json TEXT NOT NULL DEFAULT '{}');
+                    CREATE TABLE ingestion_throttle_observations (
+                        observation_id TEXT NOT NULL PRIMARY KEY, job_id TEXT NOT NULL, cluster_uri TEXT NOT NULL,
+                        slice_start_utc TEXT NOT NULL, slice_end_utc TEXT NOT NULL, attempt INTEGER NOT NULL DEFAULT 0,
+                        reported_capacity INTEGER NULL, observed_at_utc TEXT NOT NULL, terminal INTEGER NOT NULL DEFAULT 0);
+
+                    INSERT INTO job_definitions (
+                        job_id,activity_id,display_name,schedule_json,created_at_utc,updated_at_utc)
+                    VALUES ('legacy-job','legacy.job','legacy.job','{}','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z');
+                    INSERT INTO current_slice_state (
+                        job_id,slice_start_utc,slice_end_utc,state,updated_at_utc)
+                    VALUES ('legacy-job','2026-01-01T00:00:00Z','2026-01-01T00:05:00Z','Queued','2026-01-01T00:00:00Z');
+                    INSERT INTO work_queue (
+                        queue_item_id,job_id,slice_start_utc,slice_end_utc,state,available_at_utc,
+                        idempotency_key,created_at_utc,updated_at_utc)
+                    VALUES (
+                        'legacy-queue','legacy-job','2026-01-01T00:00:00Z','2026-01-01T00:05:00Z',
+                        'Queued','2026-01-01T00:00:00Z','legacy-key','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z');
+                    """);
+            }
+
+            new KoLiteSqliteSchema(factory).EnsureSchema();
+
+            using var upgraded = factory.OpenConnection();
+            Assert.Equal(1, QueryInt(upgraded, "SELECT COUNT(*) FROM work_queue WHERE queue_item_id='legacy-queue' AND idempotency_key='legacy-key';"));
+            Assert.Equal(1, QueryInt(upgraded, "SELECT COUNT(*) FROM pragma_table_info('work_queue') WHERE name='chunk_id';"));
+            Assert.Equal(1, QueryInt(upgraded, "SELECT COUNT(*) FROM pragma_table_info('slice_attempts') WHERE name='total_chunks';"));
+            Assert.Equal(1, QueryInt(upgraded, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='current_slice_chunk_state';"));
+            Assert.Equal(1, QueryInt(upgraded, "SELECT COUNT(*) FROM work_queue WHERE chunk_id IS NULL AND total_chunks IS NULL;"));
+        }
+
+        [Fact]
         public void RequiredTablesAndIndexesExist()
         {
             var factory = CreateFactory();
@@ -64,6 +133,8 @@ namespace KoLite.Local.Sqlite.Tests
                 "job_definition_events",
                 "slice_state_events",
                 "current_slice_state",
+                "slice_chunk_state_events",
+                "current_slice_chunk_state",
                 "work_queue",
                 "failure_summary_runs",
                 "operational_logs",
@@ -89,6 +160,9 @@ namespace KoLite.Local.Sqlite.Tests
             {
                 "ix_job_definition_events_job_recorded",
                 "ix_slice_state_events_slice_recorded",
+                "ix_slice_chunk_state_events_slice_recorded",
+                "ix_current_slice_chunk_state_state",
+                "ix_current_slice_chunk_state_last_event",
                 "ix_current_slice_state_state_due",
                 "ix_work_queue_ready",
                 "ix_work_queue_slice",
@@ -112,6 +186,8 @@ namespace KoLite.Local.Sqlite.Tests
                 "ix_ingestion_throttle_terminal",
                 "ix_current_slice_state_last_event",
                 "ix_repair_slices_enqueued_queue_item",
+                "ix_work_queue_slice_chunk",
+                "ix_slice_attempts_slice_chunk",
             };
 
             foreach (var index in expectedIndexes)
@@ -122,6 +198,8 @@ namespace KoLite.Local.Sqlite.Tests
             // The GUID-identity schema ships activity_id (NOT NULL) and its unique index directly.
             Assert.Equal(1, QueryInt(connection, "SELECT COUNT(*) FROM pragma_table_info('job_definitions') WHERE name = 'activity_id' AND \"notnull\" = 1;"));
             Assert.Equal(1, QueryInt(connection, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'ux_job_definitions_activity_id';"));
+            Assert.Equal(1, QueryInt(connection, "SELECT COUNT(*) FROM pragma_table_info('work_queue') WHERE name = 'chunk_id';"));
+            Assert.Equal(1, QueryInt(connection, "SELECT COUNT(*) FROM pragma_table_info('slice_attempts') WHERE name = 'total_chunks';"));
         }
 
         [Fact]

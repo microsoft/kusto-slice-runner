@@ -3,7 +3,7 @@ name: ko-lite-schedule-json
 description: "Use when the user wants to create, edit, or validate a KO Lite job-schedule JSON file (single object or an array of objects). Produces JSON-only output and validates it locally against the strict KO Lite schedule contract. Does NOT upload to KO Lite, write to Kusto, change schema, or run import tooling - uploading is the user's responsibility."
 metadata:
   author: Azure Core Team
-  version: "1.0.2"
+  version: "1.1.0"
 ---
 
 # KO Lite schedule JSON
@@ -49,12 +49,13 @@ Anything else is rejected by the validator.
 | --- | --- | --- | --- |
 | `id` | No | string (GUID) | Opaque, permanent job identity. **Omit when authoring a new job** — KO Lite mints it. Exports include it; preserve it when editing so the edit targets (and can rename) the same job. Immutable once assigned. When present it must be a valid GUID. |
 | `activityId` | Yes | string | Non-empty. **Mutable, unique** human-facing display label (a display name) — it can be renamed without changing the permanent `id`, slice history, dependency edges, or output idempotency. Repo convention: prefix with the logical job database name and a period (`<databaseName>.<activityName>`), for example `CopilotUsage.GhcpReportingUserDaily`. No longer the slice-key identity (the GUID `id` is). |
-| `functionName` | Yes | string | Non-empty. Kusto producer function the worker calls per slice. KO Lite passes arguments positionally: slice start as the first `datetime` parameter, slice end as the second `datetime` parameter, and (when `jobSettings` is set) the settings as a third `dynamic` parameter. Parameter names are not inspected; recommended names are `startTime`, `endTime`, and `jobSettings`. |
+| `functionName` | Yes | string | Non-empty. Kusto producer function the worker calls per slice. Without `chunks`, arguments are start/end and optional `jobSettings`. With `chunks`, arguments are start/end, 0-based `chunkId`, total `chunks`, then optional `jobSettings`. |
 | `outputTable` | Yes | string | Non-empty. Kusto table where worker output is committed. Convention in this repo: `outputTable` is `_` + `functionName` (leading underscore), so the producer function `Foo` writes to table `_Foo`. |
 | `queryWindowSize` | Yes | TimeSpan string (`c` format) | `> 00:00:00`. Examples: `00:15:00`, `01:00:00`, `1.00:00:00`. |
 | `delayFromUtcNow` | Yes | TimeSpan string (`c` format) | `>= 00:00:00`. Scheduler plans only slices whose end is at or before `utcNow - delayFromUtcNow`. |
-| `maxParallelism` | Yes | integer | `>= 1`. Max active + newly planned slices per scheduler pass. |
+| `maxParallelism` | Yes | integer | `>= 1`, no upper limit. Per-job concurrent execution units: one slot per chunk for chunked jobs, otherwise one per slice. `maxParallelism >= chunks` permits one window's chunks to fan out together when enough global worker slots are free. |
 | `queryTimeout` | Yes | TimeSpan string (`c` format) | `> 00:00:00`. Per-slice Kusto execution timeout. |
+| `chunks` | No | integer | `1..32`. When present, each logical time window runs once per 0-based chunk and the function must accept `chunkId:long, chunks:long` before optional `jobSettings:dynamic`. Presence, including `chunks: 1`, changes the function signature. Immutable after the job starts. |
 | `startFrom` | Yes | ISO-8601 UTC string | Shape `yyyy-MM-ddTHH:mm:ss[.fffffff][Z\|+00:00\|-00:00]` or no offset (treated as UTC). Non-UTC offsets are rejected. |
 | `endOn` | No | ISO-8601 UTC string | Same shape rules as `startFrom`. When present, the scheduler caps planning so only whole, grid-aligned slices ending at or before `endOn` are emitted (no partial trailing slice; no KO-style mid-window clip). Must be strictly greater than `startFrom`. Mutable across `DefinitionVersion`s (unlike KO's `EndOn`). |
 | `target` | Yes | object | `target.clusterUri` (absolute `https` URI, non-empty) and `target.database` (non-empty string). No other fields. |
@@ -132,6 +133,7 @@ to or later than the upstream's) when the bound is intentional.
    when the user does not mention them.
 3. **Pick a starting point.**
    - New single job: copy `templates\single-job.template.json`.
+   - New chunked job: copy `templates\chunked-job.template.json` and keep it paused until the Kusto function signature is verified.
    - New batch: copy `templates\jobs-array.template.json`.
    - Edit: read the existing file in place; preserve key order and unrelated
      fields.
@@ -183,6 +185,8 @@ Use these as references for shape and style:
 
 - `.github\skills\ko-lite-schedule-json\templates\single-job.template.json`
   for a single schedule object.
+- `.github\skills\ko-lite-schedule-json\templates\chunked-job.template.json`
+  for an explicitly paused chunk-aware function.
 - `.github\skills\ko-lite-schedule-json\templates\jobs-array.template.json`
   for an import-compatible array.
 
@@ -211,7 +215,7 @@ Use these as references for shape and style:
   supported, normal edit; stop only if the intent (rename vs. a distinct new job vs. editing the
   existing one) is unclear.
 - A requested schedule field is not in the supported contract (e.g., custom
-  rerun intervals, chunk definitions, raw inline KQL, schema override switches,
+  rerun intervals, raw inline KQL, schema override switches,
   extent metadata controls, rebuild request types, performance request types).
   Explain the constraint and ask whether to drop the field or stop.
 - `dependsOn` would create a self-dependency or an obvious cycle.

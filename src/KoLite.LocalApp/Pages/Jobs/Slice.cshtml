@@ -54,6 +54,28 @@ else
         <div class="stat-card"><span class="stat-label">Queue rows</span><strong>@Model.Data.QueueItems.Count</strong></div>
         <div class="stat-card"><span class="stat-label">Attempts</span><strong>@Model.Data.Attempts.Count</strong></div>
     </section>
+    @if (Model.Data.Chunks.Count > 0)
+    {
+        <section class="card">
+            <div class="card-header"><h2>Chunks</h2><span class="muted">@Model.Data.Chunks.Count execution units</span></div>
+            <table class="ko-table compact">
+                <thead><tr><th>Chunk</th><th>Status</th><th>Attempt</th><th>Lease owner</th><th>Lease expires</th><th>Error</th></tr></thead>
+                <tbody>
+                @foreach (var chunk in Model.Data.Chunks)
+                {
+                    <tr>
+                        <td>@chunk.ChunkId / @chunk.TotalChunks</td>
+                        <td><span class="badge @AppFormatting.BadgeCss(chunk.Status.ToString())">@chunk.Status</span></td>
+                        <td>@chunk.Attempt</td>
+                        <td>@chunk.LeaseOwner</td>
+                        <td>@AppFormatting.Local(chunk.LeaseExpiresAtUtc)</td>
+                        <td>@chunk.LastErrorMessage</td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </section>
+    }
     <section class="grid-two">
         <div class="card">
             <div class="card-header"><h2>Attempts</h2></div>
@@ -64,11 +86,12 @@ else
             else
             {
                 <table class="ko-table compact">
-                    <thead><tr><th>Attempt</th><th>Status</th><th>Worker</th><th>Started</th><th>Completed</th><th>Error</th></tr></thead>
+                    <thead><tr><th>Chunk</th><th>Attempt</th><th>Status</th><th>Worker</th><th>Started</th><th>Completed</th><th>Error</th></tr></thead>
                     <tbody>
                     @foreach (var attempt in Model.Data.Attempts)
                     {
                         <tr>
+                            <td>@(attempt.ChunkId is null ? "-" : $"{attempt.ChunkId}/{attempt.TotalChunks}")</td>
                             <td>@attempt.Attempt</td>
                             <td><span class="badge @AppFormatting.BadgeCss(attempt.Status)">@attempt.Status</span></td>
                             <td>@attempt.WorkerId</td>
@@ -104,11 +127,11 @@ else
         else
         {
             <table class="ko-table compact">
-                <thead><tr><th>Queue item</th><th>Queue</th><th>State</th><th>Available</th><th>Locked by</th><th>Attempts</th></tr></thead>
+                <thead><tr><th>Chunk</th><th>Queue item</th><th>Queue</th><th>State</th><th>Available</th><th>Locked by</th><th>Attempts</th></tr></thead>
                 <tbody>
                 @foreach (var item in Model.Data.QueueItems)
                 {
-                    <tr><td>@item.QueueItemId</td><td>@item.QueueName</td><td>@item.State</td><td>@AppFormatting.Local(item.AvailableAtUtc)</td><td>@item.LockedBy</td><td>@item.Attempts/@item.MaxAttempts</td></tr>
+                    <tr><td>@(item.ChunkId is null ? "-" : $"{item.ChunkId}/{item.TotalChunks}")</td><td>@item.QueueItemId</td><td>@item.QueueName</td><td>@item.State</td><td>@AppFormatting.Local(item.AvailableAtUtc)</td><td>@item.LockedBy</td><td>@item.Attempts/@item.MaxAttempts</td></tr>
                 }
                 </tbody>
             </table>
