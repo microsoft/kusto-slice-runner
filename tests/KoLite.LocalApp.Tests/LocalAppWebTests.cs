@@ -879,18 +879,51 @@ namespace KoLite.LocalApp.Tests
         }
 
         [Fact]
-        public async Task Schedule_editor_renders_concurrency_help_on_info_tooltips()
+        public async Task Schedule_editor_renders_help_for_every_field_on_info_tooltips()
         {
+            var record = new SqliteJobCatalogRepository(sqlite)
+                .Create(Schedule("job.field.help", "FieldHelpFunction", isPaused: false));
             using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
 
-            var html = await client.GetStringAsync("/catalog/new");
+            var html = await client.GetStringAsync($"/jobs/{record.JobId}");
+            var expectedFields = new[]
+            {
+                "job-id",
+                "activity-id",
+                "description",
+                "function-name",
+                "output-table",
+                "query-window-size",
+                "delay-from-utc-now",
+                "max-parallelism",
+                "chunks",
+                "query-timeout",
+                "start-from",
+                "end-on",
+                "folder",
+                "tags",
+                "target-cluster-uri",
+                "target-database",
+                "health-policy",
+                "is-paused",
+                "dependencies",
+                "job-settings"
+            };
 
-            Assert.Contains("data-field-info=\"max-parallelism\" role=\"img\" tabindex=\"0\"", html, StringComparison.Ordinal);
+            Assert.All(
+                expectedFields,
+                field => Assert.Contains($"data-field-info=\"{field}\" role=\"img\" tabindex=\"0\"", html, StringComparison.Ordinal));
+            Assert.Equal(expectedFields.Length, Regex.Matches(html, "data-field-info=\"").Count);
+            Assert.Contains("title=\"Permanent immutable GUID assigned by KO Lite.", html, StringComparison.Ordinal);
             Assert.Contains("title=\"Concurrent execution units for this job: chunks for chunked jobs, otherwise slices.", html, StringComparison.Ordinal);
-            Assert.Contains("data-field-info=\"chunks\" role=\"img\" tabindex=\"0\"", html, StringComparison.Ordinal);
             Assert.Contains("title=\"Optional, 1-32. Adds chunkId and chunks arguments to every function call.", html, StringComparison.Ordinal);
+            Assert.DoesNotContain("id=\"schedule-description-help\"", html, StringComparison.Ordinal);
+            Assert.DoesNotContain("id=\"schedule-tags-help\"", html, StringComparison.Ordinal);
             Assert.DoesNotContain("id=\"schedule-max-parallelism-help\"", html, StringComparison.Ordinal);
             Assert.DoesNotContain("id=\"schedule-chunks-help\"", html, StringComparison.Ordinal);
+            Assert.DoesNotContain("class=\"muted dependency-picker-help\"", html, StringComparison.Ordinal);
+            Assert.DoesNotContain("aria-describedby=\"schedule-description-help\"", html, StringComparison.Ordinal);
+            Assert.DoesNotContain("aria-describedby=\"schedule-tags-help\"", html, StringComparison.Ordinal);
             Assert.DoesNotContain("aria-describedby=\"schedule-max-parallelism-help\"", html, StringComparison.Ordinal);
             Assert.DoesNotContain("aria-describedby=\"schedule-chunks-help\"", html, StringComparison.Ordinal);
         }

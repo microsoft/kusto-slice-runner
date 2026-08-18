@@ -1,7 +1,25 @@
 @model ScheduleEditorViewModel
 @{
+    var jobIdHelp = "Permanent immutable GUID assigned by KO Lite. It preserves job identity across renames, history, dependencies, and output idempotency.";
+    var activityIdHelp = "Mutable unique display label for the job. Imports without an id use it as the match key, and dependencies may use it as a readable alias.";
+    var descriptionHelp = "Optional catalog metadata, up to 65,536 characters. Supports Markdown and is never passed to the Kusto function.";
+    var functionNameHelp = "Kusto function invoked for each execution. It receives the slice start and end, then optional chunk arguments and job settings.";
+    var outputTableHelp = "Kusto table that receives each set-or-append result. Verify the target and schema before enabling the job.";
+    var queryWindowSizeHelp = "Duration covered by one logical slice. Must be positive and cannot change after the job starts.";
+    var delayFromUtcNowHelp = "How long KO Lite waits after a window ends before it becomes eligible for scheduling. Must be zero or positive.";
     var maxParallelismHelp = "Concurrent execution units for this job: chunks for chunked jobs, otherwise slices. Minimum 1 with no upper limit. Set this to at least the chunk count to allow one window's chunks to run together when global worker capacity is available.";
     var chunksHelp = "Optional, 1-32. Adds chunkId and chunks arguments to every function call. Each chunk consumes one max-parallelism slot. Cannot change after the job starts.";
+    var queryTimeoutHelp = "Positive Kusto server timeout for each execution. It also influences the client deadline and queue lease duration.";
+    var startFromHelp = "UTC anchor for the first logical slice and all subsequent window boundaries. Cannot change after the job starts.";
+    var endOnHelp = "Optional UTC upper bound. KO Lite schedules only whole aligned slices ending at or before this value.";
+    var folderHelp = "Optional Kusto-oriented metadata. It does not group jobs in the dashboard; use tags for local organization.";
+    var tagsHelp = "Optional local organization labels. Type or paste values and press Enter, comma, semicolon, or Add tag. KO Lite trims, lowercases, and deduplicates them.";
+    var clusterUriHelp = "Absolute HTTPS URI of the target Azure Data Explorer cluster.";
+    var databaseHelp = "Kusto database containing the function and output table.";
+    var healthPolicyHelp = "Complete flags unresolved historical dead-letter gaps. Recent scores only the recent execution trend.";
+    var isPausedHelp = "Create or update the job without scheduling new work or claiming queued retries. Resume it explicitly when ready.";
+    var dependenciesHelp = "Upstream jobs whose overlapping logical slices must complete before this job can schedule. Edges are stored by immutable job id.";
+    var jobSettingsHelp = "Optional JSON passed as the final dynamic function argument when non-empty. KO Lite stores it but does not interpret it.";
 }
 
 <div class="grid-two">
@@ -21,31 +39,30 @@
         <div class="form-grid">
             @if (!string.IsNullOrEmpty(Model.Input.Id))
             {
-                <label>Job ID<input value="@Model.Input.Id" readonly /></label>
+                <label>Job ID <span class="form-field-info" data-field-info="job-id" role="img" tabindex="0" title="@jobIdHelp" aria-label="@jobIdHelp">ⓘ</span><input value="@Model.Input.Id" readonly /></label>
             }
-            <label>Activity ID<input name="Input.ActivityId" value="@Model.Input.ActivityId" /></label>
-            <label class="form-field-full">Description (Markdown)
-                <textarea name="Input.Description" rows="6" maxlength="@KoLite.Local.Core.Schedules.JobDescription.MaxLength" aria-describedby="schedule-description-help">@Model.Input.Description</textarea>
-                <span id="schedule-description-help" class="muted form-field-help">Optional catalog metadata. Supports Markdown and is never passed to the Kusto function.</span>
+            <label>Activity ID <span class="form-field-info" data-field-info="activity-id" role="img" tabindex="0" title="@activityIdHelp" aria-label="@activityIdHelp">ⓘ</span><input name="Input.ActivityId" value="@Model.Input.ActivityId" /></label>
+            <label class="form-field-full">Description (Markdown) <span class="form-field-info" data-field-info="description" role="img" tabindex="0" title="@descriptionHelp" aria-label="@descriptionHelp">ⓘ</span>
+                <textarea name="Input.Description" rows="6" maxlength="@KoLite.Local.Core.Schedules.JobDescription.MaxLength">@Model.Input.Description</textarea>
             </label>
-            <label>Function name<input name="Input.FunctionName" value="@Model.Input.FunctionName" /></label>
-            <label>Output table<input name="Input.OutputTable" value="@Model.Input.OutputTable" /></label>
-            <label>Query window size<input name="Input.QueryWindowSize" value="@Model.Input.QueryWindowSize" placeholder="01:00:00" @(Model.StartedFieldsReadOnly ? "readonly" : null) /></label>
-            <label>Delay from UTC now<input name="Input.DelayFromUtcNow" value="@Model.Input.DelayFromUtcNow" placeholder="00:10:00" /></label>
+            <label>Function name <span class="form-field-info" data-field-info="function-name" role="img" tabindex="0" title="@functionNameHelp" aria-label="@functionNameHelp">ⓘ</span><input name="Input.FunctionName" value="@Model.Input.FunctionName" /></label>
+            <label>Output table <span class="form-field-info" data-field-info="output-table" role="img" tabindex="0" title="@outputTableHelp" aria-label="@outputTableHelp">ⓘ</span><input name="Input.OutputTable" value="@Model.Input.OutputTable" /></label>
+            <label>Query window size <span class="form-field-info" data-field-info="query-window-size" role="img" tabindex="0" title="@queryWindowSizeHelp" aria-label="@queryWindowSizeHelp">ⓘ</span><input name="Input.QueryWindowSize" value="@Model.Input.QueryWindowSize" placeholder="01:00:00" @(Model.StartedFieldsReadOnly ? "readonly" : null) /></label>
+            <label>Delay from UTC now <span class="form-field-info" data-field-info="delay-from-utc-now" role="img" tabindex="0" title="@delayFromUtcNowHelp" aria-label="@delayFromUtcNowHelp">ⓘ</span><input name="Input.DelayFromUtcNow" value="@Model.Input.DelayFromUtcNow" placeholder="00:10:00" /></label>
             <label>Max parallelism <span class="form-field-info" data-field-info="max-parallelism" role="img" tabindex="0" title="@maxParallelismHelp" aria-label="@maxParallelismHelp">ⓘ</span>
                 <input name="Input.MaxParallelism" type="number" min="1" value="@Model.Input.MaxParallelism" />
             </label>
             <label>Chunks <span class="form-field-info" data-field-info="chunks" role="img" tabindex="0" title="@chunksHelp" aria-label="@chunksHelp">ⓘ</span>
                 <input name="Input.Chunks" type="number" min="@KoLite.Local.Core.Schedules.JobChunks.MinCount" max="@KoLite.Local.Core.Schedules.JobChunks.MaxCount" value="@Model.Input.Chunks" placeholder="optional" @(Model.StartedFieldsReadOnly ? "readonly" : null) />
             </label>
-            <label>Query timeout<input name="Input.QueryTimeout" value="@Model.Input.QueryTimeout" placeholder="00:05:00" /></label>
-            <label>Start from<input name="Input.StartFrom" value="@Model.Input.StartFrom" placeholder="2026-01-01T00:00:00Z" @(Model.StartedFieldsReadOnly ? "readonly" : null) /></label>
-            <label>End on<input name="Input.EndOn" value="@Model.Input.EndOn" placeholder="optional" /></label>
-            <label>Folder<input name="Input.Folder" value="@Model.Input.Folder" placeholder="optional" /></label>
+            <label>Query timeout <span class="form-field-info" data-field-info="query-timeout" role="img" tabindex="0" title="@queryTimeoutHelp" aria-label="@queryTimeoutHelp">ⓘ</span><input name="Input.QueryTimeout" value="@Model.Input.QueryTimeout" placeholder="00:05:00" /></label>
+            <label>Start from <span class="form-field-info" data-field-info="start-from" role="img" tabindex="0" title="@startFromHelp" aria-label="@startFromHelp">ⓘ</span><input name="Input.StartFrom" value="@Model.Input.StartFrom" placeholder="2026-01-01T00:00:00Z" @(Model.StartedFieldsReadOnly ? "readonly" : null) /></label>
+            <label>End on <span class="form-field-info" data-field-info="end-on" role="img" tabindex="0" title="@endOnHelp" aria-label="@endOnHelp">ⓘ</span><input name="Input.EndOn" value="@Model.Input.EndOn" placeholder="optional" /></label>
+            <label>Folder <span class="form-field-info" data-field-info="folder" role="img" tabindex="0" title="@folderHelp" aria-label="@folderHelp">ⓘ</span><input name="Input.Folder" value="@Model.Input.Folder" placeholder="optional" /></label>
             <div class="form-field tag-picker" data-tag-picker>
-                <label class="tag-picker-label" for="schedule-tags-input">Tags</label>
+                <label class="tag-picker-label" for="schedule-tags-input">Tags <span class="form-field-info" data-field-info="tags" role="img" tabindex="0" title="@tagsHelp" aria-label="@tagsHelp">ⓘ</span></label>
                 <div class="tag-picker-controls">
-                    <input id="schedule-tags-input" class="tag-picker-input" type="text" data-tag-input autocomplete="off" placeholder="prod, daily, security" aria-describedby="schedule-tags-help" />
+                    <input id="schedule-tags-input" class="tag-picker-input" type="text" data-tag-input autocomplete="off" placeholder="prod, daily, security" />
                     <button type="button" class="btn small" data-tag-add>Add tag</button>
                 </div>
                 <div class="tag-editor-chips" data-tag-chips aria-live="polite">
@@ -58,21 +75,20 @@
                     }
                 </div>
                 <input type="hidden" name="Input.Tags" data-tag-hidden value="@string.Join("\n", Model.Input.NormalizedTags)" />
-                <p id="schedule-tags-help" class="muted tag-picker-help">Type or paste tags, then press Enter, comma, semicolon, or Add tag.</p>
             </div>
-            <label>Target cluster URI<input name="Input.ClusterUri" value="@Model.Input.ClusterUri" /></label>
-            <label>Target database<input name="Input.Database" value="@Model.Input.Database" /></label>
-            <label>Health policy
+            <label>Target cluster URI <span class="form-field-info" data-field-info="target-cluster-uri" role="img" tabindex="0" title="@clusterUriHelp" aria-label="@clusterUriHelp">ⓘ</span><input name="Input.ClusterUri" value="@Model.Input.ClusterUri" /></label>
+            <label>Target database <span class="form-field-info" data-field-info="target-database" role="img" tabindex="0" title="@databaseHelp" aria-label="@databaseHelp">ⓘ</span><input name="Input.Database" value="@Model.Input.Database" /></label>
+            <label>Health policy <span class="form-field-info" data-field-info="health-policy" role="img" tabindex="0" title="@healthPolicyHelp" aria-label="@healthPolicyHelp">ⓘ</span>
                 <select name="Input.HealthPolicy">
                     <option value="complete" selected="@(string.Equals(Model.Input.HealthPolicy, "recent", StringComparison.OrdinalIgnoreCase) ? null : "selected")">Complete — flag historical gaps</option>
                     <option value="recent" selected="@(string.Equals(Model.Input.HealthPolicy, "recent", StringComparison.OrdinalIgnoreCase) ? "selected" : null)">Recent — trend only, ignore old gaps</option>
                 </select>
             </label>
         </div>
-        <label class="checkbox-row"><input name="Input.IsPaused" type="checkbox" value="true" @(Model.Input.IsPaused ? "checked" : null) /> Start paused</label>
+        <label class="checkbox-row"><input name="Input.IsPaused" type="checkbox" value="true" @(Model.Input.IsPaused ? "checked" : null) /> Start paused <span class="form-field-info" data-field-info="is-paused" role="img" tabindex="0" title="@isPausedHelp" aria-label="@isPausedHelp">ⓘ</span></label>
         <input type="hidden" name="Input.IsPaused" value="false" />
         <div class="form-field dependency-picker" data-dependency-picker>
-            <span class="dependency-picker-label">Dependencies</span>
+            <span class="dependency-picker-label">Dependencies <span class="form-field-info" data-field-info="dependencies" role="img" tabindex="0" title="@dependenciesHelp" aria-label="@dependenciesHelp">ⓘ</span></span>
             @if (Model.DependencyOptions.Count == 0)
             {
                 <p class="muted dependency-picker-empty">No other jobs are available to depend on yet.</p>
@@ -100,9 +116,8 @@
                 }
             </div>
             <input type="hidden" name="Input.DependsOn" data-dependency-value value="@string.Join("\n", Model.CurrentDependencies.Select(c => c.Value))" />
-            <p class="muted dependency-picker-help">Each dependency is stored by job id; the raw JSON editor shows the underlying ids.</p>
         </div>
-        <label>Job settings JSON<textarea name="Input.JobSettingsJson" rows="8">@Model.Input.JobSettingsJson</textarea></label>
+        <label>Job settings JSON <span class="form-field-info" data-field-info="job-settings" role="img" tabindex="0" title="@jobSettingsHelp" aria-label="@jobSettingsHelp">ⓘ</span><textarea name="Input.JobSettingsJson" rows="8">@Model.Input.JobSettingsJson</textarea></label>
         <button class="btn primary" type="submit">@Model.SubmitLabel</button>
     </form>
     </div>
