@@ -22,6 +22,7 @@ namespace KoLite.LocalApp.Tests
         private readonly KoLiteSqliteConnectionFactory sqlite;
         private readonly SqliteJobCatalogRepository catalog;
         private readonly SqliteSliceStateRepository sliceState;
+        private readonly SqliteChunkStateRepository chunkState;
         private readonly SqliteOperationalReadModelRepository readModels;
         private readonly SqliteWorkQueueRepository queue;
 
@@ -32,6 +33,7 @@ namespace KoLite.LocalApp.Tests
             new KoLiteSqliteSchema(sqlite).EnsureSchema();
             catalog = new SqliteJobCatalogRepository(sqlite);
             sliceState = new SqliteSliceStateRepository(sqlite);
+            chunkState = new SqliteChunkStateRepository(sqlite);
             readModels = new SqliteOperationalReadModelRepository(sqlite);
             queue = new SqliteWorkQueueRepository(sqlite);
         }
@@ -107,6 +109,55 @@ namespace KoLite.LocalApp.Tests
             Assert.DoesNotContain(AppFormatting.Iso(At(5)), waitingLine.Value, StringComparison.Ordinal);
         }
 
+        [Fact]
+        public void Chunked_slice_tooltip_reports_completed_children_after_status()
+        {
+            var job = catalog.Create(Schedule("chunked.progress", chunks: 16));
+            var slice = new SliceRange(job.JobId, At(0), At(5));
+            var children = chunkState.EnsureWindow(slice, 16, "test");
+            Complete(children[0], "chunk-0");
+            Complete(children[1], "chunk-1");
+            Complete(children[2], "chunk-2");
+
+            var data = CreateQuery().Get(job.JobId);
+
+            Assert.NotNull(data);
+            var cell = data!.SliceHistory.SelectMany(row => row.Cells).Single(item => item.SliceStartUtc == At(0));
+            var chunkLine = Assert.Single(cell.TooltipLines, line => line.Label == "Chunks");
+            Assert.Equal("3/16", chunkLine.Value);
+            Assert.Equal(
+                ["Start", "End", "Status", "Chunks", "Attempt"],
+                cell.TooltipLines.Take(5).Select(line => line.Label).ToArray());
+            Assert.Contains("Chunks: 3/16", cell.TooltipText, StringComparison.Ordinal);
+            Assert.Contains("Chunks 3/16", cell.AccessibleLabel, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void Chunked_unmaterialized_slice_tooltip_reports_zero_completed_children()
+        {
+            var job = catalog.Create(Schedule("chunked.not-materialized", chunks: 16));
+
+            var data = CreateQuery().Get(job.JobId);
+
+            Assert.NotNull(data);
+            var cell = data!.SliceHistory.SelectMany(row => row.Cells).Single(item => item.SliceStartUtc == At(0));
+            Assert.Equal("0/16", Assert.Single(cell.TooltipLines, line => line.Label == "Chunks").Value);
+        }
+
+        [Fact]
+        public void Unchunked_slice_tooltip_has_no_chunks_line_and_preserves_accessible_label()
+        {
+            var job = catalog.Create(Schedule("unchunked.progress"));
+            sliceState.Append("unchunked-queued", job.JobId, At(0), At(5), DurableSliceStatus.Queued, expectedVersion: 0);
+
+            var data = CreateQuery().Get(job.JobId);
+
+            Assert.NotNull(data);
+            var cell = data!.SliceHistory.SelectMany(row => row.Cells).Single(item => item.SliceStartUtc == At(0));
+            Assert.DoesNotContain(cell.TooltipLines, line => line.Label == "Chunks");
+            Assert.Equal("2026-01-01T00:00:00Z to 2026-01-01T00:05:00Z; Queued; attempt 0", cell.AccessibleLabel);
+        }
+
         private JobDetailsPageQuery CreateQuery() => new(
             catalog,
             readModels,
@@ -114,7 +165,15 @@ namespace KoLite.LocalApp.Tests
             new LifecycleReadModel(new SqliteLifecycleReadModelRepository(sqlite)),
             new OperationalDetailsReadModel(new SqliteOperationalReadModelRepository(sqlite)),
             new ManualClock(At(60)),
-            sliceState);
+            sliceState,
+            chunkState);
+
+        private void Complete(DurableChunkState child, string operationPrefix)
+        {
+            chunkState.MarkQueued($"{operationPrefix}-queued", child.Execution, actor: "test");
+            var lease = chunkState.AcquireLease($"{operationPrefix}-lease", child.Execution, operationPrefix, TimeSpan.FromMinutes(5), At(20))!;
+            Assert.True(chunkState.CompleteLease($"{operationPrefix}-complete", child.Execution, operationPrefix, lease.LeaseToken!, At(21)));
+        }
 
         private static DateTimeOffset At(int minutes) => new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero).AddMinutes(minutes);
 
@@ -124,7 +183,7 @@ namespace KoLite.LocalApp.Tests
             return new Guid(bytes).ToString("N");
         }
 
-        private static string Schedule(string activityId, string queryWindowSize = "00:05:00", IReadOnlyList<string>? dependsOnIds = null)
+        private static string Schedule(string activityId, string queryWindowSize = "00:05:00", IReadOnlyList<string>? dependsOnIds = null, int? chunks = null)
         {
             var dependsOn = dependsOnIds is { Count: > 0 }
                 ? "[" + string.Join(", ", dependsOnIds.Select(id => $"{{ \"id\": \"{id}\" }}")) + "]"
@@ -140,6 +199,7 @@ namespace KoLite.LocalApp.Tests
               "delayFromUtcNow": "00:00:00",
               "maxParallelism": 1,
               "queryTimeout": "00:01:00",
+              {{(chunks is null ? string.Empty : $"\"chunks\": {chunks},")}}
               "isPaused": false,
               "startFrom": "2026-01-01T00:00:00Z",
               "dependsOn": {{dependsOn}},

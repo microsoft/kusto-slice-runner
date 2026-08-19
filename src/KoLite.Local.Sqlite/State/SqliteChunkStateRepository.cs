@@ -43,6 +43,13 @@ namespace KoLite.Local.Sqlite.State
         string? Actor,
         DateTimeOffset RecordedAtUtc);
 
+    public sealed record ChunkCompletionProgress(
+        string JobId,
+        DateTimeOffset SliceStartUtc,
+        DateTimeOffset SliceEndUtc,
+        int CompletedChunks,
+        int TotalChunks);
+
     public sealed class SqliteChunkStateRepository
     {
         private readonly IKoLiteSqliteConnectionFactory connectionFactory;
@@ -112,6 +119,54 @@ namespace KoLite.Local.Sqlite.State
             while (reader.Read())
             {
                 results.Add(Read(reader));
+            }
+
+            return results;
+        }
+
+        public IReadOnlyList<ChunkCompletionProgress> ListCompletionProgress(string jobId)
+        {
+            if (string.IsNullOrWhiteSpace(jobId))
+            {
+                throw new ArgumentException("Job id is required.", nameof(jobId));
+            }
+
+            using var connection = connectionFactory.OpenConnection();
+            using var command = SqliteStorage.Command(connection, null, """
+                SELECT job_id,
+                       slice_start_utc,
+                       slice_end_utc,
+                       SUM(CASE WHEN state='Completed' THEN 1 ELSE 0 END) AS completed_chunks,
+                       MIN(total_chunks) AS min_total_chunks,
+                       MAX(total_chunks) AS max_total_chunks,
+                       COUNT(*) AS child_count
+                FROM current_slice_chunk_state
+                WHERE job_id=$job
+                GROUP BY job_id,slice_start_utc,slice_end_utc
+                ORDER BY slice_start_utc,slice_end_utc;
+                """);
+            command.Add("$job", jobId);
+            using var reader = command.ExecuteReader();
+            var results = new List<ChunkCompletionProgress>();
+            while (reader.Read())
+            {
+                var completed = Convert.ToInt32(reader.GetInt64(3), CultureInfo.InvariantCulture);
+                var minTotal = reader.GetInt32(4);
+                var maxTotal = reader.GetInt32(5);
+                var childCount = Convert.ToInt32(reader.GetInt64(6), CultureInfo.InvariantCulture);
+                if (minTotal != maxTotal || childCount != maxTotal || completed < 0 || completed > maxTotal)
+                {
+                    throw new InvalidOperationException(
+                        $"Chunk state cardinality is inconsistent for job '{jobId}', slice " +
+                        $"{SqliteStorage.ReadUtc(reader, "slice_start_utc"):O} to {SqliteStorage.ReadUtc(reader, "slice_end_utc"):O}.");
+                }
+
+                results.Add(new ChunkCompletionProgress(
+                    reader.GetString(0),
+                    SqliteStorage.ReadUtc(reader, "slice_start_utc"),
+                    SqliteStorage.ReadUtc(reader, "slice_end_utc"),
+                    completed,
+                    maxTotal));
             }
 
             return results;

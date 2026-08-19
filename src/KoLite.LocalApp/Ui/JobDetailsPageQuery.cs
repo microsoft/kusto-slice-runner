@@ -19,7 +19,16 @@ namespace KoLite.LocalApp.Ui
         string Url,
         IReadOnlyList<SliceHistoryTooltipLine> TooltipLines)
     {
-        public string AccessibleLabel => $"{AppFormatting.Iso(SliceStartUtc)} to {AppFormatting.Iso(SliceEndUtc)}; {StatusLabel}; attempt {Attempt}";
+        public string AccessibleLabel
+        {
+            get
+            {
+                var chunks = TooltipLines.FirstOrDefault(line => string.Equals(line.Label, "Chunks", StringComparison.Ordinal));
+                var chunkText = chunks is null ? string.Empty : $"; Chunks {chunks.Value}";
+                return $"{AppFormatting.Iso(SliceStartUtc)} to {AppFormatting.Iso(SliceEndUtc)}; {StatusLabel}{chunkText}; attempt {Attempt}";
+            }
+        }
+
         public string TooltipText => string.Join("\n", TooltipLines.Select(line => $"{line.Label}: {line.Value}"));
     }
 
@@ -116,7 +125,8 @@ namespace KoLite.LocalApp.Ui
             var statuses = readModels.GetSliceStatus(jobId);
             var queueItems = queue.List(jobId);
             var waitingLinesByStart = BuildWaitingOnTooltipLines(job.Definition, statuses);
-            var sliceHistory = BuildSliceHistory(job.Definition, statuses, queueItems, fromUtc, toUtc, sliceHistoryCellLimit, waitingLinesByStart);
+            var completedChunksByStart = BuildCompletedChunksByStart(job.Definition);
+            var sliceHistory = BuildSliceHistory(job.Definition, statuses, queueItems, fromUtc, toUtc, sliceHistoryCellLimit, waitingLinesByStart, completedChunksByStart);
             var catalogHistory = CatalogHistoryDiffBuilder.Build(catalog.History(jobId));
             var catchUp = BuildCatchUp(job, job.Definition, statuses, catalogHistory);
             return new JobDetailsPageData(
@@ -134,6 +144,27 @@ namespace KoLite.LocalApp.Ui
                 operationalDetails.GetEvents(jobId, take: 25),
                 catalog.HasStarted(jobId),
                 catchUp);
+        }
+
+        private IReadOnlyDictionary<DateTimeOffset, int> BuildCompletedChunksByStart(JobDefinition definition)
+        {
+            if (definition.Chunks is not { } configuredChunks || chunkState is null)
+            {
+                return new Dictionary<DateTimeOffset, int>();
+            }
+
+            var rows = chunkState.ListCompletionProgress(definition.Id!);
+            foreach (var row in rows)
+            {
+                if (row.TotalChunks != configuredChunks)
+                {
+                    throw new InvalidOperationException(
+                        $"Stored chunk count {row.TotalChunks} does not match configured chunks {configuredChunks} " +
+                        $"for job '{definition.ActivityId}', slice {AppFormatting.Iso(row.SliceStartUtc)}.");
+                }
+            }
+
+            return rows.ToDictionary(row => row.SliceStartUtc.ToUniversalTime(), row => row.CompletedChunks);
         }
 
         // Estimates how long the job will take to work through its eligible backlog and reach its
@@ -210,7 +241,15 @@ namespace KoLite.LocalApp.Ui
                 isOrphaned);
         }
 
-        private static SliceHistoryBuildResult BuildSliceHistory(JobDefinition definition, IReadOnlyList<SliceStatusReadout> statuses, IReadOnlyList<DurableWorkItem> queueItems, DateTimeOffset? fromUtc, DateTimeOffset? toUtc, int cellLimit, IReadOnlyDictionary<DateTimeOffset, IReadOnlyList<SliceHistoryTooltipLine>> waitingLinesByStart)
+        private static SliceHistoryBuildResult BuildSliceHistory(
+            JobDefinition definition,
+            IReadOnlyList<SliceStatusReadout> statuses,
+            IReadOnlyList<DurableWorkItem> queueItems,
+            DateTimeOffset? fromUtc,
+            DateTimeOffset? toUtc,
+            int cellLimit,
+            IReadOnlyDictionary<DateTimeOffset, IReadOnlyList<SliceHistoryTooltipLine>> waitingLinesByStart,
+            IReadOnlyDictionary<DateTimeOffset, int> completedChunksByStart)
         {
             var now = DateTimeOffset.UtcNow;
             var queryWindow = definition.QueryWindowSize;
@@ -242,10 +281,10 @@ namespace KoLite.LocalApp.Ui
             var fixedRowSpan = FixedRowSpanFor(queryWindow);
             if (fixedRowSpan is { } rowSpan && rowSpan.Ticks % queryWindow.Ticks == 0)
             {
-                return BuildFixedSpanSliceHistory(definition, statusByStart, activeQueueByStart, start, end, now, cellLimit, rowSpan, waitingLinesByStart);
+                return BuildFixedSpanSliceHistory(definition, statusByStart, activeQueueByStart, start, end, now, cellLimit, rowSpan, waitingLinesByStart, completedChunksByStart);
             }
 
-            return BuildSequentialSliceHistory(definition, statusByStart, activeQueueByStart, start, end, now, cellLimit, waitingLinesByStart);
+            return BuildSequentialSliceHistory(definition, statusByStart, activeQueueByStart, start, end, now, cellLimit, waitingLinesByStart, completedChunksByStart);
         }
 
         private static SliceHistoryBuildResult BuildFixedSpanSliceHistory(
@@ -257,7 +296,8 @@ namespace KoLite.LocalApp.Ui
             DateTimeOffset now,
             int cellLimit,
             TimeSpan rowSpan,
-            IReadOnlyDictionary<DateTimeOffset, IReadOnlyList<SliceHistoryTooltipLine>> waitingLinesByStart)
+            IReadOnlyDictionary<DateTimeOffset, IReadOnlyList<SliceHistoryTooltipLine>> waitingLinesByStart,
+            IReadOnlyDictionary<DateTimeOffset, int> completedChunksByStart)
         {
             var cellsPerRow = (int)(rowSpan.Ticks / definition.QueryWindowSize.Ticks);
             var rowStart = FloorToRowSpan(start, rowSpan);
@@ -278,7 +318,7 @@ namespace KoLite.LocalApp.Ui
                 var firstSliceStart = FirstSliceStartAtOrAfter(row, definition.StartFrom, definition.QueryWindowSize);
                 for (var i = 0; i < cellsPerRow; i++)
                 {
-                    cells.Add(BuildSliceHistoryCell(definition, statusByStart, activeQueueByStart, firstSliceStart.AddTicks(definition.QueryWindowSize.Ticks * i), now, waitingLinesByStart));
+                    cells.Add(BuildSliceHistoryCell(definition, statusByStart, activeQueueByStart, firstSliceStart.AddTicks(definition.QueryWindowSize.Ticks * i), now, waitingLinesByStart, completedChunksByStart));
                 }
 
                 rows.Add(new SliceHistoryRow(RowLabel(row, rowSpan), cells));
@@ -295,7 +335,8 @@ namespace KoLite.LocalApp.Ui
             DateTimeOffset end,
             DateTimeOffset now,
             int cellLimit,
-            IReadOnlyDictionary<DateTimeOffset, IReadOnlyList<SliceHistoryTooltipLine>> waitingLinesByStart)
+            IReadOnlyDictionary<DateTimeOffset, IReadOnlyList<SliceHistoryTooltipLine>> waitingLinesByStart,
+            IReadOnlyDictionary<DateTimeOffset, int> completedChunksByStart)
         {
             var queryWindow = definition.QueryWindowSize;
             var requestedStart = start;
@@ -311,7 +352,7 @@ namespace KoLite.LocalApp.Ui
             var cells = new List<SliceHistoryCell>();
             for (var cursor = start; cursor < end && cells.Count < cellLimit; cursor = cursor.Add(queryWindow))
             {
-                cells.Add(BuildSliceHistoryCell(definition, statusByStart, activeQueueByStart, cursor, now, waitingLinesByStart));
+                cells.Add(BuildSliceHistoryCell(definition, statusByStart, activeQueueByStart, cursor, now, waitingLinesByStart, completedChunksByStart));
             }
 
             var rows = cells
@@ -331,7 +372,8 @@ namespace KoLite.LocalApp.Ui
             IReadOnlyDictionary<DateTimeOffset, DurableWorkItem> activeQueueByStart,
             DateTimeOffset sliceStart,
             DateTimeOffset now,
-            IReadOnlyDictionary<DateTimeOffset, IReadOnlyList<SliceHistoryTooltipLine>> waitingLinesByStart)
+            IReadOnlyDictionary<DateTimeOffset, IReadOnlyList<SliceHistoryTooltipLine>> waitingLinesByStart,
+            IReadOnlyDictionary<DateTimeOffset, int> completedChunksByStart)
         {
             sliceStart = sliceStart.ToUniversalTime();
             var sliceEnd = sliceStart.Add(definition.QueryWindowSize);
@@ -342,19 +384,37 @@ namespace KoLite.LocalApp.Ui
             var css = AppFormatting.StateCss(state);
             var statusLabel = AppFormatting.StatusLabel(state);
             var url = $"/jobs/{Uri.EscapeDataString(definition.Id!)}/slices?start={Uri.EscapeDataString(AppFormatting.Iso(sliceStart))}&end={Uri.EscapeDataString(AppFormatting.Iso(sliceEnd))}";
-            var tooltipLines = BuildTooltipLines(sliceStart, sliceEnd, statusLabel, attempt, activeQueueItem, state, waitingLinesByStart);
+            var completedChunks = definition.Chunks is null ? (int?)null : completedChunksByStart.GetValueOrDefault(sliceStart);
+            var tooltipLines = BuildTooltipLines(sliceStart, sliceEnd, statusLabel, attempt, activeQueueItem, state, waitingLinesByStart, completedChunks, definition.Chunks);
             return new SliceHistoryCell(sliceStart, sliceEnd, state, attempt, css, statusLabel, url, tooltipLines);
         }
 
-        private static IReadOnlyList<SliceHistoryTooltipLine> BuildTooltipLines(DateTimeOffset sliceStart, DateTimeOffset sliceEnd, string statusLabel, int attempt, DurableWorkItem? activeQueueItem, string state, IReadOnlyDictionary<DateTimeOffset, IReadOnlyList<SliceHistoryTooltipLine>> waitingLinesByStart)
+        private static IReadOnlyList<SliceHistoryTooltipLine> BuildTooltipLines(
+            DateTimeOffset sliceStart,
+            DateTimeOffset sliceEnd,
+            string statusLabel,
+            int attempt,
+            DurableWorkItem? activeQueueItem,
+            string state,
+            IReadOnlyDictionary<DateTimeOffset, IReadOnlyList<SliceHistoryTooltipLine>> waitingLinesByStart,
+            int? completedChunks,
+            int? totalChunks)
         {
             var lines = new List<SliceHistoryTooltipLine>
             {
                 new("Start", AppFormatting.Iso(sliceStart)),
                 new("End", AppFormatting.Iso(sliceEnd)),
-                new("Status", statusLabel),
-                new("Attempt", attempt.ToString(CultureInfo.InvariantCulture))
+                new("Status", statusLabel)
             };
+
+            if (totalChunks is { } total)
+            {
+                lines.Add(new SliceHistoryTooltipLine(
+                    "Chunks",
+                    $"{completedChunks.GetValueOrDefault().ToString(CultureInfo.InvariantCulture)}/{total.ToString(CultureInfo.InvariantCulture)}"));
+            }
+
+            lines.Add(new SliceHistoryTooltipLine("Attempt", attempt.ToString(CultureInfo.InvariantCulture)));
 
             if (activeQueueItem is not null)
             {

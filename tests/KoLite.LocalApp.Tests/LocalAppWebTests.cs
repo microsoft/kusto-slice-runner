@@ -959,6 +959,32 @@ namespace KoLite.LocalApp.Tests
         }
 
         [Fact]
+        public async Task Chunked_slice_history_renders_completion_progress_in_every_tooltip_representation()
+        {
+            var catalog = new SqliteJobCatalogRepository(sqlite);
+            var record = catalog.Create(Schedule("job.chunk.tooltip", "ChunkTooltipFunction", isPaused: false, chunks: 16));
+            var slice = new SliceRange(record.JobId, At(0), At(5));
+            var chunks = new SqliteChunkStateRepository(sqlite);
+            var children = chunks.EnsureWindow(slice, 16, "test");
+            for (var chunkId = 0; chunkId < 3; chunkId++)
+            {
+                var child = children[chunkId];
+                chunks.MarkQueued($"chunk-{chunkId}-queued", child.Execution, actor: "test");
+                var owner = $"chunk-{chunkId}-worker";
+                var lease = chunks.AcquireLease($"chunk-{chunkId}-lease", child.Execution, owner, TimeSpan.FromMinutes(5), At(10))!;
+                Assert.True(chunks.CompleteLease($"chunk-{chunkId}-complete", child.Execution, owner, lease.LeaseToken!, At(11)));
+            }
+
+            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+            var html = await client.GetStringAsync($"/jobs/{record.JobId}");
+
+            Assert.Contains("Chunks: 3/16", html, StringComparison.Ordinal);
+            Assert.Contains("data-tooltip-label=\"Chunks\" data-tooltip-value=\"3/16\"", html, StringComparison.Ordinal);
+            Assert.Contains("aria-label=\"2026-01-01T00:00:00Z to 2026-01-01T00:05:00Z; Queued; Chunks 3/16; attempt 1\"", html, StringComparison.Ordinal);
+            Assert.Contains("data-tooltip-label=\"Chunks\" data-tooltip-value=\"0/16\"", html, StringComparison.Ordinal);
+        }
+
+        [Fact]
         public async Task Schedule_editor_posts_multiple_normalized_tags()
         {
             var catalog = new SqliteJobCatalogRepository(sqlite);

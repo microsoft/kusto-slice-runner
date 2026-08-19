@@ -191,6 +191,9 @@ attempts, leases, queue rows, and errors. `maxParallelism` limits concurrent chi
 Pausing lets in-flight chunks finish but prevents new chunks and retries from starting. Resume
 continues the incomplete children without rerunning successful siblings.
 
+Hover or focus a chunked job's slice-history cell to see **Chunks: completed/total** (for example,
+`Chunks: 3/16`). Configured windows that have not materialized child rows yet show `0/total`.
+
 `maxParallelism` counts execution units, not parent windows: each chunk consumes one slot, while
 an unchunked slice consumes one slot. It has no upper limit beyond the minimum of 1. Full fan-out
 of a 32-chunk window requires `maxParallelism >= 32` and at least 32 free global worker slots.
