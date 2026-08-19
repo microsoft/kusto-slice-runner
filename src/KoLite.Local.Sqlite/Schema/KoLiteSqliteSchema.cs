@@ -442,6 +442,10 @@ namespace KoLite.Local.Sqlite.Schema
                 ON work_queue(job_id, slice_start_utc, slice_end_utc, chunk_id);
             CREATE INDEX IF NOT EXISTS ix_slice_attempts_slice_chunk
                 ON slice_attempts(job_id, slice_start_utc, slice_end_utc, chunk_id, attempt);
+            CREATE INDEX IF NOT EXISTS ix_current_slice_chunk_state_running_global
+                ON current_slice_chunk_state(state) WHERE state='Running';
+            CREATE INDEX IF NOT EXISTS ix_work_queue_queued_global
+                ON work_queue(state) WHERE state='Queued';
             """;
     }
 }

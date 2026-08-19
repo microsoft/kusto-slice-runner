@@ -2719,9 +2719,14 @@ namespace KoLite.LocalApp.Tests
             // Running-now section surfaces the one Running slice and the queued count.
             Assert.Contains("Running now", page);
             Assert.Contains("activity.web", page);
-            Assert.Contains("slice(s) executing", page);
-            Assert.Contains("slice(s) waiting to be claimed", page);
+            Assert.Contains("Logical slices running", page);
+            Assert.Contains("Logical slices queued", page);
+            Assert.Contains("Executions running", page);
+            Assert.Contains("Executions queued/retry-pending", page);
             // Running-now table surfaces when each running slice started and its projected finish.
+            Assert.Contains("<th>Progress</th>", page);
+            Assert.Contains("<th>Running executions</th>", page);
+            Assert.Contains("<th>Highest attempt</th>", page);
             Assert.Contains("<th>Started (local)</th>", page);
             Assert.Contains("<th>ETA (local)</th>", page);
             // Processed totals: succeeded = 2 completed, failed = 1 Failed + 1 DeadLettered.
@@ -2735,6 +2740,48 @@ namespace KoLite.LocalApp.Tests
             // Throughput chart hook + payload are present once there is data.
             Assert.Contains("Processed over time", page);
             Assert.Contains("data-chartjs-activity=\"slices-processed-chart\"", page);
+        }
+
+        [Fact]
+        public async Task Activity_page_lists_each_running_chunk_and_worker_in_one_logical_row()
+        {
+            var catalog = new SqliteJobCatalogRepository(sqlite);
+            var job = catalog.Create(Schedule("activity.web.chunks", "ActivityChunkFunction", isPaused: false, maxParallelism: 4, chunks: 4));
+            var slice = new SliceRange(job.JobId, At(0), At(5));
+            var chunks = new SqliteChunkStateRepository(sqlite);
+            var readModels = new SqliteOperationalReadModelRepository(sqlite);
+            var children = chunks.EnsureWindow(slice, 4, "test");
+            foreach (var child in children)
+            {
+                chunks.MarkQueued($"queued-{child.ChunkId}", child.Execution, actor: "test");
+                var worker = $"activity-worker-{child.ChunkId}";
+                chunks.AcquireLease($"lease-{child.ChunkId}", child.Execution, worker, TimeSpan.FromMinutes(30), DateTimeOffset.UtcNow);
+                readModels.RecordAttempt(
+                    $"activity-chunk-{child.ChunkId}",
+                    job.JobId,
+                    slice.StartUtc,
+                    slice.EndUtc,
+                    1,
+                    "Started",
+                    worker,
+                    DateTimeOffset.UtcNow.AddMinutes(-child.ChunkId - 1),
+                    completedAtUtc: null,
+                    chunkId: child.ChunkId,
+                    totalChunks: child.TotalChunks);
+            }
+
+            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+            var page = await client.GetStringAsync("/activity");
+
+            Assert.Contains($"data-activity-job-id=\"{job.JobId}\"", page, StringComparison.Ordinal);
+            Assert.Contains($"data-chunk-progress=\"{job.JobId}\">0/4 completed", page, StringComparison.Ordinal);
+            Assert.Equal(4, Regex.Matches(page, "data-running-chunk-id=\"").Count);
+            for (var chunkId = 0; chunkId < 4; chunkId++)
+            {
+                Assert.Contains($"data-running-chunk-id=\"{chunkId}\"", page, StringComparison.Ordinal);
+                Assert.Contains($"Chunk {chunkId}/4", page, StringComparison.Ordinal);
+                Assert.Contains($"activity-worker-{chunkId}", page, StringComparison.Ordinal);
+            }
         }
 
         private void SeedOperationalData()

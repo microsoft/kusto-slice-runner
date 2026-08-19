@@ -16,8 +16,8 @@ namespace KoLite.LocalApp.Ui
         public int Total => Succeeded + Failed;
     }
 
-    // One time bucket of the throughput chart: how many slice attempts completed succeeded vs.
-    // failed/dead-lettered in the bucket.
+    // One time bucket of the throughput chart: how many logical slice windows reached a succeeded
+    // vs. failed/dead-lettered outcome in the bucket.
     public sealed record SlicesProcessedPoint(DateTimeOffset BucketStartUtc, int SucceededCount, int FailedCount)
     {
         public int TotalCount => SucceededCount + FailedCount;
@@ -34,20 +34,38 @@ namespace KoLite.LocalApp.Ui
         public bool HasData => Points.Any(p => p.TotalCount > 0);
     }
 
-    // One running-slice row for the Activity table: the raw readout plus the resolved wall-clock
-    // start (StartedAtUtc, falling back to the last state change) and the projected finish
-    // (EtaUtc = start + median of the job's recent successful durations). EtaUtc is null when the job
-    // has no successful-run history yet.
+    // One logical running-slice row for the Activity table. Chunked rows include child progress and
+    // every active execution; StartedAtUtc is the earliest active execution start and EtaUtc uses the
+    // median recent whole-window duration. EtaUtc is null when the job has no usable history.
     public sealed record RunningSliceView(
         RunningSliceReadout Slice,
         DateTimeOffset StartedAtUtc,
-        DateTimeOffset? EtaUtc);
+        DateTimeOffset? EtaUtc,
+        int? TotalChunks,
+        int CompletedChunks,
+        int RunningChunks,
+        int QueuedChunks,
+        int FailedChunks,
+        int DeadLetteredChunks,
+        int MissingChunks,
+        IReadOnlyList<RunningExecutionView> RunningExecutions);
 
-    // Point-in-time snapshot of in-flight work, sourced from current_slice_state (never pruned by
-    // retention). RunningSlices is a capped detail list for the "which ones?" table.
+    public sealed record RunningExecutionView(
+        int? ChunkId,
+        int? TotalChunks,
+        int Attempt,
+        string? WorkerId,
+        DateTimeOffset StartedAtUtc,
+        DateTimeOffset? LeaseExpiresAtUtc,
+        bool LeaseExpired);
+
+    // Point-in-time snapshot of in-flight work. Logical counts come from parent slice state, execution
+    // counts come from child/queue state, and RunningSlices is a capped logical-row detail list.
     public sealed record RunningNowSummary(
         int RunningCount,
         int QueuedCount,
+        int RunningExecutionCount,
+        int QueuedExecutionCount,
         IReadOnlyList<RunningSliceView> RunningSlices);
 
     public sealed record ActivityPageData(
@@ -65,15 +83,15 @@ namespace KoLite.LocalApp.Ui
     //    outcome (Completed = succeeded; Failed + DeadLettered = failed). This is the retention-proof
     //    "history of the app" snapshot.
     //  - slice_attempts (retention-protected for >= 30 days) -> the 1d/7d/30d totals and the
-    //    over-time chart, counted by attempt completion time (matching the existing throughput and
-    //    throttle-severity charts).
+    //    over-time chart, grouped into one terminal outcome per logical window and timestamped by its
+    //    latest terminal execution completion.
     public sealed class ActivityQuery
     {
         // Cap on the running-now detail list; the headline count is exact regardless.
         private const int RunningSlicesTake = 100;
 
-        // ETA for a running slice is projected from the median of that job's recent successful slice
-        // durations, sampled over this trailing window and capped per job.
+        // ETA for a running slice is projected from the median of that job's recent successful
+        // whole-window durations, sampled over this trailing window and capped per job.
         private static readonly TimeSpan DurationHistoryLookback = TimeSpan.FromDays(30);
         private const int DurationSampleCap = 50;
 
@@ -107,9 +125,15 @@ namespace KoLite.LocalApp.Ui
                 summaries.Sum(s => s.CompletedCount),
                 summaries.Sum(s => s.FailedCount + s.DeadLetteredCount));
 
-            var runningSlices = diagnostics.GetRunningSlices(jobId: null, now, RunningSlicesTake);
-            var runningViews = BuildRunningViews(runningSlices, now);
-            var runningNow = new RunningNowSummary(runningCount, queuedCount, runningViews);
+            var runningSnapshot = diagnostics.GetRunningActivitySnapshot(now, RunningSlicesTake);
+            var executionCounts = diagnostics.GetActivityExecutionCounts();
+            var runningViews = BuildRunningViews(runningSnapshot.Slices, runningSnapshot.ChunkExecutions, now);
+            var runningNow = new RunningNowSummary(
+                runningCount,
+                queuedCount,
+                executionCounts.Running,
+                executionCounts.Queued,
+                runningViews);
 
             var (lastDay, last7Days, last30Days) = ReadWindowedTotals(now);
             var chart = BuildChart(now, chartRange);
@@ -117,11 +141,13 @@ namespace KoLite.LocalApp.Ui
             return new ActivityPageData(runningNow, allTime, lastDay, last7Days, last30Days, chart, chartRange, now);
         }
 
-        // Resolves each running slice's start (StartedAtUtc, else the last state change as a fallback)
-        // and projects an ETA = start + median of that job's recent successful durations. Jobs with no
-        // successful history get a null ETA (the page renders "No history yet"). Typical durations are
-        // fetched once for the distinct running jobs rather than per slice.
-        private IReadOnlyList<RunningSliceView> BuildRunningViews(IReadOnlyList<RunningSliceReadout> slices, DateTimeOffset now)
+        // Resolves each logical running slice's active executions, progress, earliest active start,
+        // and ETA from recent successful whole-window durations. Typical durations and child state
+        // are fetched in grouped reads rather than per slice.
+        private IReadOnlyList<RunningSliceView> BuildRunningViews(
+            IReadOnlyList<RunningSliceReadout> slices,
+            IReadOnlyList<RunningChunkExecutionReadout> chunks,
+            DateTimeOffset now)
         {
             if (slices.Count == 0)
             {
@@ -129,23 +155,64 @@ namespace KoLite.LocalApp.Ui
             }
 
             var jobIds = slices.Select(s => s.JobId).Distinct().ToList();
-            var typicalDurations = diagnostics.GetTypicalSuccessfulDurationsByJob(jobIds, now - DurationHistoryLookback, DurationSampleCap);
+            var typicalDurations = diagnostics.GetTypicalCompletedSliceDurationsByJob(jobIds, now - DurationHistoryLookback, DurationSampleCap);
+            var chunksBySlice = chunks
+                .GroupBy(chunk => (chunk.JobId, chunk.SliceStartUtc, chunk.SliceEndUtc))
+                .ToDictionary(group => group.Key, group => group.OrderBy(chunk => chunk.ChunkId).ToArray());
 
             var views = new List<RunningSliceView>(slices.Count);
             foreach (var slice in slices)
             {
-                var startedAt = slice.StartedAtUtc ?? slice.UpdatedAtUtc;
+                chunksBySlice.TryGetValue((slice.JobId, slice.SliceStartUtc, slice.SliceEndUtc), out var sliceChunks);
+                sliceChunks ??= [];
+                var runningChunkRows = sliceChunks
+                    .Where(chunk => string.Equals(chunk.State, "Running", StringComparison.Ordinal))
+                    .ToArray();
+                IReadOnlyList<RunningExecutionView> runningExecutions = slice.TotalChunks is null
+                    ?
+                    [
+                        new RunningExecutionView(
+                            null,
+                            null,
+                            slice.Attempt,
+                            slice.LeaseOwner,
+                            slice.StartedAtUtc ?? slice.UpdatedAtUtc,
+                            slice.LeaseExpiresAtUtc,
+                            slice.LeaseExpired)
+                    ]
+                    : runningChunkRows.Select(chunk => new RunningExecutionView(
+                        chunk.ChunkId,
+                        chunk.TotalChunks,
+                        chunk.Attempt,
+                        chunk.WorkerId,
+                        chunk.StartedAtUtc ?? chunk.UpdatedAtUtc,
+                        chunk.LeaseExpiresAtUtc,
+                        chunk.LeaseExpired)).ToArray();
+                var startedAt = runningExecutions.Count > 0
+                    ? runningExecutions.Min(execution => execution.StartedAtUtc)
+                    : slice.StartedAtUtc ?? slice.UpdatedAtUtc;
                 DateTimeOffset? eta = typicalDurations.TryGetValue(slice.JobId, out var median)
                     ? startedAt + median
                     : null;
-                views.Add(new RunningSliceView(slice, startedAt, eta));
+                views.Add(new RunningSliceView(
+                    slice,
+                    startedAt,
+                    eta,
+                    slice.TotalChunks,
+                    sliceChunks.Count(chunk => string.Equals(chunk.State, "Completed", StringComparison.Ordinal)),
+                    runningChunkRows.Length,
+                    sliceChunks.Count(chunk => string.Equals(chunk.State, "Queued", StringComparison.Ordinal)),
+                    sliceChunks.Count(chunk => string.Equals(chunk.State, "Failed", StringComparison.Ordinal)),
+                    sliceChunks.Count(chunk => string.Equals(chunk.State, "DeadLettered", StringComparison.Ordinal)),
+                    sliceChunks.Count(chunk => string.Equals(chunk.State, "Missing", StringComparison.Ordinal)),
+                    runningExecutions));
             }
 
             return views;
         }
 
-        // Succeeded vs. failed/dead-lettered attempt completions for the trailing 1d/7d/30d windows in
-        // a single pass. The outer WHERE bounds the scan to the widest (30d) window.
+        // Succeeded vs. failed/dead-lettered logical outcomes for the trailing 1d/7d/30d windows in a
+        // single pass. The outer WHERE bounds the scan to the widest (30d) window.
         private (ProcessedTotals LastDay, ProcessedTotals Last7Days, ProcessedTotals Last30Days) ReadWindowedTotals(DateTimeOffset now)
         {
             using var c = connectionFactory.OpenConnection();

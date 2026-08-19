@@ -192,6 +192,8 @@ namespace KoLite.Local.Sqlite.Tests
                 "ix_repair_slices_enqueued_queue_item",
                 "ix_work_queue_slice_chunk",
                 "ix_slice_attempts_slice_chunk",
+                "ix_current_slice_chunk_state_running_global",
+                "ix_work_queue_queued_global",
             };
 
             foreach (var index in expectedIndexes)
@@ -204,6 +206,20 @@ namespace KoLite.Local.Sqlite.Tests
             Assert.Equal(1, QueryInt(connection, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'ux_job_definitions_activity_id';"));
             Assert.Equal(1, QueryInt(connection, "SELECT COUNT(*) FROM pragma_table_info('work_queue') WHERE name = 'chunk_id';"));
             Assert.Equal(1, QueryInt(connection, "SELECT COUNT(*) FROM pragma_table_info('slice_attempts') WHERE name = 'total_chunks';"));
+        }
+
+        [Fact]
+        public void ActivityExecutionCountsUseGlobalStateIndexes()
+        {
+            var factory = CreateFactory();
+            new KoLiteSqliteSchema(factory).EnsureSchema();
+
+            using var connection = factory.OpenConnection();
+            var chunkPlan = QueryPlan(connection, "SELECT COUNT(*) FROM current_slice_chunk_state WHERE state='Running';");
+            var queuePlan = QueryPlan(connection, "SELECT COUNT(*) FROM work_queue WHERE state='Queued';");
+
+            Assert.Contains("ix_current_slice_chunk_state_running_global", chunkPlan, StringComparison.Ordinal);
+            Assert.Contains("ix_work_queue_queued_global", queuePlan, StringComparison.Ordinal);
         }
 
         [Fact]
@@ -303,6 +319,20 @@ namespace KoLite.Local.Sqlite.Tests
         private static string QueryString(SqliteConnection connection, string sql, params (string Name, object Value)[] parameters)
         {
             return Convert.ToString(QueryScalar(connection, sql, parameters)) ?? string.Empty;
+        }
+
+        private static string QueryPlan(SqliteConnection connection, string sql)
+        {
+            using var command = connection.CreateCommand();
+            command.CommandText = "EXPLAIN QUERY PLAN " + sql;
+            using var reader = command.ExecuteReader();
+            var details = new List<string>();
+            while (reader.Read())
+            {
+                details.Add(reader.GetString(3));
+            }
+
+            return string.Join(Environment.NewLine, details);
         }
 
         private static void ExecuteNonQuery(SqliteConnection connection, string sql)

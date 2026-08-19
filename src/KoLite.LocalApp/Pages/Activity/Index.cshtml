@@ -19,7 +19,7 @@
 <div class="page-heading">
     <div>
         <h1>Activity</h1>
-        <p class="muted">How much work is flowing through KO Lite. A job runs many <strong>slices</strong> (time windows); these counts are slices, not jobs.</p>
+        <p class="muted">How much work is flowing through KO Lite. Logical slices are time windows; execution units are chunks for chunked jobs and slices otherwise.</p>
     </div>
     <div class="button-row">
         <a class="btn" href="/activity?range=@Model.Range">Refresh</a>
@@ -29,20 +29,30 @@
 <section class="card section-block">
     <div class="card-header"><h2>Running now</h2></div>
     <div class="activity-metrics">
-        <div class="stat-card">
-            <span class="stat-label">Running</span>
+        <div class="stat-card" data-activity-metric="logical-running">
+            <span class="stat-label">Logical slices running</span>
             <span class="activity-metric-value">@running.RunningCount.ToString("N0", ci)</span>
-            <span class="muted">slice(s) executing</span>
+            <span class="muted">time window(s) executing</span>
         </div>
-        <div class="stat-card">
-            <span class="stat-label">Queued</span>
+        <div class="stat-card" data-activity-metric="logical-queued">
+            <span class="stat-label">Logical slices queued</span>
             <span class="activity-metric-value">@running.QueuedCount.ToString("N0", ci)</span>
-            <span class="muted">slice(s) waiting to be claimed</span>
+            <span class="muted">time window(s) waiting</span>
+        </div>
+        <div class="stat-card" data-activity-metric="execution-running">
+            <span class="stat-label">Executions running</span>
+            <span class="activity-metric-value">@running.RunningExecutionCount.ToString("N0", ci)</span>
+            <span class="muted">chunk(s) or unchunked slice(s)</span>
+        </div>
+        <div class="stat-card" data-activity-metric="execution-queued">
+            <span class="stat-label">Executions queued/retry-pending</span>
+            <span class="activity-metric-value">@running.QueuedExecutionCount.ToString("N0", ci)</span>
+            <span class="muted">durable queue row(s)</span>
         </div>
     </div>
     @if (running.RunningSlices.Count == 0)
     {
-        <p class="empty">No slices are executing right now.</p>
+        <p class="empty">No logical slices are executing right now.</p>
     }
     else
     {
@@ -52,8 +62,9 @@
                     <tr>
                         <th>Job</th>
                         <th>Slice</th>
-                        <th>Attempt</th>
-                        <th>Worker</th>
+                        <th>Progress</th>
+                        <th>Running executions</th>
+                        <th>Highest attempt</th>
                         <th>Started (local)</th>
                         <th>ETA (local)</th>
                     </tr>
@@ -62,15 +73,44 @@
                     @foreach (var view in running.RunningSlices)
                     {
                         var slice = view.Slice;
-                        <tr>
+                        <tr data-activity-job-id="@slice.JobId">
                             <td><a href="/jobs/@Uri.EscapeDataString(slice.JobId)">@slice.ActivityId</a></td>
                             <td>
                                 <a href="/jobs/@Uri.EscapeDataString(slice.JobId)/slices?start=@Uri.EscapeDataString(AppFormatting.Iso(slice.SliceStartUtc))&amp;end=@Uri.EscapeDataString(AppFormatting.Iso(slice.SliceEndUtc))">
                                     @AppFormatting.Local(slice.SliceStartUtc) &ndash; @AppFormatting.Local(slice.SliceEndUtc)
                                 </a>
                             </td>
+                            <td>
+                                @if (view.TotalChunks is { } totalChunks)
+                                {
+                                    <strong data-chunk-progress="@slice.JobId">@view.CompletedChunks/@totalChunks completed</strong>
+                                    <div class="activity-progress-badges">
+                                        @if (view.RunningChunks > 0) { <span class="badge badge-info">@view.RunningChunks running</span> }
+                                        @if (view.QueuedChunks > 0) { <span class="badge badge-neutral">@view.QueuedChunks queued</span> }
+                                        @if (view.FailedChunks > 0) { <span class="badge badge-warning">@view.FailedChunks retry-pending</span> }
+                                        @if (view.DeadLetteredChunks > 0) { <span class="badge badge-danger">@view.DeadLetteredChunks dead-lettered</span> }
+                                        @if (view.MissingChunks > 0) { <span class="badge badge-neutral">@view.MissingChunks not released</span> }
+                                    </div>
+                                }
+                                else
+                                {
+                                    <span class="muted">Unchunked</span>
+                                }
+                            </td>
+                            <td>
+                                @foreach (var execution in view.RunningExecutions)
+                                {
+                                    <div class="activity-execution-line" data-running-chunk-id="@execution.ChunkId">
+                                        <strong>@(execution.ChunkId is { } chunkId && execution.TotalChunks is { } chunks ? $"Chunk {chunkId}/{chunks}" : "Execution")</strong>
+                                        <span> &mdash; @(execution.WorkerId ?? "No worker")</span>
+                                        @if (execution.LeaseExpired)
+                                        {
+                                            <span class="badge badge-warning">expired lease</span>
+                                        }
+                                    </div>
+                                }
+                            </td>
                             <td>@slice.Attempt</td>
-                            <td>@(slice.LeaseOwner ?? "—")</td>
                             <td>
                                 @AppFormatting.LocalNoZone(view.StartedAtUtc)
                                 <span class="muted activity-relative">@AppFormatting.RelativeToNow(view.StartedAtUtc, data.GeneratedAtUtc)</span>
@@ -93,7 +133,7 @@
         </div>
         @if (running.RunningCount > running.RunningSlices.Count)
         {
-            <p class="muted">Showing @running.RunningSlices.Count of @running.RunningCount.ToString("N0", ci) running slice(s).</p>
+            <p class="muted">Showing @running.RunningSlices.Count of @running.RunningCount.ToString("N0", ci) running logical slice(s).</p>
         }
     }
 </section>
@@ -102,7 +142,7 @@
     <div class="card-header">
         <div>
             <h2>Slices processed</h2>
-            <p class="muted chart-help">Succeeded vs. failed/dead-lettered. The last day/7 days/30 days windows count attempt completions; all time reflects each slice's current outcome.</p>
+            <p class="muted chart-help">Succeeded vs. failed/dead-lettered logical slice outcomes. Chunk executions are aggregated into one outcome per time window.</p>
         </div>
     </div>
     <div class="summary-grid">
@@ -124,7 +164,7 @@
     <div class="card-header">
         <div>
             <h2>Processed over time</h2>
-            <p class="muted chart-help">Slice attempt completions per interval, succeeded vs. failed/dead-lettered.</p>
+            <p class="muted chart-help">Logical slice completions per interval, succeeded vs. failed/dead-lettered.</p>
         </div>
         <div class="range-picker">
             @foreach (var range in Model.RangeLinks)

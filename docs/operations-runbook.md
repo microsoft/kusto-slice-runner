@@ -318,11 +318,34 @@ The **Job details** page (`/jobs/{jobId}`) shows a catch-up estimate card above 
 
 ## Activity page
 
-The **Activity** page (`/activity`, linked in the top nav) answers "how much work is flowing through KO Lite right now and over time?". A job runs many *slices* (time windows), so every figure on this page counts **slices**, not jobs.
+The **Activity** page (`/activity`, linked in the top nav) answers "how much work is flowing through
+KO Lite right now and over time?". It distinguishes a logical **slice** (one time window) from an
+**execution unit** (one chunk for a chunked job, or the slice itself for an unchunked job).
 
-- **Running now.** How many slices are executing this instant, the number of queued slices waiting to be claimed, and a table of the in-flight slices (job, slice window, attempt, worker, **started**, **ETA**, lease). Sourced from `current_slice_state`, so it reflects live state regardless of retention. **Started** is the wall-clock time the running attempt began (from its `slice_attempts` row; it falls back to the slice's last state change if no attempt row is recorded yet). **ETA** projects the finish as *started + the median duration of that job's recent successful runs*; a job with no successful history yet shows "No history yet", and a slice already running longer than usual simply shows an ETA in the past. Both columns show an absolute local time with a relative hint (e.g. "~5 min ago", "in ~10 min"), computed against the snapshot time, so **Refresh** to re-evaluate.
-- **Slices processed.** Succeeded vs. failed/dead-lettered totals for the **last day**, **last 7 days**, **last 30 days**, and **all time**. The trailing-window totals (and the chart) count attempt completions in `slice_attempts`; retention keeps that table for at least 30 days, so the windows are always whole. The **all time** card instead reflects each slice's *current* outcome from the never-pruned `current_slice_state` (Completed = succeeded; Failed + DeadLettered = failed), so it stays accurate for the full history of the app even after old attempt rows are pruned.
-- **Processed over time.** A throughput chart of attempt completions per interval, split into succeeded and failed/dead-lettered, over a selectable range (1 hour / 1 day / 7 days / 30 days). The page is read-only; **Refresh** simply re-reads current state.
+- **Running now counts.** **Logical slices running/queued** count parent time windows, so four running
+  chunks in one window contribute one running logical slice. **Executions running** counts active
+  chunks plus active unchunked slices. **Executions queued/retry-pending** counts durable queued work
+  rows; a paused job's queued work remains counted even though workers will not claim it. Missing
+  chunks that have not been released to the queue are not queued executions.
+- **Running logical-slice table.** The table stays at one row per running logical window. A chunked row
+  shows completed/total progress, exceptional child-state badges, and every running raw 0-based chunk
+  ID with its worker. An expired child lease is flagged inline. **Highest attempt** is the maximum
+  child attempt. **Started** is the earliest active child start (or the parent state-change fallback
+  when attempt detail is unavailable); an unchunked row continues to show its single execution and
+  worker. The table is capped at 100 logical rows, while headline counts remain exact.
+- **ETA.** ETA is *earliest active start + the median of that job's recent successful whole-window
+  durations*. A whole-window sample runs from its earliest attempt start, including automatic retry
+  time, until every configured chunk succeeds. Manually repaired windows are excluded because
+  operator delay would distort the sample. A job with no usable history shows **No history yet**.
+- **Slices processed.** Succeeded vs. failed/dead-lettered totals for the **last day**, **last 7
+  days**, **last 30 days**, and **all time** remain logical-window metrics: 16 successful chunks
+  contribute one succeeded slice. Trailing totals and the chart group retained `slice_attempts` into
+  one logical outcome per window; the latest terminal execution completion places that outcome in a
+  time window or chart bucket. The **all time** card instead reads each parent slice's current outcome
+  from never-pruned `current_slice_state`, so it remains accurate after old attempts are pruned.
+- **Processed over time.** The chart shows logical slice outcomes per interval, split into succeeded
+  and failed/dead-lettered, over 1 hour / 1 day / 7 days / 30 days. **Refresh** re-reads the read-only
+  snapshot and recalculates relative times and ETAs.
 
 ## Ingestion throttling advisor
 

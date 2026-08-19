@@ -19,7 +19,28 @@ namespace KoLite.Local.Sqlite.Observability
         DateTimeOffset UpdatedAtUtc,
         // Wall-clock start of the in-flight attempt (slice_attempts row with status='Started' and no
         // completion yet). Null when no such attempt row exists (e.g. a stalled/older running slice).
+        DateTimeOffset? StartedAtUtc,
+        int? TotalChunks = null);
+
+    public sealed record ActivityExecutionCounts(int Running, int Queued);
+
+    public sealed record RunningChunkExecutionReadout(
+        string JobId,
+        DateTimeOffset SliceStartUtc,
+        DateTimeOffset SliceEndUtc,
+        int ChunkId,
+        int TotalChunks,
+        string State,
+        int Attempt,
+        string? WorkerId,
+        DateTimeOffset? LeaseExpiresAtUtc,
+        bool LeaseExpired,
+        DateTimeOffset UpdatedAtUtc,
         DateTimeOffset? StartedAtUtc);
+
+    public sealed record ActivityRunningSnapshot(
+        IReadOnlyList<RunningSliceReadout> Slices,
+        IReadOnlyList<RunningChunkExecutionReadout> ChunkExecutions);
 
     public sealed record SliceStateReadout(
         string JobId,
@@ -116,7 +137,8 @@ namespace KoLite.Local.Sqlite.Observability
                            AND sa.slice_start_utc = css.slice_start_utc
                            AND sa.slice_end_utc = css.slice_end_utc
                            AND sa.status = 'Started'
-                           AND sa.completed_at_utc IS NULL) AS started_running_at_utc
+                           AND sa.completed_at_utc IS NULL) AS started_running_at_utc,
+                       json_extract(jd.schedule_json, '$.chunks') AS total_chunks
                 FROM current_slice_state css
                 JOIN job_definitions jd ON jd.job_id = css.job_id
                 WHERE css.state = 'Running' AND ($jobId IS NULL OR css.job_id = $jobId)
@@ -142,10 +164,160 @@ namespace KoLite.Local.Sqlite.Observability
                     r.IsDBNull(7) ? null : r.GetString(7),
                     r.IsDBNull(8) ? null : r.GetString(8),
                     SqliteStorage.ReadUtc(r, "updated_at_utc"),
-                    SqliteStorage.ReadNullableUtc(r, "started_running_at_utc")));
+                    SqliteStorage.ReadNullableUtc(r, "started_running_at_utc"),
+                    r.IsDBNull(r.GetOrdinal("total_chunks")) ? null : r.GetInt32(r.GetOrdinal("total_chunks"))));
             }
 
             return results;
+        }
+
+        public ActivityExecutionCounts GetActivityExecutionCounts()
+        {
+            using var c = connectionFactory.OpenConnection();
+            using var cmd = SqliteStorage.Command(c, null, """
+                SELECT
+                    (
+                        SELECT COUNT(*)
+                        FROM current_slice_chunk_state child
+                        WHERE child.state='Running'
+                    )
+                    +
+                    (
+                        SELECT COUNT(*)
+                        FROM current_slice_state parent
+                        JOIN job_definitions jd ON jd.job_id=parent.job_id
+                        WHERE parent.state='Running'
+                          AND json_extract(jd.schedule_json, '$.chunks') IS NULL
+                    ) AS running_executions,
+                    (
+                        SELECT COUNT(*)
+                        FROM work_queue
+                        WHERE state='Queued'
+                    ) AS queued_executions;
+                """);
+            using var reader = cmd.ExecuteReader();
+            reader.Read();
+            return new ActivityExecutionCounts(reader.GetInt32(0), reader.GetInt32(1));
+        }
+
+        public ActivityRunningSnapshot GetRunningActivitySnapshot(DateTimeOffset nowUtc, int take)
+        {
+            using var c = connectionFactory.OpenConnection();
+            using var cmd = SqliteStorage.Command(c, null, """
+                WITH running_parents AS (
+                    SELECT css.job_id,
+                           jd.activity_id,
+                           css.slice_start_utc,
+                           css.slice_end_utc,
+                           css.attempt,
+                           css.lease_owner,
+                           css.lease_expires_at_utc,
+                           css.last_error_code,
+                           css.last_error_message,
+                           css.updated_at_utc,
+                           (
+                               SELECT MAX(sa.started_at_utc)
+                               FROM slice_attempts sa
+                               WHERE sa.job_id=css.job_id
+                                 AND sa.slice_start_utc=css.slice_start_utc
+                                 AND sa.slice_end_utc=css.slice_end_utc
+                                 AND sa.status='Started'
+                                 AND sa.completed_at_utc IS NULL
+                           ) AS started_running_at_utc,
+                           json_extract(jd.schedule_json, '$.chunks') AS total_chunks
+                    FROM current_slice_state css
+                    JOIN job_definitions jd ON jd.job_id=css.job_id
+                    WHERE css.state='Running'
+                    ORDER BY css.updated_at_utc ASC,css.slice_start_utc ASC,css.job_id ASC
+                    LIMIT $take
+                )
+                SELECT parent.job_id,
+                       parent.activity_id,
+                       parent.slice_start_utc,
+                       parent.slice_end_utc,
+                       parent.attempt,
+                       parent.lease_owner,
+                       parent.lease_expires_at_utc,
+                       parent.last_error_code,
+                       parent.last_error_message,
+                       parent.updated_at_utc,
+                       parent.started_running_at_utc,
+                       parent.total_chunks,
+                       child.chunk_id AS child_chunk_id,
+                       child.total_chunks AS child_total_chunks,
+                       child.state AS child_state,
+                       child.attempt AS child_attempt,
+                       child.lease_owner AS child_lease_owner,
+                       child.lease_expires_at_utc AS child_lease_expires_at_utc,
+                       child.updated_at_utc AS child_updated_at_utc,
+                       (
+                           SELECT MAX(sa.started_at_utc)
+                           FROM slice_attempts sa
+                           WHERE sa.job_id=child.job_id
+                             AND sa.slice_start_utc=child.slice_start_utc
+                             AND sa.slice_end_utc=child.slice_end_utc
+                             AND sa.chunk_id=child.chunk_id
+                             AND sa.attempt=child.attempt
+                             AND sa.status='Started'
+                             AND sa.completed_at_utc IS NULL
+                       ) AS child_started_running_at_utc
+                FROM running_parents parent
+                LEFT JOIN current_slice_chunk_state child
+                  ON child.job_id=parent.job_id
+                 AND child.slice_start_utc=parent.slice_start_utc
+                 AND child.slice_end_utc=parent.slice_end_utc
+                ORDER BY parent.updated_at_utc,parent.slice_start_utc,parent.job_id,child.chunk_id;
+                """);
+            cmd.Add("$take", Math.Max(1, take));
+            using var reader = cmd.ExecuteReader();
+            var slices = new List<RunningSliceReadout>();
+            var chunks = new List<RunningChunkExecutionReadout>();
+            var seenSlices = new HashSet<(string JobId, string Start, string End)>();
+            var now = nowUtc.ToUniversalTime();
+            while (reader.Read())
+            {
+                var key = (reader.GetString(0), reader.GetString(2), reader.GetString(3));
+                if (seenSlices.Add(key))
+                {
+                    var leaseExpires = SqliteStorage.ReadNullableUtc(reader, "lease_expires_at_utc");
+                    slices.Add(new RunningSliceReadout(
+                        key.Item1,
+                        reader.GetString(1),
+                        SqliteStorage.ReadUtc(reader, "slice_start_utc"),
+                        SqliteStorage.ReadUtc(reader, "slice_end_utc"),
+                        reader.GetInt32(4),
+                        reader.IsDBNull(5) ? null : reader.GetString(5),
+                        leaseExpires,
+                        leaseExpires is not null && leaseExpires.Value <= now,
+                        reader.IsDBNull(7) ? null : reader.GetString(7),
+                        reader.IsDBNull(8) ? null : reader.GetString(8),
+                        SqliteStorage.ReadUtc(reader, "updated_at_utc"),
+                        SqliteStorage.ReadNullableUtc(reader, "started_running_at_utc"),
+                        reader.IsDBNull(11) ? null : reader.GetInt32(11)));
+                }
+
+                if (reader.IsDBNull(12))
+                {
+                    continue;
+                }
+
+                var childLeaseExpires = SqliteStorage.ReadNullableUtc(reader, "child_lease_expires_at_utc");
+                chunks.Add(new RunningChunkExecutionReadout(
+                    key.Item1,
+                    SqliteStorage.ReadUtc(reader, "slice_start_utc"),
+                    SqliteStorage.ReadUtc(reader, "slice_end_utc"),
+                    reader.GetInt32(12),
+                    reader.GetInt32(13),
+                    reader.GetString(14),
+                    reader.GetInt32(15),
+                    reader.IsDBNull(16) ? null : reader.GetString(16),
+                    childLeaseExpires,
+                    childLeaseExpires is not null && childLeaseExpires.Value <= now,
+                    SqliteStorage.ReadUtc(reader, "child_updated_at_utc"),
+                    SqliteStorage.ReadNullableUtc(reader, "child_started_running_at_utc")));
+            }
+
+            return new ActivityRunningSnapshot(slices, chunks);
         }
 
         // Typical (median) wall-clock duration of recent successful attempts, per job, for the given
@@ -234,6 +406,124 @@ namespace KoLite.Local.Sqlite.Observability
                     continue;
                 }
 
+                samples.Sort();
+                result[jobId] = MedianDuration(samples);
+            }
+
+            return result;
+        }
+
+        // Median wall-clock duration of recent fully successful logical windows. Chunked samples run
+        // from the earliest attempt start through the final required chunk success, include automatic
+        // retries, and exclude manually repaired windows whose operator delay would skew the ETA.
+        public IReadOnlyDictionary<string, TimeSpan> GetTypicalCompletedSliceDurationsByJob(
+            IReadOnlyCollection<string> jobIds,
+            DateTimeOffset sinceUtc,
+            int perJobSampleCap)
+        {
+            var result = new Dictionary<string, TimeSpan>();
+            if (jobIds.Count == 0 || perJobSampleCap <= 0)
+            {
+                return result;
+            }
+
+            var distinctJobIds = jobIds.Distinct().ToList();
+            var placeholders = new string[distinctJobIds.Count];
+            for (var i = 0; i < distinctJobIds.Count; i++)
+            {
+                placeholders[i] = "$logical" + i.ToString(CultureInfo.InvariantCulture);
+            }
+
+            var inClause = string.Join(", ", placeholders);
+            using var c = connectionFactory.OpenConnection();
+            using var cmd = SqliteStorage.Command(c, null, $"""
+                WITH eligible_windows AS (
+                    SELECT css.job_id,
+                           css.slice_start_utc,
+                           css.slice_end_utc,
+                           css.updated_at_utc AS latest_success_utc
+                    FROM current_slice_state css
+                    WHERE css.state='Completed'
+                      AND css.updated_at_utc >= $since
+                      AND css.job_id IN ({inClause})
+                      AND NOT EXISTS (
+                          SELECT 1
+                          FROM repair_slices repaired
+                          WHERE repaired.job_id=css.job_id
+                            AND repaired.slice_start_utc=css.slice_start_utc
+                            AND repaired.slice_end_utc=css.slice_end_utc
+                            AND repaired.status IN ('Queued','Completed','Failed')
+                      )
+                ),
+                recent_candidates AS (
+                    SELECT job_id,slice_start_utc,slice_end_utc
+                    FROM (
+                        SELECT job_id,
+                               slice_start_utc,
+                               slice_end_utc,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY job_id
+                                   ORDER BY latest_success_utc DESC,slice_start_utc DESC,slice_end_utc DESC
+                               ) AS rn
+                        FROM eligible_windows
+                    )
+                    WHERE rn <= $cap
+                ),
+                completed_windows AS (
+                    SELECT sa.job_id,
+                           sa.slice_start_utc,
+                           sa.slice_end_utc,
+                           MIN(sa.started_at_utc) AS first_started_at_utc,
+                           MAX(CASE WHEN sa.status='Succeeded' THEN sa.completed_at_utc END) AS final_completed_at_utc,
+                           COALESCE(json_extract(jd.schedule_json, '$.chunks'), 1) AS expected_executions,
+                           COUNT(DISTINCT CASE WHEN sa.status='Succeeded' THEN COALESCE(sa.chunk_id, -1) END) AS succeeded_executions
+                    FROM slice_attempts sa
+                    JOIN recent_candidates candidate
+                      ON candidate.job_id=sa.job_id
+                     AND candidate.slice_start_utc=sa.slice_start_utc
+                     AND candidate.slice_end_utc=sa.slice_end_utc
+                    JOIN job_definitions jd ON jd.job_id=sa.job_id
+                    WHERE sa.started_at_utc IS NOT NULL
+                    GROUP BY sa.job_id,sa.slice_start_utc,sa.slice_end_utc
+                    HAVING succeeded_executions >= expected_executions
+                )
+                SELECT job_id,first_started_at_utc,final_completed_at_utc
+                FROM completed_windows
+                WHERE final_completed_at_utc >= $since;
+                """);
+            cmd.Add("$since", SqliteStorage.Utc(sinceUtc));
+            cmd.Add("$cap", perJobSampleCap);
+            for (var i = 0; i < distinctJobIds.Count; i++)
+            {
+                cmd.Add(placeholders[i], distinctJobIds[i]);
+            }
+
+            var samplesByJob = new Dictionary<string, List<double>>();
+            using (var reader = cmd.ExecuteReader())
+            {
+                while (reader.Read())
+                {
+                    var started = SqliteStorage.ReadUtc(reader, "first_started_at_utc");
+                    var completed = SqliteStorage.ReadUtc(reader, "final_completed_at_utc");
+                    var elapsed = (completed - started).TotalSeconds;
+                    if (elapsed <= 0)
+                    {
+                        continue;
+                    }
+
+                    var jobId = reader.GetString(0);
+                    if (!samplesByJob.TryGetValue(jobId, out var samples))
+                    {
+                        samples = new List<double>();
+                        samplesByJob[jobId] = samples;
+                    }
+
+                    samples.Add(elapsed);
+                }
+            }
+
+            foreach (var (jobId, samples) in samplesByJob)
+            {
                 samples.Sort();
                 result[jobId] = MedianDuration(samples);
             }

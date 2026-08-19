@@ -3,6 +3,7 @@ using KoLite.Local.Sqlite.Connections;
 using KoLite.Local.Sqlite.Schema;
 using KoLite.Local.Sqlite.Observability;
 using KoLite.Local.Sqlite.State;
+using KoLite.Local.Core.Scheduling;
 using Microsoft.Data.Sqlite;
 
 namespace KoLite.Local.Sqlite.Tests
@@ -13,6 +14,7 @@ namespace KoLite.Local.Sqlite.Tests
         private readonly KoLiteSqliteConnectionFactory factory;
         private readonly SqliteJobCatalogRepository catalog;
         private readonly SqliteSliceStateRepository state;
+        private readonly SqliteChunkStateRepository chunkState;
         private readonly SqliteOperationalReadModelRepository observability;
         private readonly SqliteDiagnosticsReadModelRepository diagnostics;
 
@@ -23,6 +25,7 @@ namespace KoLite.Local.Sqlite.Tests
             new KoLiteSqliteSchema(factory).EnsureSchema();
             catalog = new SqliteJobCatalogRepository(factory);
             state = new SqliteSliceStateRepository(factory);
+            chunkState = new SqliteChunkStateRepository(factory);
             observability = new SqliteOperationalReadModelRepository(factory);
             diagnostics = new SqliteDiagnosticsReadModelRepository(factory);
         }
@@ -72,6 +75,28 @@ namespace KoLite.Local.Sqlite.Tests
         }
 
         [Fact]
+        public void GetRunningActivitySnapshot_uses_one_capped_parent_set()
+        {
+            var first = catalog.Create(Schedule("run.chunk.first", chunks: 2, maxParallelism: 2));
+            var second = catalog.Create(Schedule("run.chunk.second", chunks: 2, maxParallelism: 2));
+            var firstSlice = new SliceRange(first.JobId, At(0), At(5));
+            var secondSlice = new SliceRange(second.JobId, At(0), At(5));
+            var firstChild = chunkState.EnsureWindow(firstSlice, 2, "test")[0];
+            var secondChild = chunkState.EnsureWindow(secondSlice, 2, "test")[0];
+            chunkState.MarkQueued("first-queued", firstChild.Execution, actor: "test");
+            chunkState.MarkQueued("second-queued", secondChild.Execution, actor: "test");
+            chunkState.AcquireLease("first-lease", firstChild.Execution, "worker-first", TimeSpan.FromMinutes(30), At(10));
+            chunkState.AcquireLease("second-lease", secondChild.Execution, "worker-second", TimeSpan.FromMinutes(30), At(11));
+
+            var snapshot = diagnostics.GetRunningActivitySnapshot(At(20), take: 1);
+
+            Assert.Equal(first.JobId, Assert.Single(snapshot.Slices).JobId);
+            Assert.All(snapshot.ChunkExecutions, execution => Assert.Equal(first.JobId, execution.JobId));
+            Assert.Contains(snapshot.ChunkExecutions, execution => execution.ChunkId == 0 && execution.WorkerId == "worker-first");
+            Assert.DoesNotContain(snapshot.ChunkExecutions, execution => execution.JobId == second.JobId);
+        }
+
+        [Fact]
         public void GetTypicalSuccessfulDurationsByJob_returns_median_of_recent_successes()
         {
             catalog.Create(Schedule("dur.a"));
@@ -114,6 +139,45 @@ namespace KoLite.Local.Sqlite.Tests
             // cap=1 keeps only the newest success (4 min); the full set medians 4 and 30 -> 17 min.
             Assert.Equal(TimeSpan.FromMinutes(4), diagnostics.GetTypicalSuccessfulDurationsByJob(jobIds, since, perJobSampleCap: 1)[JobId("dur.cap")]);
             Assert.Equal(TimeSpan.FromMinutes(17), diagnostics.GetTypicalSuccessfulDurationsByJob(jobIds, since, perJobSampleCap: 50)[JobId("dur.cap")]);
+        }
+
+        [Fact]
+        public void GetTypicalCompletedSliceDurationsByJob_measures_whole_chunked_window_with_retry()
+        {
+            catalog.Create(Schedule("dur.chunks", chunks: 2, maxParallelism: 2));
+            var jobId = JobId("dur.chunks");
+            var start = At(0);
+            var end = At(5);
+            var firstStarted = DateTimeOffset.UtcNow.AddHours(-1);
+            state.Append("dur-chunks-completed", jobId, start, end, DurableSliceStatus.Completed, expectedVersion: 0);
+            observability.RecordAttempt("chunk-0-success", jobId, start, end, 1, "Succeeded", "worker-0", firstStarted, firstStarted.AddMinutes(4), chunkId: 0, totalChunks: 2);
+            observability.RecordAttempt("chunk-1-failed", jobId, start, end, 1, "FailedRetryable", "worker-1", firstStarted.AddMinutes(1), firstStarted.AddMinutes(3), chunkId: 1, totalChunks: 2);
+            observability.RecordAttempt("chunk-1-success", jobId, start, end, 2, "Succeeded", "worker-1", firstStarted.AddMinutes(5), firstStarted.AddMinutes(10), chunkId: 1, totalChunks: 2);
+
+            var result = diagnostics.GetTypicalCompletedSliceDurationsByJob(
+                [jobId],
+                DateTimeOffset.UtcNow.AddDays(-1),
+                perJobSampleCap: 50);
+
+            Assert.Equal(TimeSpan.FromMinutes(10), result[jobId]);
+        }
+
+        [Fact]
+        public void GetTypicalCompletedSliceDurationsByJob_caps_candidates_before_loading_attempt_histories()
+        {
+            catalog.Create(Schedule("dur.logical.cap"));
+            var since = DateTimeOffset.UtcNow.AddDays(-1);
+            var anchor = DateTimeOffset.UtcNow.AddHours(-1);
+            SeedSuccessAttempt("dur.logical.cap", At(0), anchor.AddMinutes(-30), TimeSpan.FromMinutes(30));
+            SeedSuccessAttempt("dur.logical.cap", At(5), anchor.AddMinutes(-5), TimeSpan.FromMinutes(4));
+            var jobId = JobId("dur.logical.cap");
+
+            Assert.Equal(
+                TimeSpan.FromMinutes(4),
+                diagnostics.GetTypicalCompletedSliceDurationsByJob([jobId], since, perJobSampleCap: 1)[jobId]);
+            Assert.Equal(
+                TimeSpan.FromMinutes(17),
+                diagnostics.GetTypicalCompletedSliceDurationsByJob([jobId], since, perJobSampleCap: 50)[jobId]);
         }
 
         [Fact]
@@ -203,7 +267,7 @@ namespace KoLite.Local.Sqlite.Tests
             return new Guid(bytes).ToString("N");
         }
 
-        private static string Schedule(string activityId) =>
+        private static string Schedule(string activityId, int? chunks = null, int maxParallelism = 1) =>
             "{\n" +
             $"  \"id\": \"{JobId(activityId)}\",\n" +
             $"  \"activityId\": \"{activityId}\",\n" +
@@ -211,8 +275,9 @@ namespace KoLite.Local.Sqlite.Tests
             "  \"outputTable\": \"Output\",\n" +
             "  \"queryWindowSize\": \"00:05:00\",\n" +
             "  \"delayFromUtcNow\": \"00:00:00\",\n" +
-            "  \"maxParallelism\": 1,\n" +
+            $"  \"maxParallelism\": {maxParallelism},\n" +
             "  \"queryTimeout\": \"00:01:00\",\n" +
+            (chunks is null ? string.Empty : $"  \"chunks\": {chunks},\n") +
             "  \"isPaused\": false,\n" +
             "  \"startFrom\": \"2026-01-01T00:00:00Z\",\n" +
             "  \"target\": { \"clusterUri\": \"https://kolite-example.invalid\", \"database\": \"DemoDb\" }\n" +
