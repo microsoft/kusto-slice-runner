@@ -6,7 +6,7 @@ KO Lite uses the following third-party JavaScript packages for dashboard assets.
 | --- | --- | --- | --- |
 | Chart.js | 4.5.1 | MIT | `package-lock.json`, `src\KoLite.LocalApp\wwwroot\lib\chartjs\chart.umd.min.js` |
 | @kurkle/color | 0.3.4 | MIT | Transitive dependency of Chart.js in `package-lock.json` |
-| Cytoscape.js | 3.34.0 | MIT | `package-lock.json`, `src\KoLite.LocalApp\wwwroot\lib\cytoscape\cytoscape.min.js` |
+| Cytoscape.js | 3.34.1 | MIT | `package-lock.json`, `src\KoLite.LocalApp\wwwroot\lib\cytoscape\cytoscape.min.js` |
 | cytoscape-dagre | 4.0.0 | MIT | `package-lock.json`, `src\KoLite.LocalApp\wwwroot\lib\cytoscape\cytoscape-dagre.js` (bundles dagre/graphlib, MIT) |
 | marked | 18.0.5 | MIT | `package-lock.json`, `src\KoLite.LocalApp\wwwroot\lib\marked\marked.umd.js` (renders the Copilot failure analysis) |
 
