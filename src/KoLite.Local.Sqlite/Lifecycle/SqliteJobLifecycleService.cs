@@ -104,6 +104,11 @@ namespace KoLite.Local.Sqlite.Lifecycle
             return updated;
         }
 
+        public void RecordTransition(string jobId, string eventType, string actor, string reason, object payload)
+        {
+            RecordLifecycle(jobId, eventType, actor, reason, payload);
+        }
+
         public HardDeleteResult HardDelete(string jobId, string confirmation, string actor, string reason)
         {
             // The confirmation phrase is the human-readable display name (the activity id shown in

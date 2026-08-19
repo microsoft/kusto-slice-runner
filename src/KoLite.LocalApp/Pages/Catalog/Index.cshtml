@@ -1,8 +1,8 @@
-@page "/catalog"
+@page "/jobs"
 @model KoLite.LocalApp.Pages.Catalog.IndexModel
 @{
     ViewData["Title"] = "Catalog";
-    var tagFilter = new TagFilterViewModel("/catalog", null, Model.Data.AvailableTags, Model.Data.SelectedTags);
+    var tagFilter = new TagFilterViewModel("/jobs", null, Model.Data.AvailableTags, Model.Data.SelectedTags);
 }
 
 <div class="page-heading">
@@ -11,8 +11,8 @@
         <p class="muted">Catalog definitions, lifecycle state, and local execution progress.</p>
     </div>
     <div class="button-row">
-        <a class="btn primary" href="/catalog/new">New job</a>
-        <a class="btn" href="/catalog/import">Import</a>
+        <a class="btn primary" href="/jobs/new">New job</a>
+        <a class="btn" href="/jobs/import">Import</a>
     </div>
 </div>
 

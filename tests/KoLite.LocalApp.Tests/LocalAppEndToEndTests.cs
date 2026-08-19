@@ -62,7 +62,11 @@ namespace KoLite.LocalApp.Tests
                         ["KoLite:Retention:Enabled"] = "false"
                     });
                 });
-                builder.ConfigureServices(services => services.AddLogging(logging => logging.ClearProviders()));
+                builder.ConfigureServices(services =>
+                {
+                    services.AddLogging(logging => logging.ClearProviders());
+                    services.AddTestLocalRequestPolicy();
+                });
             });
         }
 
@@ -132,13 +136,13 @@ namespace KoLite.LocalApp.Tests
             Assert.Contains("Fake e2e failure summary", summary.SummaryMarkdown);
             Assert.Single(runner.Prompts);
 
-            var health = await client.GetStringAsync("/status/health");
+            var health = await client.GetStringAsync("/api/v1/system/status");
             using var healthJson = JsonDocument.Parse(health);
-            Assert.Equal("Healthy", healthJson.RootElement.GetProperty("status").GetString());
-            Assert.Equal(databasePath, healthJson.RootElement.GetProperty("databasePath").GetString());
-            Assert.Equal("Enabled", healthJson.RootElement.GetProperty("liveKustoExecution").GetString());
-            Assert.Equal("AzureCli", healthJson.RootElement.GetProperty("kustoAuthMode").GetString());
-            Assert.Equal("Unbounded", healthJson.RootElement.GetProperty("scheduler").GetProperty("workerConcurrency").GetString());
+            Assert.Equal("healthy", healthJson.RootElement.GetProperty("status").GetString());
+            Assert.Equal(databasePath, healthJson.RootElement.GetProperty("database").GetProperty("path").GetString());
+            Assert.Equal("enabled", healthJson.RootElement.GetProperty("kusto").GetProperty("execution").GetString());
+            Assert.Equal("AzureCli", healthJson.RootElement.GetProperty("kusto").GetProperty("authMode").GetString());
+            Assert.Equal("Unbounded", healthJson.RootElement.GetProperty("scheduler").GetProperty("maxConcurrency").GetString());
             Assert.False(healthJson.RootElement.GetProperty("scheduler").GetProperty("logEveryPass").GetBoolean());
             var workerPool = healthJson.RootElement.GetProperty("workerPool");
             Assert.Equal("Fixed", workerPool.GetProperty("mode").GetString());
@@ -159,8 +163,8 @@ namespace KoLite.LocalApp.Tests
 
         private async Task ImportSchedule(HttpClient client, string scheduleJson)
         {
-            var token = await ReadFormToken(client, "/catalog/import");
-            var response = await PostForm(client, "/catalog/import", token, new Dictionary<string, string>
+            var token = await ReadFormToken(client, "/jobs/import");
+            var response = await PostForm(client, "/jobs/import", token, new Dictionary<string, string>
             {
                 ["scheduleJson"] = scheduleJson
             });

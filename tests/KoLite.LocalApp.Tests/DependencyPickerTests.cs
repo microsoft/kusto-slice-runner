@@ -89,7 +89,7 @@ namespace KoLite.LocalApp.Tests
             catalog.Create(DownstreamSchedule("rollup.daily", "RollupFunction", JobId("ingest.hourly")));
 
             using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
-            var html = await client.GetStringAsync($"/catalog/{JobId("rollup.daily")}/edit");
+            var html = await client.GetStringAsync($"/jobs/{JobId("rollup.daily")}/edit");
 
             // The picker (not a freeform textarea) is rendered with the upstream as a selectable option.
             Assert.Contains("data-dependency-picker", html, StringComparison.Ordinal);
@@ -108,7 +108,7 @@ namespace KoLite.LocalApp.Tests
             catalog.Create(UpstreamSchedule("ingest.hourly", "IngestFunction"));
 
             using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
-            var html = await client.GetStringAsync("/catalog/new");
+            var html = await client.GetStringAsync("/jobs/new");
 
             Assert.Contains("data-dependency-picker", html, StringComparison.Ordinal);
             Assert.Contains($"<option value=\"{JobId("ingest.hourly")}\">ingest.hourly</option>", html, StringComparison.Ordinal);
@@ -122,7 +122,7 @@ namespace KoLite.LocalApp.Tests
             var downstream = catalog.Create(UpstreamSchedule("rollup.daily", "RollupFunction"));
 
             using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
-            var token = await ReadFormToken(client, $"/catalog/{downstream.JobId}/edit");
+            var token = await ReadFormToken(client, $"/jobs/{downstream.JobId}/edit");
             var version = new SqliteJobCatalogRepository(sqlite).Get(downstream.JobId)!.CatalogVersion;
 
             var form = new Dictionary<string, string>
@@ -145,7 +145,7 @@ namespace KoLite.LocalApp.Tests
                 ["Input.DependsOn"] = JobId("ingest.hourly")
             };
 
-            using var response = await PostForm(client, $"/catalog/{downstream.JobId}/update", token, form);
+            using var response = await PostForm(client, $"/jobs/{downstream.JobId}/edit", token, form);
             Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
 
             // The picked dependency round-trips through the unchanged Input.DependsOn binding and is

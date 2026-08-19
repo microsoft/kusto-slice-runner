@@ -9,8 +9,8 @@ so it cannot be read reliably from appsettings.json alone.
 
 This script reports the path that is actually in use:
 
-1. If the local app is running, it queries GET <BaseUrl>/status/health and returns the
-   authoritative 'databasePath' value the app resolved at startup.
+1. If the local app is running, it queries GET <BaseUrl>/api/v1/system/status and returns the
+   authoritative 'database.path' value the app resolved at startup.
 2. If the app is not running, it reports the default path and makes a best-effort guess at
    the most recently used database file in DatabaseRoot, flagging the likely live file by
    WAL/SHM sidecar presence and most-recent write time while ignoring backup/copy files and
@@ -48,7 +48,7 @@ $defaultPath = Join-Path (Join-Path $env:LOCALAPPDATA 'KoLite') 'ko-lite.db'
 
 if ($DryRun) {
     Write-Host 'DryRun: no request or filesystem scan is performed.'
-    Write-Host "Would query $($BaseUrl.TrimEnd('/'))/status/health for the authoritative databasePath."
+    Write-Host "Would query $($BaseUrl.TrimEnd('/'))/api/v1/system/status for the authoritative database.path."
     Write-Host "If unreachable, would report the default path and scan $DatabaseRoot for the most likely live *.db file."
     Write-Host "Default database path: $defaultPath"
     return
@@ -77,18 +77,19 @@ function Get-DatabaseFileInfo {
 # 1. Authoritative path from the running app.
 $health = $null
 try {
-    $health = Invoke-RestMethod -Method Get -Uri "$($BaseUrl.TrimEnd('/'))/status/health" -TimeoutSec 5
+    $health = Invoke-RestMethod -Method Get -Uri "$($BaseUrl.TrimEnd('/'))/api/v1/system/status" -TimeoutSec 5
 } catch {
     $health = $null
 }
 
-if ($null -ne $health -and $health.PSObject.Properties.Name -contains 'databasePath' -and -not [string]::IsNullOrWhiteSpace($health.databasePath)) {
-    $info = Get-DatabaseFileInfo -Path $health.databasePath
+if ($null -ne $health -and $null -ne $health.database -and -not [string]::IsNullOrWhiteSpace($health.database.path)) {
+    $databasePath = [string]$health.database.path
+    $info = Get-DatabaseFileInfo -Path $databasePath
     $info.Likely = $true
 
     Write-Host 'KO Lite in-use database (authoritative, from running app):'
-    Write-Host "  $($health.databasePath)"
-    Write-Host "  source     : running app /status/health ($BaseUrl)"
+    Write-Host "  $databasePath"
+    Write-Host "  source     : running app /api/v1/system/status ($BaseUrl)"
     if ($info.Exists) {
         Write-Host "  sizeBytes  : $($info.SizeBytes)"
         Write-Host "  lastWrite  : $($info.LastWriteTimeUtc.ToString('o')) (UTC)"
@@ -98,7 +99,7 @@ if ($null -ne $health -and $health.PSObject.Properties.Name -contains 'databaseP
     }
 
     return [pscustomobject]@{
-        DatabasePath = $health.databasePath
+        DatabasePath = $databasePath
         Source       = 'RunningApp'
         IsRunning    = $true
         DatabaseRoot = $DatabaseRoot

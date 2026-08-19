@@ -10,13 +10,13 @@
         <h1>KO Lite Local Dashboard</h1>
     </div>
     <div class="button-row">
-        <a class="btn primary" href="/catalog/new">@UiIcons.IconText("plus", "New job")</a>
-        <a class="btn" href="/catalog/import">@UiIcons.IconText("upload", "Import")</a>
-        <form method="post" action="/catalog/pause-all" class="inline-form">
+        <a class="btn primary" href="/jobs/new">@UiIcons.IconText("plus", "New job")</a>
+        <a class="btn" href="/jobs/import">@UiIcons.IconText("upload", "Import")</a>
+        <form method="post" action="/jobs/actions/pause-all" class="inline-form">
             @Html.AntiForgeryToken()
             <button class="btn" type="submit">@UiIcons.IconText("pause", "Pause all")</button>
         </form>
-        <form method="post" action="/catalog/resume-all" class="inline-form">
+        <form method="post" action="/jobs/actions/resume-all" class="inline-form">
             @Html.AntiForgeryToken()
             <button class="btn" type="submit">@UiIcons.IconText("play", "Resume all")</button>
         </form>
@@ -42,7 +42,7 @@
     var sortBaseQuery = string.Join("&", sortBaseParts);
     var activeJobs = new JobTableViewModel("Active jobs", Model.Data.ActiveJobs, false, ShowSoftDeleteAction: false, ShowDefinitionColumns: false, ShowUpdatedColumn: false, ShowNextEligibleColumn: true, ShowRunningProgressCount: false, ShowProgressColumn: false, ShowHistoryAction: false, ShowFolderLine: false, EnableClientFilter: true, EnableColumnResize: true, EnableInlineToggle: true, EnableBulkSelect: true, EnableSort: true, Sort: Model.Sort, SortBaseQuery: sortBaseQuery, TableKey: "active");
     var completedJobs = new JobTableViewModel("Completed jobs", Model.Data.CompletedJobs, false, ShowSoftDeleteAction: false, SectionCssClass: "nested-card", ShowDefinitionColumns: false, ShowUpdatedColumn: false, ShowNextEligibleColumn: true, ShowRunningProgressCount: false, ShowProgressColumn: false, ShowHistoryAction: false, ShowFolderLine: false, EnableClientFilter: true, EnableColumnResize: true, EnableInlineToggle: true, EnableBulkSelect: true, EnableSort: true, Sort: Model.Sort, SortBaseQuery: sortBaseQuery, TableKey: "completed");
-    var softDeletedJobs = new JobTableViewModel("Soft-deleted jobs", Model.Data.SoftDeletedJobs, true, SectionCssClass: "nested-card", ShowDefinitionColumns: false, ShowUpdatedColumn: false, ShowNextEligibleColumn: true, ShowRunningProgressCount: false, ShowProgressColumn: false, ShowHistoryAction: false, ShowFolderLine: false, EnableClientFilter: true, EnableColumnResize: true, EnableSort: true, Sort: Model.Sort, SortBaseQuery: sortBaseQuery, TableKey: "soft-deleted", HeaderActionHref: "/catalog/soft-deleted", HeaderActionText: "Manage soft-deleted jobs");
+    var softDeletedJobs = new JobTableViewModel("Soft-deleted jobs", Model.Data.SoftDeletedJobs, true, SectionCssClass: "nested-card", ShowDefinitionColumns: false, ShowUpdatedColumn: false, ShowNextEligibleColumn: true, ShowRunningProgressCount: false, ShowProgressColumn: false, ShowHistoryAction: false, ShowFolderLine: false, EnableClientFilter: true, EnableColumnResize: true, EnableSort: true, Sort: Model.Sort, SortBaseQuery: sortBaseQuery, TableKey: "soft-deleted", HeaderActionHref: "/jobs/soft-deleted", HeaderActionText: "Manage soft-deleted jobs");
     var inactiveCount = Model.Data.CompletedJobs.Count + Model.Data.SoftDeletedJobs.Count;
     var dashboardJobCount = Model.Data.ActiveJobs.Count + inactiveCount;
 }
@@ -54,10 +54,10 @@
         <span class="bulk-action-inputs" data-bulk-inputs></span>
         <div class="button-row">
             <button class="btn small" type="button" data-bulk-dependencies>@UiIcons.IconText("graph", "Dependencies")</button>
-            <button class="btn small" type="submit" formaction="/catalog/bulk/pause">@UiIcons.IconText("pause", "Pause")</button>
-            <button class="btn small" type="submit" formaction="/catalog/bulk/resume">@UiIcons.IconText("play", "Resume")</button>
-            <button class="btn small danger" type="submit" formaction="/catalog/bulk/soft-delete">@UiIcons.IconText("trash", "Soft delete")</button>
-            <button class="btn small" type="submit" formaction="/catalog/bulk/export">@UiIcons.IconText("download", "Export")</button>
+            <button class="btn small" type="submit" formaction="/jobs/actions/bulk/pause">@UiIcons.IconText("pause", "Pause")</button>
+            <button class="btn small" type="submit" formaction="/jobs/actions/bulk/resume">@UiIcons.IconText("play", "Resume")</button>
+            <button class="btn small danger" type="submit" formaction="/jobs/actions/bulk/soft-delete">@UiIcons.IconText("trash", "Soft delete")</button>
+            <button class="btn small" type="submit" formaction="/jobs/actions/bulk/export">@UiIcons.IconText("download", "Export")</button>
             <button class="btn small" type="button" data-bulk-clear>@UiIcons.IconText("x", "Clear")</button>
         </div>
     </form>

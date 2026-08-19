@@ -7,7 +7,7 @@ namespace KoLite.LocalApp.Pages.Catalog
 {
     // Confirmation page shown when a soft-delete is blocked because the job still has active downstream
     // dependents. It lists those dependents and offers an explicit force ("Soft delete anyway") POST
-    // back to /catalog/{jobId}/soft-delete. Mirrors the HardDelete page's DI, route, and markup style.
+    // back to /jobs/{jobId}/actions/soft-delete. Mirrors the HardDelete page's DI and markup style.
     public sealed class SoftDeleteConfirmModel : PageModel
     {
         private readonly SqliteJobCatalogRepository catalog;

@@ -86,7 +86,7 @@ if ($StopRunning) {
 } else {
     $health = $null
     try {
-        $health = Invoke-RestMethod -Method Get -Uri "$($BaseUrl.TrimEnd('/'))/status/health" -TimeoutSec 3
+        $health = Invoke-RestMethod -Method Get -Uri "$($BaseUrl.TrimEnd('/'))/api/v1/system/status" -TimeoutSec 3
     } catch {
         $health = $null
     }

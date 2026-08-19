@@ -1,6 +1,6 @@
 namespace KoLite.LocalApp.Retention
 {
-    // The latest outcome of the retention background service, surfaced on /status/health. Captured
+    // The latest outcome of the retention background service, surfaced by /api/v1/system/status. Captured
     // even on failure so operators can see when retention last ran and whether it errored.
     public sealed record RetentionSnapshot(
         bool Enabled,

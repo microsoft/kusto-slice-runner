@@ -1,4 +1,6 @@
 using KoLite.Local.Sqlite.Catalog;
+using KoLite.LocalApp.Application;
+using KoLite.LocalApp.Application.Jobs;
 using KoLite.LocalApp.Ui;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc.ViewFeatures;
@@ -9,7 +11,7 @@ namespace KoLite.LocalApp.Pages.Catalog
     {
         public static IResult Execute(
             HttpContext http,
-            SqliteJobCatalogRepository catalog,
+            JobApplicationService jobs,
             DashboardPageQuery dashboard,
             string jobId,
             bool enabled,
@@ -20,9 +22,11 @@ namespace KoLite.LocalApp.Pages.Catalog
             JobCatalogRecord updated;
             try
             {
-                updated = catalog.SetEnabled(jobId, enabled, expectedVersion, actor: "local-web");
+                updated = (enabled
+                    ? jobs.Resume(jobId, expectedVersion, "local-web", "Resumed from web UI")
+                    : jobs.Pause(jobId, expectedVersion, "local-web", "Paused from web UI")).Record;
             }
-            catch (CatalogVersionConflictException)
+            catch (ApplicationProblemException ex) when (ex.Code == "etag-mismatch")
             {
                 if (!ajax)
                 {
@@ -32,7 +36,7 @@ namespace KoLite.LocalApp.Pages.Catalog
 
                 return Json(StatusCodes.Status409Conflict, jobId, dashboard.GetJob(jobId), fallback: null, conflict: true, error: CatalogConflictFeedback.Message);
             }
-            catch (InvalidOperationException ex)
+            catch (ApplicationProblemException ex)
             {
                 if (!ajax)
                 {

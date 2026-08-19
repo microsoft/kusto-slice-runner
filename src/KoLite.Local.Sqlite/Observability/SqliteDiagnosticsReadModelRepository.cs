@@ -128,6 +128,16 @@ namespace KoLite.Local.Sqlite.Observability
         // expired but is still held floats to the top - the fingerprint of a stalled job.
         public IReadOnlyList<RunningSliceReadout> GetRunningSlices(string? jobId, DateTimeOffset nowUtc, int take)
         {
+            return GetRunningSlices(jobId, nowUtc, cursorUpdatedAtUtc: null, cursorId: null, take);
+        }
+
+        public IReadOnlyList<RunningSliceReadout> GetRunningSlices(
+            string? jobId,
+            DateTimeOffset nowUtc,
+            DateTimeOffset? cursorUpdatedAtUtc,
+            string? cursorId,
+            int take)
+        {
             using var c = connectionFactory.OpenConnection();
             using var cmd = SqliteStorage.Command(c, null, """
                 SELECT css.job_id, jd.activity_id, css.slice_start_utc, css.slice_end_utc, css.attempt,
@@ -142,10 +152,20 @@ namespace KoLite.Local.Sqlite.Observability
                 FROM current_slice_state css
                 JOIN job_definitions jd ON jd.job_id = css.job_id
                 WHERE css.state = 'Running' AND ($jobId IS NULL OR css.job_id = $jobId)
-                ORDER BY css.updated_at_utc ASC, css.slice_start_utc ASC
+                  AND (
+                      $cursor_updated IS NULL
+                      OR css.updated_at_utc > $cursor_updated
+                      OR (
+                          css.updated_at_utc = $cursor_updated
+                          AND (css.job_id || '|' || css.slice_start_utc || '|' || css.slice_end_utc) > $cursor_id
+                      )
+                  )
+                ORDER BY css.updated_at_utc ASC, css.job_id ASC, css.slice_start_utc ASC, css.slice_end_utc ASC
                 LIMIT $take;
                 """);
             cmd.Add("$jobId", jobId);
+            cmd.Add("$cursor_updated", cursorUpdatedAtUtc is null ? null : SqliteStorage.Utc(cursorUpdatedAtUtc.Value));
+            cmd.Add("$cursor_id", cursorId);
             cmd.Add("$take", take);
             using var r = cmd.ExecuteReader();
             var results = new List<RunningSliceReadout>();
@@ -585,6 +605,65 @@ namespace KoLite.Local.Sqlite.Observability
             return results;
         }
 
+        public IReadOnlyList<SliceStateReadout> GetSlicesPage(
+            string? jobId,
+            string? state,
+            DateTimeOffset? fromUtc,
+            DateTimeOffset? toUtc,
+            DateTimeOffset nowUtc,
+            DateTimeOffset? cursorUpdatedAtUtc,
+            string? cursorId,
+            int take)
+        {
+            using var c = connectionFactory.OpenConnection();
+            using var cmd = SqliteStorage.Command(c, null, """
+                SELECT job_id, slice_start_utc, slice_end_utc, state, attempt,
+                       lease_owner, lease_expires_at_utc, last_error_code, last_error_message, updated_at_utc
+                FROM current_slice_state
+                WHERE ($jobId IS NULL OR job_id = $jobId)
+                  AND ($state IS NULL OR state = $state)
+                  AND ($from IS NULL OR slice_start_utc >= $from)
+                  AND ($to IS NULL OR slice_start_utc < $to)
+                  AND (
+                      $cursorUpdated IS NULL
+                      OR updated_at_utc < $cursorUpdated
+                      OR (
+                          updated_at_utc = $cursorUpdated
+                          AND (job_id || '|' || slice_start_utc || '|' || slice_end_utc) < $cursorId
+                      )
+                  )
+                ORDER BY updated_at_utc DESC, job_id DESC, slice_start_utc DESC, slice_end_utc DESC
+                LIMIT $take;
+                """);
+            cmd.Add("$jobId", jobId);
+            cmd.Add("$state", state);
+            cmd.Add("$from", fromUtc is null ? null : SqliteStorage.Utc(fromUtc.Value));
+            cmd.Add("$to", toUtc is null ? null : SqliteStorage.Utc(toUtc.Value));
+            cmd.Add("$cursorUpdated", cursorUpdatedAtUtc is null ? null : SqliteStorage.Utc(cursorUpdatedAtUtc.Value));
+            cmd.Add("$cursorId", cursorId);
+            cmd.Add("$take", take);
+            using var r = cmd.ExecuteReader();
+            var results = new List<SliceStateReadout>();
+            while (r.Read())
+            {
+                var leaseExpires = SqliteStorage.ReadNullableUtc(r, "lease_expires_at_utc");
+                results.Add(new SliceStateReadout(
+                    r.GetString(0),
+                    SqliteStorage.ReadUtc(r, "slice_start_utc"),
+                    SqliteStorage.ReadUtc(r, "slice_end_utc"),
+                    r.GetString(3),
+                    r.GetInt32(4),
+                    r.IsDBNull(5) ? null : r.GetString(5),
+                    leaseExpires,
+                    leaseExpires is not null && leaseExpires.Value <= nowUtc.ToUniversalTime(),
+                    r.IsDBNull(7) ? null : r.GetString(7),
+                    r.IsDBNull(8) ? null : r.GetString(8),
+                    SqliteStorage.ReadUtc(r, "updated_at_utc")));
+            }
+
+            return results;
+        }
+
         // Succeeded-completion counts bucketed into fixed windows over [fromUtc, toUtc). Buckets are
         // aligned to the unix epoch so they are stable regardless of the query range. When groupByJob
         // is set each bucket is split per job, which is how "is the whole app stalled or just one job?"
@@ -690,6 +769,62 @@ namespace KoLite.Local.Sqlite.Observability
             return results;
         }
 
+        public IReadOnlyList<DiagnosticsLogReadout> GetLogsPage(
+            string? jobId,
+            string? level,
+            string? category,
+            DateTimeOffset? fromUtc,
+            DateTimeOffset? toUtc,
+            DateTimeOffset? cursorRecordedAtUtc,
+            string? cursorId,
+            int take)
+        {
+            using var c = connectionFactory.OpenConnection();
+            using var cmd = SqliteStorage.Command(c, null, """
+                SELECT log_id, job_id, slice_start_utc, slice_end_utc, level, message, category, exception, recorded_at_utc, chunk_id, total_chunks
+                FROM operational_logs
+                WHERE ($jobId IS NULL OR job_id = $jobId)
+                  AND ($level IS NULL OR level = $level)
+                  AND ($category IS NULL OR category = $category)
+                  AND ($from IS NULL OR recorded_at_utc >= $from)
+                  AND ($to IS NULL OR recorded_at_utc < $to)
+                  AND (
+                      $cursorRecorded IS NULL
+                      OR recorded_at_utc < $cursorRecorded
+                      OR (recorded_at_utc = $cursorRecorded AND log_id < $cursorId)
+                  )
+                ORDER BY recorded_at_utc DESC, log_id DESC
+                LIMIT $take;
+                """);
+            cmd.Add("$jobId", jobId);
+            cmd.Add("$level", level);
+            cmd.Add("$category", category);
+            cmd.Add("$from", fromUtc is null ? null : SqliteStorage.Utc(fromUtc.Value));
+            cmd.Add("$to", toUtc is null ? null : SqliteStorage.Utc(toUtc.Value));
+            cmd.Add("$cursorRecorded", cursorRecordedAtUtc is null ? null : SqliteStorage.Utc(cursorRecordedAtUtc.Value));
+            cmd.Add("$cursorId", cursorId);
+            cmd.Add("$take", take);
+            using var r = cmd.ExecuteReader();
+            var results = new List<DiagnosticsLogReadout>();
+            while (r.Read())
+            {
+                results.Add(new DiagnosticsLogReadout(
+                    r.GetString(0),
+                    r.IsDBNull(1) ? null : r.GetString(1),
+                    SqliteStorage.ReadNullableUtc(r, "slice_start_utc"),
+                    SqliteStorage.ReadNullableUtc(r, "slice_end_utc"),
+                    r.GetString(4),
+                    r.GetString(5),
+                    r.IsDBNull(6) ? null : r.GetString(6),
+                    r.IsDBNull(7) ? null : r.GetString(7),
+                    SqliteStorage.ReadUtc(r, "recorded_at_utc"),
+                    r.IsDBNull(9) ? null : r.GetInt32(9),
+                    r.IsDBNull(10) ? null : r.GetInt32(10)));
+            }
+
+            return results;
+        }
+
         // The system audit trail (rerun planned/executed, lifecycle, hard delete, ...), newest first.
         public IReadOnlyList<AuditEventReadout> GetAuditEvents(string? subjectType, string? subjectId, string? action, DateTimeOffset? fromUtc, DateTimeOffset? toUtc, int take)
         {
@@ -710,6 +845,58 @@ namespace KoLite.Local.Sqlite.Observability
             cmd.Add("$action", action);
             cmd.Add("$from", fromUtc is null ? null : SqliteStorage.Utc(fromUtc.Value));
             cmd.Add("$to", toUtc is null ? null : SqliteStorage.Utc(toUtc.Value));
+            cmd.Add("$take", take);
+            using var r = cmd.ExecuteReader();
+            var results = new List<AuditEventReadout>();
+            while (r.Read())
+            {
+                results.Add(new AuditEventReadout(
+                    r.GetString(0),
+                    r.IsDBNull(1) ? null : r.GetString(1),
+                    r.GetString(2),
+                    r.GetString(3),
+                    r.IsDBNull(4) ? null : r.GetString(4),
+                    r.GetString(5),
+                    SqliteStorage.ReadUtc(r, "recorded_at_utc")));
+            }
+
+            return results;
+        }
+
+        public IReadOnlyList<AuditEventReadout> GetAuditEventsPage(
+            string? subjectType,
+            string? subjectId,
+            string? action,
+            DateTimeOffset? fromUtc,
+            DateTimeOffset? toUtc,
+            DateTimeOffset? cursorRecordedAtUtc,
+            string? cursorId,
+            int take)
+        {
+            using var c = connectionFactory.OpenConnection();
+            using var cmd = SqliteStorage.Command(c, null, """
+                SELECT audit_id, actor, action, subject_type, subject_id, payload_json, recorded_at_utc
+                FROM system_audit
+                WHERE ($subjectType IS NULL OR subject_type = $subjectType)
+                  AND ($subjectId IS NULL OR subject_id = $subjectId)
+                  AND ($action IS NULL OR action = $action)
+                  AND ($from IS NULL OR recorded_at_utc >= $from)
+                  AND ($to IS NULL OR recorded_at_utc < $to)
+                  AND (
+                      $cursorRecorded IS NULL
+                      OR recorded_at_utc < $cursorRecorded
+                      OR (recorded_at_utc = $cursorRecorded AND audit_id < $cursorId)
+                  )
+                ORDER BY recorded_at_utc DESC, audit_id DESC
+                LIMIT $take;
+                """);
+            cmd.Add("$subjectType", subjectType);
+            cmd.Add("$subjectId", subjectId);
+            cmd.Add("$action", action);
+            cmd.Add("$from", fromUtc is null ? null : SqliteStorage.Utc(fromUtc.Value));
+            cmd.Add("$to", toUtc is null ? null : SqliteStorage.Utc(toUtc.Value));
+            cmd.Add("$cursorRecorded", cursorRecordedAtUtc is null ? null : SqliteStorage.Utc(cursorRecordedAtUtc.Value));
+            cmd.Add("$cursorId", cursorId);
             cmd.Add("$take", take);
             using var r = cmd.ExecuteReader();
             var results = new List<AuditEventReadout>();
@@ -763,6 +950,50 @@ namespace KoLite.Local.Sqlite.Observability
             return results;
         }
 
+        public IReadOnlyList<RerunBatchSummary> ListRerunBatchesPage(
+            string? rootJobId,
+            DateTimeOffset? cursorRequestedAtUtc,
+            string? cursorId,
+            int take)
+        {
+            using var c = connectionFactory.OpenConnection();
+            using var cmd = SqliteStorage.Command(c, null, """
+                SELECT rerun_batch_id, root_job_id, root_start_utc, root_end_utc, requested_by, reason, status,
+                       kusto_cleanup_acknowledged, requested_at_utc, completed_at_utc
+                FROM rerun_batches
+                WHERE ($rootJobId IS NULL OR root_job_id = $rootJobId)
+                  AND (
+                      $cursorRequested IS NULL
+                      OR requested_at_utc < $cursorRequested
+                      OR (requested_at_utc = $cursorRequested AND rerun_batch_id < $cursorId)
+                  )
+                ORDER BY requested_at_utc DESC, rerun_batch_id DESC
+                LIMIT $take;
+                """);
+            cmd.Add("$rootJobId", rootJobId);
+            cmd.Add("$cursorRequested", cursorRequestedAtUtc is null ? null : SqliteStorage.Utc(cursorRequestedAtUtc.Value));
+            cmd.Add("$cursorId", cursorId);
+            cmd.Add("$take", take);
+            using var r = cmd.ExecuteReader();
+            var results = new List<RerunBatchSummary>();
+            while (r.Read())
+            {
+                results.Add(new RerunBatchSummary(
+                    r.GetString(0),
+                    r.GetString(1),
+                    SqliteStorage.ReadUtc(r, "root_start_utc"),
+                    SqliteStorage.ReadUtc(r, "root_end_utc"),
+                    r.IsDBNull(4) ? null : r.GetString(4),
+                    r.GetString(5),
+                    r.GetString(6),
+                    r.GetInt32(7) == 1,
+                    SqliteStorage.ReadUtc(r, "requested_at_utc"),
+                    SqliteStorage.ReadNullableUtc(r, "completed_at_utc")));
+            }
+
+            return results;
+        }
+
         // Lightweight repair-batch listing (summary columns only), newest request first. Full per-slice
         // detail stays behind SqliteRepairService.GetRepairSlices.
         public IReadOnlyList<RepairBatchSummary> ListRepairBatches(string? jobId, int take)
@@ -776,6 +1007,46 @@ namespace KoLite.Local.Sqlite.Observability
                 LIMIT $take;
                 """);
             cmd.Add("$jobId", jobId);
+            cmd.Add("$take", take);
+            using var r = cmd.ExecuteReader();
+            var results = new List<RepairBatchSummary>();
+            while (r.Read())
+            {
+                results.Add(new RepairBatchSummary(
+                    r.GetString(0),
+                    r.IsDBNull(1) ? null : r.GetString(1),
+                    r.IsDBNull(2) ? null : r.GetString(2),
+                    r.GetString(3),
+                    r.GetString(4),
+                    SqliteStorage.ReadUtc(r, "requested_at_utc"),
+                    SqliteStorage.ReadNullableUtc(r, "completed_at_utc")));
+            }
+
+            return results;
+        }
+
+        public IReadOnlyList<RepairBatchSummary> ListRepairBatchesPage(
+            string? jobId,
+            DateTimeOffset? cursorRequestedAtUtc,
+            string? cursorId,
+            int take)
+        {
+            using var c = connectionFactory.OpenConnection();
+            using var cmd = SqliteStorage.Command(c, null, """
+                SELECT repair_batch_id, job_id, requested_by, reason, status, requested_at_utc, completed_at_utc
+                FROM repair_batches
+                WHERE ($jobId IS NULL OR job_id = $jobId)
+                  AND (
+                      $cursorRequested IS NULL
+                      OR requested_at_utc < $cursorRequested
+                      OR (requested_at_utc = $cursorRequested AND repair_batch_id < $cursorId)
+                  )
+                ORDER BY requested_at_utc DESC, repair_batch_id DESC
+                LIMIT $take;
+                """);
+            cmd.Add("$jobId", jobId);
+            cmd.Add("$cursorRequested", cursorRequestedAtUtc is null ? null : SqliteStorage.Utc(cursorRequestedAtUtc.Value));
+            cmd.Add("$cursorId", cursorId);
             cmd.Add("$take", take);
             using var r = cmd.ExecuteReader();
             var results = new List<RepairBatchSummary>();

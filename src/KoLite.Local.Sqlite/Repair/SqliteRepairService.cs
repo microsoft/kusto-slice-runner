@@ -15,7 +15,7 @@ namespace KoLite.Local.Sqlite.Repair
     //
     // AllRepairable is the original behavior and stays the default so existing callers are unchanged.
     // FailedAndDeadLetteredOnly is what the local API uses: it is exactly the state set that
-    // GET /api/diagnostics/failures reports, and it deliberately excludes Missing. SliceEnumerator
+    // GET /api/v1/operations/failures reports, and it deliberately excludes Missing. SliceEnumerator
     // steps from whatever start it is given rather than snapping to the job's slice grid, so an
     // unaligned range fabricates windows that all read back as Missing; excluding Missing means such a
     // window can never be enqueued as real work. Missing slices also need no repair - the scheduler
@@ -615,7 +615,7 @@ namespace KoLite.Local.Sqlite.Repair
         }
 
         // Repair batches previously recorded no audit row at all, unlike reruns. An agent-driven repair
-        // must be visible in the system audit trail (GET /api/diagnostics/audit) or the required-reason
+        // must be visible in the system audit trail (GET /api/v1/operations/audit-events) or the required-reason
         // guard on the API is unverifiable after the fact.
         private void InsertAudit(RepairPlanRequest request, string batchId, int queued, int blocked, int skipped)
         {

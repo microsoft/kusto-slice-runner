@@ -1,289 +1,174 @@
-# KO Lite local management API
+# KO Lite HTTP surfaces
 
-KO Lite exposes a small **localhost-only JSON API** so a same-machine agent or
-tool can read jobs and create/update schedules without clicking through the
-dashboard. The API is hosted by the running app, so it starts and stops with the
-dashboard, scheduler, and worker.
+KO Lite exposes three deliberately separate HTTP boundaries:
 
-A companion **read-only diagnostics API** (`/api/diagnostics/...` and
-`/api/jobs/{jobId}/...`) surfaces the operational read models that otherwise only
-render as dashboard HTML, so an agent can investigate a job (slice states, leases,
-throughput, history, logs, audit, reruns/repairs) entirely over HTTP. See
-[Read-only diagnostics](#read-only-diagnostics) below.
+- **Agent API:** `/api/v1`, loopback-only JSON, generated OpenAPI, named contracts,
+  Problem Details, and safe agent actions.
+- **Browser/UI support:** canonical `/jobs` Razor pages plus the internal
+  `/ui-api/v1` failure-analysis polling surface.
+- **Health/control:** minimal `/healthz` and loopback-only `/control/v1` graceful drain.
 
-The companion agent skill `ko-lite-job-manager` drives this API; the file-only
-authoring skill `ko-lite-schedule-json` does not upload.
+The generated document at
+`GET http://127.0.0.1:5057/api/v1/openapi/v1.json` is the source of truth for
+request and response schemas, operation IDs, parameters, and status codes. This
+document focuses on workflows and safety.
 
-## Scope and safety
+## Local request boundary
 
-- **Schedules, soft-delete / restore, plus failed-slice repair.** The API can read
-  jobs, create/update schedules, **soft-delete or restore** a job, and **re-run
-  slices that failed**. Soft-delete is reversible (it flips `is_enabled` off and
-  records a lifecycle event; no rows are purged). Repair re-queues only
-  `Failed`/`DeadLettered` slices — see [Repairing failed slices](#repairing-failed-slices).
-  It exposes **no** hard-delete, generic enable/disable, direct Kusto execution,
-  rerun, or cleanup surface. (The separate, read-only
-  `POST /api/dependency-graph/kusto-consumers` endpoint issues a read-only Kusto
-  metadata query for the dependency graph — see the operations runbook.)
-- **Guarded delete.** Soft-delete and restore require the job's current
-  `expectedVersion` (optimistic concurrency; a mismatch is a `409`). Soft-delete is
-  **blocked by default** when active downstream jobs depend on the target and
-  returns `409` listing them; pass `"force": true` to override (mirrors the
-  dashboard's "Soft delete anyway" confirm).
-- **Validated path.** Every write goes through the same
-  `SqliteJobCatalogRepository.Import` path the dashboard import uses, so strict
-  schedule parsing, started-job mutation policy (immutable permanent `id`;
-  `queryWindowSize`/`startFrom` read-only after a job starts; `activityId` is a
-  mutable display label), catalog versioning, audit events, and tag normalization
-  all apply, inside one transaction.
-- **Additive and update-only.** An item matches an existing job by `id` when present
-  (a **rename** is same `id`, new `activityId`), else by `activityId`; new ones are
-  created (a supplied `id` is preserved, else minted); omitted jobs are never deleted.
-- **Loopback-only.** Every `/api` route is restricted to loopback callers. The
-  app also binds `http://127.0.0.1:5057` by default. There is no auth token; the
-  loopback boundary is the control.
-- **Execution awareness.** Importing an *enabled, unpaused* job lets the running
-  scheduler start scheduling/executing it, exactly like a dashboard import. To
-  stage a schedule without running it, set `"isPaused": true`.
+The agent API, generated OpenAPI document, detailed system status, UI-support
+endpoints, and control endpoints use the same injectable local-request policy.
+Production fails closed when a remote address is missing and accepts only loopback
+addresses. `/healthz` is intentionally minimal and contains no database path or
+runtime configuration.
 
-## Endpoints
+KO Lite still binds to `http://127.0.0.1:5057` by default. Do not widen
+`KoLite:Urls` as a substitute for authentication.
 
-Base URL defaults to `http://127.0.0.1:5057`.
+## Contract conventions
+
+- Job path identity is always the permanent GUID. Exact `activityId` lookup is a
+  `GET /api/v1/jobs?activityId=...` filter.
+- Job summaries expose `activityId` and one lifecycle state: `active`, `paused`,
+  or `softDeleted`. They do not expose the old overlapping `displayName` and
+  lifecycle booleans.
+- Single-job reads return `ETag: "catalog-N"`. `PUT` and lifecycle actions require
+  that value in `If-Match`.
+- Missing `If-Match` returns `428`; a stale ETag returns `412`.
+- Errors use `application/problem+json` with a stable `code` extension and optional
+  structured evidence such as `dependents`, `currentVersion`, or repair-preview
+  conflict fields.
+- Inbound instants require an explicit UTC offset (`Z` or `+/-HH:mm`). KO Lite
+  emits UTC `Z` values.
+- Large operational collections use `limit` plus an opaque `cursor`, returning
+  `{ "items": [...], "nextCursor": "..." }`. A cursor is bound to its endpoint and
+  filters and is rejected if reused with a different query.
+
+## Agent API route map
+
+All routes are under `/api/v1`.
+
+### Jobs
 
 | Method | Route | Purpose |
 | --- | --- | --- |
-| GET | `/api/jobs` | `{ "jobs": [ ... ] }` of summaries: `jobId` (permanent GUID), `displayName` (the activityId label), `isEnabled`, `isSoftDeleted`, `hasStarted`, `isPaused`, `tags`, `target { clusterUri, database }`, `catalogVersion`, `createdAtUtc`, `updatedAtUtc`. |
-| GET | `/api/jobs/{jobId}` | `{ "job": { ...summary }, "schedule": { ...canonical import-compatible object, including its `id` and optional `description` } }`. `{jobId}` is the permanent GUID. `404` with `{ "error" }` when the job does not exist. |
-| GET | `/api/jobs/export` | Import-compatible JSON **array** of every non-soft-deleted job (same payload as the dashboard **Export all**). |
-| POST | `/api/jobs/import` | Body is schedule JSON (single object **or** array). Returns `{ "created", "updated", "total", "items": [ { "jobId", "action", "catalogVersion" } ] }`. `400` with `{ "error" }` on JSON, validation, or mutation-policy failure. |
-| POST | `/api/jobs/{jobId}/soft-delete` | Soft-delete (hide) a job — reversible. `{jobId}` is the permanent GUID. Body `{ "expectedVersion": <current catalogVersion, required>, "reason"?, "force"? }`. Returns `{ "job": { ...summary, "isSoftDeleted": true } }`. Errors: `400` (missing/invalid body or absent `expectedVersion`), `404` (unknown job), `409` (version conflict), or `409` `{ "error", "dependents": [ { "jobId", "activityId" } ] }` when active downstream jobs depend on it and `force` is not `true`. |
-| POST | `/api/jobs/{jobId}/restore` | Restore (un-hide) a soft-deleted job. `{jobId}` is the permanent GUID. Body `{ "expectedVersion": <required>, "reason"? }`. Returns `{ "job": { ...summary, "isEnabled": true } }`. Errors: `400`/`404`/`409` as above (no dependents check). |
-| POST | `/api/jobs/{jobId}/repair/preview` | Dry run. Returns logical-slice/execution counts, exact sorted terminal failed `chunkIds`, and a `previewToken`. Chunks with queued/leased automatic retry work are excluded. Writes nothing. |
-| POST | `/api/jobs/{jobId}/repair` | Requeue every previewed terminal failed chunk. Body always includes `from`, `to`, `reason`, and `expectedSliceCount`; chunked jobs additionally require `expectedExecutionCount` and `previewToken`. Response includes exact chunk/queue mapping. |
-| GET | `/api/jobs/{jobId}/chunks?start=...&end=...` | Bounded child-state and child-event detail for one logical slice. Returns 0-32 chunks with state, attempt, lease, error, and event fields. |
+| GET | `/jobs` | List jobs; optional exact `activityId` filter. |
+| POST | `/jobs` | Create one job from `{ "schedule": { ... } }`; returns `201`, `Location`, and ETag. |
+| GET | `/jobs/{jobId}` | Read one GUID-keyed job and canonical schedule; returns ETag. |
+| PUT | `/jobs/{jobId}` | Replace one schedule using `{ "schedule": { ... } }` and `If-Match`. |
+| POST | `/jobs/{jobId}/actions/pause` | Pause using `If-Match`; optional `{ "reason": "..." }`. |
+| POST | `/jobs/{jobId}/actions/resume` | Resume using `If-Match`. |
+| POST | `/jobs/{jobId}/actions/soft-delete` | Reversible soft delete; optional `force`; dependent guard retained. |
+| POST | `/jobs/{jobId}/actions/restore` | Restore a soft-deleted job. |
+| POST | `/jobs/import` | Additive/update-only batch import with `{ "schedules": [ ... ] }`; a soft-deleted target must be restored first. |
+| GET | `/jobs/export` | Import-compatible array of non-soft-deleted schedules. |
+| GET | `/jobs/{jobId}/status` | Catalog, slice-state, queue, and parallelism status. |
+| GET | `/jobs/{jobId}/catalog-revisions` | Named catalog revision contracts. |
+| GET | `/jobs/{jobId}/dependencies` | Declared dependencies and blocked-slice samples. |
 
-The potentially large `description` value is not duplicated into `GET /api/jobs`
-summaries. Read it from the single-job `schedule` object or an export. It is Markdown
-catalog metadata only and is never forwarded to Kusto execution.
+Create/update/import all use the existing strict schedule parser and started-job
+mutation policy. Import remains additive: omitted jobs are never deleted.
 
-The database path is also reported as `databasePath` by `GET /status/health`,
-which an agent can read to confirm which instance it is talking to. The
-`scripts\Get-KoLiteDatabase.ps1` helper prints this path directly (and falls
-back to a best-effort guess when the app is stopped).
+### Repair
 
-## Examples
+| Method | Route | Purpose |
+| --- | --- | --- |
+| POST | `/jobs/{jobId}/repair-previews` | Read-only failed/dead-lettered preview. |
+| POST | `/jobs/{jobId}/repairs` | Queue exactly the approved preview; returns `202` and a durable repair location. |
 
-```powershell
-# Confirm the app is up and learn where its database lives.
-Invoke-RestMethod http://127.0.0.1:5057/status/health |
-    Select-Object status, databasePath, jobCount
+Repair preserves the existing count/token safety:
 
-# List jobs and resolve the permanent GUID from the human activityId label.
-$jobs = Invoke-RestMethod http://127.0.0.1:5057/api/jobs |
-    Select-Object -Expand jobs
-$jobId = ($jobs | Where-Object { $_.displayName -ceq 'Demo.SkillTest' }).jobId
+- `expectedSliceCount` is always required.
+- Chunked jobs also require the preview's `expectedExecutionCount` and
+  `previewToken`.
+- Raw chunk IDs remain 0-based.
+- Successful siblings and chunks with active automatic retry work are untouched.
+- Paused or soft-deleted jobs are rejected.
 
-# Inspect one job's canonical schedule.
-Invoke-RestMethod "http://127.0.0.1:5057/api/jobs/$jobId" |
-    Select-Object -Expand schedule
+The agent API does **not** expose whole-slice rerun, Kusto cleanup, hard delete,
+or mark-complete operations.
 
-# Create or update from a file (single object or array).
-Invoke-RestMethod -Method Post -Uri http://127.0.0.1:5057/api/jobs/import `
-    -ContentType 'application/json' -InFile .\my-job.json
+### Operations
 
-# Soft-delete a job (reversible). Read its current catalogVersion first.
-$job = Invoke-RestMethod "http://127.0.0.1:5057/api/jobs/$jobId"
-Invoke-RestMethod -Method Post `
-    -Uri "http://127.0.0.1:5057/api/jobs/$($job.job.jobId)/soft-delete" `
-    -ContentType 'application/json' `
-    -Body (@{ expectedVersion = $job.job.catalogVersion } | ConvertTo-Json)
-
-# ...then restore it (use the catalogVersion returned by the soft-delete).
-Invoke-RestMethod -Method Post `
-    -Uri "http://127.0.0.1:5057/api/jobs/$($job.job.jobId)/restore" `
-    -ContentType 'application/json' `
-    -Body (@{ expectedVersion = <version> } | ConvertTo-Json)
-```
-
-Prefer the skill helper, which validates the schedule JSON locally before
-sending and surfaces API errors clearly:
-
-```powershell
-$skill = '.\.github\skills\ko-lite-job-manager\scripts\Invoke-KoLiteJobApi.ps1'
-& $skill -Action Health
-$jobs = @(& $skill -Action Get-Jobs)
-$job = & $skill -Action Get-Job -JobId $jobs[0].jobId
-& $skill -Action Import -Path .\my-job.json
-& $skill -Action Soft-Delete -JobId <jobId> -ExpectedVersion <catalogVersion>
-& $skill -Action Restore     -JobId <jobId> -ExpectedVersion <catalogVersion>
-```
-
-The helper keeps the permanent GUID as the normal reference. For a read where
-only the exact `activityId` is known, `Get-Job` resolves the matching
-`displayName` through `GET /api/jobs` and then calls the GUID-keyed route. Use the
-returned `job.jobId` for subsequent operations.
-
-## Repairing failed slices
-
-The one write path into slice execution. It re-queues the slices in a UTC range
-whose current state is **`Failed` or `DeadLettered`** — exactly the set
-`GET /api/diagnostics/failures` reports — so the normal worker runs them again.
-
-**Why this is safe without a cleanup step.** KO Lite writes output with an
-`ingest-by:ko-lite:<sliceKey>` tag and `ingestIfNotExists`, so Kusto **dedupes a
-repeat ingestion**. Re-running a slice cannot duplicate rows, which is why repair
-has no equivalent of the rerun flow's manual `.delete` + acknowledgement dance.
-
-**Repair fills gaps; it cannot overwrite.** That same dedup tag means re-running an
-already-`Completed` slice would execute the query and then have its result
-discarded. Recomputing completed history is the **rerun** flow (dashboard-only,
-with manual Kusto cleanup). The repair API therefore refuses to touch `Completed`
-slices at all.
-
-### Scope and guards
-
-- **Only `Failed`/`DeadLettered`.** `Completed` slices are never touched.
-  `Queued`/`Running` work is never disturbed. `Missing` slices are skipped — the
-  scheduler already enqueues those on its own.
-- **No duplicate automatic retries.** A failed chunk with an active `Queued`/`Leased` work row is
-  retry-pending, not manually repairable. Mixed slices repair only terminal gaps.
-- **No `outputStrategy` knob.** Repairs always just re-run the slice. The
-  unimplemented `CleanSliceOutputThenExecute` and the execute-nothing
-  `MarkCompletedOnly` strategies are not reachable from the API.
-- **Aligned range required.** `from`/`to` must land on the job's slice boundaries
-  (anchored at `startFrom`, stepped by `queryWindowSize`). An unaligned range is a
-  `400` naming the nearest aligned range. This matters because slice enumeration
-  steps from the supplied start rather than snapping to the grid.
-- **Preview first, then echo the approved set.** `expectedSliceCount` must equal the
-  preview's `repairableSliceCount`; a mismatch is a `409` reporting both numbers, so
-  a repair can never act on a different set than the one that was approved.
-  For chunked jobs, also echo `repairableExecutionCount` as `expectedExecutionCount`
-  and the opaque `previewToken`; either mismatch rejects the write even when the
-  parent-window count stayed the same.
-- **`reason` is required** and is recorded on the repair batch and as a
-  `RepairEnqueued` row in the system audit trail (`GET /api/diagnostics/audit`).
-- **Enabled jobs only.** Pause and soft-delete both clear `is_enabled`, and the
-  queue claim filters on it, so repaired work for a disabled job would never be
-  claimed. The API returns `409` telling you to resume the job first.
-- **Dependency-blocked slices are reported, not queued.** They appear in the
-  `blocked` count; fix the upstream first.
-
-`{jobId}` accepts the permanent GUID **or** the `activityId`.
-
-```powershell
-$base = 'http://127.0.0.1:5057'
-$jobId = 'SampleAnalytics.BuildEcu5MinProfile'
-$range = @{ from = '2026-01-01T00:00:00Z'; to = '2026-01-02T00:00:00Z' }
-
-# 1. Which slices failed?
-Invoke-RestMethod "$base/api/diagnostics/failures" |
-    Select-Object -Expand recentFailures |
-    Where-Object status -eq 'DeadLettered'
-
-# 2. Preview - writes nothing.
-$preview = Invoke-RestMethod -Method Post -Uri "$base/api/jobs/$jobId/repair/preview" `
-    -ContentType 'application/json' -Body ($range | ConvertTo-Json)
-$preview.slices | Format-Table startUtc, currentState, outcome
-
-# 3. Repair, echoing the previewed count.
-$body = $range + @{
-    reason = 'Requeue transient Kusto failures'
-    expectedSliceCount = $preview.repairableSliceCount
-    expectedExecutionCount = $preview.repairableExecutionCount
-    previewToken = $preview.previewToken
-}
-Invoke-RestMethod -Method Post -Uri "$base/api/jobs/$jobId/repair" `
-    -ContentType 'application/json' -Body ($body | ConvertTo-Json)
-
-# 4. Verify.
-Invoke-RestMethod "$base/api/jobs/$jobId/slices?state=Running"
-```
-
-Or through the skill helper, which previews, guards, and reports for you:
-
-```powershell
-$skill = '.\.github\skills\ko-lite-job-manager\scripts\Invoke-KoLiteJobApi.ps1'
-$p = & $skill -Action Preview-Repair -JobId $jobId -From '2026-01-01T00:00:00Z' -To '2026-01-02T00:00:00Z'
-& $skill -Action Repair -JobId $jobId -From '2026-01-01T00:00:00Z' -To '2026-01-02T00:00:00Z' `
-    -Reason 'Requeue transient Kusto failures' -ExpectedSliceCount $p.repairableSliceCount `
-    -ExpectedExecutionCount $p.repairableExecutionCount -PreviewToken $p.previewToken
-```
-
-## Read-only diagnostics
-
-A strictly **read-only** family of endpoints surfaces the operational read models
-that power the dashboard, plus a few cross-job and time-bucketed queries that the
-HTML pages do not expose. It performs **no** writes, no Kusto, and no
-scheduler/rerun/repair mutation — it only reads existing local state. Every route
-is **loopback-only** (same guard as the catalog API).
-
-**Bounded by default.** List and time-series routes are capped and windowed so a
-single call never scans the whole local store:
-
-- `take` — row cap, clamped to `[1, 1000]` (default `100`; `slices`/`throughput`
-  default higher but never exceed the cap).
-- `from` / `to` — ISO-8601 UTC bounds. Log/throughput/audit routes default to the
-  **last 24h** when omitted.
-- `bucket` — time-series bucket size: `5m`, `30m`, `1h`, `90s`, or plain seconds
-  (clamped to `[60s, 1d]`; default `30m`).
-- Filters: `state`, `level`, `category`, `action`, `subjectType`, `subjectId`,
-  `groupBy=job` (throughput), `jobId` (global routes), `batchId` (rerun/repair detail).
-
-`{jobId}` accepts the permanent GUID **or** the mutable `activityId` (mirroring the
-dashboard's bookmark redirect). Unknown jobs return `404` with `{ "error" }`.
-
-### Per-job — `/api/jobs/{jobId}/…`
-
-| Route | Returns |
+| Route | Notes |
 | --- | --- |
-| `GET …/status` | Identity + `maxParallelism`/paused/started + logical slice-state counts (`missing/queued/running/completed/failed/deadLettered/dependencyBlocked`) + queue counts. `maxParallelism` is execution-unit concurrency (one slot per chunk or unchunked slice), minimum 1 with no maximum. |
-| `GET …/slices` | Materialized slice states **with lease fields** (`leaseOwner`, `leaseExpiresAtUtc`, `leaseExpired`, `attempt`, `lastError*`). Filters: `state`, `from`, `to`, `take`. |
-| `GET …/chunks` | Per-chunk child state and event timeline for one logical slice. Requires exact `start` and `end` query parameters. |
-| `GET …/attempts` | Recent slice attempts (incl. in-flight `Started` rows with no `completedAtUtc`). Optional exact slice via `start`/`end`; `take`. |
-| `GET …/events` | Slice-state event timeline. Optional exact slice via `start`/`end`; `take`. |
-| `GET …/logs` | Operational logs including optional `chunkId`/`totalChunks`. Filters: `level`, `category`, `from`, `to`, `take`. |
-| `GET …/queue` | Work-queue items for the job incl. `lockedBy`/`lockedUntilUtc`; active rows are returned first, followed by the newest terminal rows. `take` defaults to 100 and is capped at 1000. |
-| `GET …/history` | Catalog version history **with a computed JSON diff** per version (e.g. a `maxParallelism` change). |
-| `GET …/throughput` | Succeeded-completion series bucketed over `[from, to)` + a throughput `sample`. Params: `from`, `to`, `bucket`. |
-| `GET …/dependencies` | Declared upstreams (resolved) + a live-evaluated sample of `DependencyBlocked` slices with their missing upstream slices. |
+| `/operations/worker-pool` | Current dispatcher/pool snapshot. |
+| `/operations/queue` | Storage-bounded, cursor-paged queue rows; optional `jobId`, `queueName`, and `state`. |
+| `/operations/slices` | Paged logical slice states; optional job/state/time filters. |
+| `/operations/running-slices` | Bounded running projection with lease and timing evidence. |
+| `/operations/chunks` | One slice's naturally bounded 0-32 child states/events. |
+| `/operations/attempts` | Paged execution attempts. |
+| `/operations/events` | Paged slice state events. |
+| `/operations/logs` | Paged durable logs. |
+| `/operations/throughput` | Bounded throughput buckets; not cursor-paged. |
+| `/operations/failures` | Paged terminal failures plus summary-run evidence. |
+| `/operations/audit-events` | Paged audit trail. |
+| `/operations/reruns` and `/operations/reruns/{batchId}` | Separate list/detail resources. |
+| `/operations/repairs` and `/operations/repairs/{batchId}` | Separate list/detail resources. |
 
-### Cross-job / global — `/api/diagnostics/…`
+Use the permanent GUID in `jobId` filters. Invalid enum values, instants, limits,
+and cursors return Problem Details instead of being silently coerced.
 
-| Route | Returns |
-| --- | --- |
-| `GET …/worker-pool` | Worker-pool snapshot (same shape as `GET /status/health.workerPool`): in-flight workers, queued/leased/**expired-lease** counts, saturation, cycle counters. |
-| `GET …/running-slices` | **All** currently `Running` slices (optionally `jobId`) with lease owner/expiry, **oldest first** — the fingerprint of a stalled, lease-pinned job. |
-| `GET …/throughput` | Global completion series; `groupBy=job` splits each bucket per job ("is the whole app stalled or just one job?"). |
-| `GET …/queue` | Queue status summary (`queued/leased/completed/deadLettered/expiredLease`). |
-| `GET …/logs` | Operational logs across all jobs. Filters: `jobId`, `level`, `category`, `from`, `to`, `take`. |
-| `GET …/failures` | Recent failed/dead-lettered logical slices with compact failed chunk IDs/count + persisted failure-summary runs. |
-| `GET …/audit` | System audit trail (rerun planned/executed, lifecycle, …). Filters: `subjectType`, `subjectId`, `action`, `from`, `to`. |
-| `GET …/reruns` | Rerun-batch listing (`jobId` filter); `?batchId=` returns one batch with its slices. |
-| `GET …/repairs` | Repair-batch listing (`jobId` filter); `?batchId=` returns logical repair slices plus durable per-chunk previous state, outcome, and queue-item mapping. |
+### Kusto lineage and system
 
-### Examples
+- `POST /dependency-graphs/kusto-lineage` performs the existing on-demand,
+  read-only Kusto metadata lookup. It persists nothing and maps upstream failures
+  to `502` Problem Details.
+- `GET /system/status` returns detailed scheduler, worker-pool, retention, update,
+  Kusto-auth, database, shutdown, and supported-API-version state.
 
-```powershell
-$base = 'http://127.0.0.1:5057'
+## Browser routes
 
-# Is the whole app stalled, or just one job? Compare global vs. per-job throughput.
-Invoke-RestMethod "$base/api/diagnostics/throughput?bucket=30m&groupBy=job" |
-    Select-Object -Expand buckets
+The dashboard remains `/`. Job pages and forms use one canonical hierarchy:
 
-# Find slices pinned by hung leases (oldest first) - the stall fingerprint.
-Invoke-RestMethod "$base/api/diagnostics/running-slices" |
-    Select-Object -Expand runningSlices |
-    Format-Table jobId, leaseOwner, leaseExpired, updatedAtUtc
-
-# Per-job status, lease-bearing slices, and the catalog diff that changed maxParallelism.
-Invoke-RestMethod "$base/api/jobs/SampleAnalytics.BuildEcu5MinProfile/status"
-Invoke-RestMethod "$base/api/jobs/SampleAnalytics.BuildEcu5MinProfile/slices?state=Running"
-Invoke-RestMethod "$base/api/jobs/SampleAnalytics.BuildEcu5MinProfile/history" |
-    Select-Object -Expand history
+```text
+/jobs
+/jobs/new
+/jobs/import
+/jobs/soft-deleted
+/jobs/{jobId}
+/jobs/{jobId}/edit
+/jobs/{jobId}/copy
+/jobs/{jobId}/history
+/jobs/{jobId}/slices
+/jobs/{jobId}/rerun
+/jobs/{jobId}/hard-delete
+/jobs/{jobId}/soft-delete-confirm
 ```
 
-## Related
+Pause/resume/soft-delete/restore browser posts are under
+`/jobs/{jobId}/actions/...` and remain antiforgery-protected. Hard delete and
+whole-slice rerun remain browser-only with their existing confirmations.
 
-- [schedule-json.md](schedule-json.md) — the schedule contract the import path enforces.
-- [operations-runbook.md](operations-runbook.md) — safe local runs and diagnostics.
-- [local-first-architecture.md](local-first-architecture.md) — component responsibilities and safety boundaries.
+Failure analysis uses
+`/ui-api/v1/jobs/{jobId}/failure-analyses`; Razor renders that URL into a data
+attribute and `site.js` does not hard-code it.
+
+## Health and shutdown
+
+- `GET /healthz` returns only `{ "status": "healthy" }` after a SQLite readiness
+  check.
+- `GET /api/v1/system/status` is the detailed local status resource.
+- `GET /control/v1/shutdown` reads drain state.
+- `POST /control/v1/shutdown/drain` accepts `{ "reason": "..." }`, stops new
+  scheduling/claims, waits for active work to record final state, then stops the app.
+
+Use `scripts\Stop-KoLiteApp.ps1` instead of calling control routes by hand.
+
+## PowerShell helper
+
+The `ko-lite-job-manager` skill wraps the v1 API:
+
+```powershell
+$helper = '.\.github\skills\ko-lite-job-manager\scripts\Invoke-KoLiteJobApi.ps1'
+
+& $helper -Action System-Status
+& $helper -Action Get-Jobs
+& $helper -Action Create -Path .\job.json
+& $helper -Action Update -JobId $jobId -Path .\job.json
+& $helper -Action Pause -JobId $jobId -Reason 'maintenance'
+& $helper -Action Get-Logs -JobId $jobId -Query @{ limit = 200 } -AllPages
+```
+
+The helper captures ETags automatically, sends `If-Match`, parses Problem Details,
+normalizes import files into the `schedules` envelope, follows cursors only when
+`-AllPages` is requested, and reports API-version mismatch before writes.

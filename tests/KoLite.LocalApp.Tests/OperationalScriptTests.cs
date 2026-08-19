@@ -27,9 +27,34 @@ namespace KoLite.LocalApp.Tests
             Assert.Contains("[switch]$DryRun", script, StringComparison.Ordinal);
             Assert.Contains("if ($DryRun)", script, StringComparison.Ordinal);
             Assert.Contains("DryRun: no HTTP request is sent.", script, StringComparison.Ordinal);
-            Assert.Contains("/status/shutdown/drain?reason=", script, StringComparison.Ordinal);
+            Assert.Contains("/control/v1/shutdown/drain", script, StringComparison.Ordinal);
+            Assert.Contains("ContentType 'application/json'", script, StringComparison.Ordinal);
             Assert.Contains("Invoke-RestMethod -Method Post", script, StringComparison.Ordinal);
             Assert.Contains("Invoke-RestMethod -Method Get", script, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void Job_manager_helper_uses_v1_etags_problem_details_and_cursor_continuation()
+        {
+            var script = File.ReadAllText(Path.Combine(
+                FindRepositoryRoot(),
+                ".github",
+                "skills",
+                "ko-lite-job-manager",
+                "scripts",
+                "Invoke-KoLiteJobApi.ps1"));
+
+            Assert.Contains("$apiRoot = '/api/v1'", script, StringComparison.Ordinal);
+            Assert.Contains("'If-Match' = $current.ETag", script, StringComparison.Ordinal);
+            Assert.Contains("supportedApiVersions", script, StringComparison.Ordinal);
+            Assert.Contains("($code)", script, StringComparison.Ordinal);
+            Assert.Contains("nextCursor", script, StringComparison.Ordinal);
+            Assert.Contains("[switch]$AllPages", script, StringComparison.Ordinal);
+            Assert.Contains("@{ schedules = $schedules }", script, StringComparison.Ordinal);
+            Assert.Contains("repair-previews", script, StringComparison.Ordinal);
+            Assert.Contains("Repair accepted at $($result.Location)", script, StringComparison.Ordinal);
+            Assert.DoesNotContain("/api/jobs", script, StringComparison.Ordinal);
+            Assert.DoesNotContain("/status/health", script, StringComparison.Ordinal);
         }
 
         [Fact]

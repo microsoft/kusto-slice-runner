@@ -1,4 +1,4 @@
-@page "/catalog/bulk/hard-delete"
+@page "/jobs/soft-deleted/hard-delete"
 @model KoLite.LocalApp.Pages.Catalog.BulkHardDeleteModel
 @{
     ViewData["Title"] = "Bulk hard delete";
@@ -69,7 +69,7 @@ else
 
             @if (Model.Issues.Count == 0)
             {
-                <form method="post" action="/catalog/bulk/hard-delete">
+                <form method="post" action="/jobs/soft-deleted/hard-delete">
                     @Html.AntiForgeryToken()
                     @foreach (var job in Model.ReviewJobs)
                     {

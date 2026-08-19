@@ -221,6 +221,50 @@ namespace KoLite.Local.Sqlite.Tests
         }
 
         [Fact]
+        public void GetLogsPage_uses_timestamp_and_log_id_keyset()
+        {
+            catalog.Create(Schedule("logs.page"));
+            var jobId = JobId("logs.page");
+            const string timestamp = "2026-01-01T00:00:00.0000000Z";
+            foreach (var logId in new[] { "log-c", "log-b", "log-a" })
+            {
+                using var connection = factory.OpenConnection();
+                using var command = connection.CreateCommand();
+                command.CommandText = """
+                    INSERT INTO operational_logs
+                        (log_id,job_id,level,message,properties_json,recorded_at_utc)
+                    VALUES ($id,$job,'Information',$id,'{}',$time);
+                    """;
+                command.Parameters.AddWithValue("$id", logId);
+                command.Parameters.AddWithValue("$job", jobId);
+                command.Parameters.AddWithValue("$time", timestamp);
+                command.ExecuteNonQuery();
+            }
+
+            var first = diagnostics.GetLogsPage(
+                jobId,
+                level: null,
+                category: null,
+                fromUtc: null,
+                toUtc: null,
+                cursorRecordedAtUtc: null,
+                cursorId: null,
+                take: 2);
+            var second = diagnostics.GetLogsPage(
+                jobId,
+                level: null,
+                category: null,
+                fromUtc: null,
+                toUtc: null,
+                cursorRecordedAtUtc: first[^1].RecordedAtUtc,
+                cursorId: first[^1].LogId,
+                take: 2);
+
+            Assert.Equal(new[] { "log-c", "log-b" }, first.Select(item => item.LogId));
+            Assert.Equal("log-a", Assert.Single(second).LogId);
+        }
+
+        [Fact]
         public void GetThroughputSeries_keeps_most_recent_buckets_when_capped()
         {
             catalog.Create(Schedule("tp.cap"));

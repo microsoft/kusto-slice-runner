@@ -11,7 +11,7 @@ $db = "$env:LOCALAPPDATA\KoLite\ko-lite-review.db"
 dotnet run --project .\src\KoLite.LocalApp\KoLite.LocalApp.csproj -- --ConnectionStrings:KoLiteSqlite="$db" --KoLite:Scheduler:Enabled=false --KoLite:Kusto:AuthMode=AzureCli
 ```
 
-Open `http://127.0.0.1:5057/status/health` and confirm the database path, scheduler settings, Kusto auth mode, shutdown state, and worker-pool snapshot.
+Open `http://127.0.0.1:5057/healthz`, then inspect `http://127.0.0.1:5057/api/v1/system/status` to confirm the database path, scheduler settings, Kusto auth mode, shutdown state, and worker-pool snapshot.
 
 If port `5057` is busy, add an explicit URL:
 
@@ -104,7 +104,7 @@ A status badge on the right of the top bar shows one of:
 
 Failures are non-fatal and never affect scheduling or Kusto execution. Full detail
 (status, reason, built/remote SHA, commits-behind, last-checked time, and any error) is
-also exposed under `updateCheck` in `/status/health`.
+also exposed under `update` in `/api/v1/system/status`.
 
 ## Database growth and retention
 
@@ -149,7 +149,7 @@ per-attempt rows on the slice-detail page, and chart depth. To keep the dashboar
 `WindowDays` is configured.
 
 The latest retention outcome (enabled, window, interval, last-run time, and rows deleted) is exposed
-under `retention` in `/status/health`.
+under `retention` in `/api/v1/system/status`.
 
 ### Reclaiming file space (manual VACUUM)
 
@@ -218,7 +218,7 @@ attempts, durable logs, queue rows, recent failure summaries, and repair history
 
 ## Local management API
 
-KO Lite hosts a localhost-only JSON API so a same-machine agent or tool can read jobs, create/update schedules, and re-run failed slices without using the dashboard. It starts and stops with the app. Schedule writes go through the same validated, additive/update-only import path as the dashboard; the API also exposes soft-delete and restore (each requiring the job's current catalogVersion, and soft-delete blocks on active downstream dependents unless forced), and repair of `Failed`/`DeadLettered` slices (preview first, then enqueue with a reason and the previewed slice count) — but no hard-delete, generic enable/disable, or rerun surface. Reads are `GET /api/jobs`, `GET /api/jobs/{jobId}`, and `GET /api/jobs/export`; writes are `POST /api/jobs/import`, `POST /api/jobs/{jobId}/soft-delete`, `POST /api/jobs/{jobId}/restore`, and `POST /api/jobs/{jobId}/repair` (with a read-only `/repair/preview`). The one Kusto-touching route is the on-demand, read-only dependency-graph consumer endpoint (`POST /api/dependency-graph/kusto-consumers`; see [Dependency graph](#dependency-graph)). All `/api` routes are loopback-only. See [local-api.md](local-api.md) for the full contract and the `ko-lite-job-manager` skill that drives it.
+KO Lite hosts a loopback-only `/api/v1` agent API with generated OpenAPI at `/api/v1/openapi/v1.json`. It provides first-class GUID-keyed job create/replace/pause/resume, ETag concurrency, batch import/export, safe soft-delete/restore, failed-work repair, cursor-paged operational reads, and opt-in read-only Kusto lineage. It never exposes hard delete, whole-slice rerun, Kusto cleanup, or arbitrary Kusto writes. See [local-api.md](local-api.md) for workflows and the generated document for exact schemas.
 
 ## Dashboard status model
 
@@ -264,7 +264,7 @@ Bulk **Hard delete** is intentionally isolated on **Manage soft-deleted jobs**, 
 
 Soft-deleting a job that other **active** (non-soft-deleted) jobs depend on would silently strand those downstream slices in a `DependencyBlocked` state, so soft delete now warns first:
 
-- **Single soft delete** (dashboard row or job details). If the job has active downstream dependents, the Soft delete action redirects to a confirmation page (`/catalog/{jobId}/soft-delete-confirm`) that lists each dependent job (linked to its details page). From there you can **Soft delete anyway** (an explicit force) or **Cancel**. With no dependents the job is soft-deleted immediately, exactly as before.
+- **Single soft delete** (dashboard row or job details). If the job has active downstream dependents, the Soft delete action redirects to `/jobs/{jobId}/soft-delete-confirm`, which lists each dependent job. From there you can **Soft delete anyway** or **Cancel**.
 - **Bulk soft delete.** Any selected job with active downstream dependents is **skipped** (never force-deleted) and named in the summary banner alongside the dependents that need it. Force a specific blocked job from its own confirmation page if that is really what you want.
 
 Dependents are matched by the upstream job's durable `id`; a dependent that is itself soft-deleted does not block, because it is not scheduling. Add or remove these edges with the dependency picker in the job editor (the **Job definition** tab on the details page, or the create/copy editors).
@@ -291,7 +291,7 @@ Use the helper scripts (recommended):
 
 The same script is included in GitHub Release downloads. It prefers `KoLite.LocalApp.exe` in the self-contained Windows x64 package and falls back to `dotnet KoLite.LocalApp.dll` in the framework-dependent package. The framework-dependent package requires the .NET 10 runtime.
 
-Release ZIPs are replaceable application files; the default durable SQLite database remains at `%LOCALAPPDATA%\KoLite\ko-lite.db`. Extract a new release to a new or cleaned application folder rather than copying it over a running version. Gracefully drain the old instance first, then start the new release with scheduling disabled to inspect `/status/health` and the configured targets before enabling live scheduling.
+Release ZIPs are replaceable application files; the default durable SQLite database remains at `%LOCALAPPDATA%\KoLite\ko-lite.db`. Extract a new release to a new or cleaned application folder rather than copying it over a running version. Gracefully drain the old instance first, then start the new release with scheduling disabled to inspect `/healthz`, `/api/v1/system/status`, and the configured targets before enabling live scheduling.
 
 The equivalent manual commands are:
 
@@ -363,9 +363,9 @@ When a slice fails because Kusto throttled its `.set-or-append` against the clus
 
 ## Diagnostics
 
-Run `.\scripts\Get-KoLiteDatabase.ps1` to print the in-use SQLite database path. While the app is running it reports the authoritative `databasePath` from `/status/health`; while the app is stopped it reports the default and flags the most likely live file (ignoring backup/copy files and `*.db-wal` / `*.db-shm` sidecars). Pass `-BaseUrl` for a non-default endpoint. `ko-lite.db` is only the default when no connection string is supplied — `/status/health` is the source of truth for the running instance, and the app also logs the resolved path at startup.
+Run `.\scripts\Get-KoLiteDatabase.ps1` to print the in-use SQLite database path. While the app is running it reports the authoritative `database.path` from `/api/v1/system/status`; while the app is stopped it reports the default and flags the most likely live file. Pass `-BaseUrl` for a non-default endpoint.
 
-Use `/status/health` to confirm the database path, scheduler options, Kusto auth mode, worker-pool state, and shutdown state.
+Use `/api/v1/system/status` to confirm the database path, scheduler options, Kusto auth mode, worker-pool state, supported API versions, and shutdown state.
 
 Enable per-pass scheduler/worker diagnostics temporarily with:
 
@@ -472,34 +472,34 @@ The attempt's metrics JSON also records `isRetryable`, `isPermanent`, `kustoFail
 ### Requeuing slices that already dead-lettered
 
 The classification change is forward-looking; it does not revisit slices that dead-lettered earlier.
-To re-run those, use the **repair API** (`POST /api/jobs/{jobId}/repair`), which accepts an aligned
+To re-run those, use the **repair API** (`POST /api/v1/jobs/{jobId}/repairs`), which accepts an aligned
 UTC range and re-queues the `Failed`/`DeadLettered` slices in it. Review the failures first so
 genuinely permanent ones (a semantic error from a broken function, say) are fixed at the source
 rather than retried:
 
 ```powershell
 $base = 'http://127.0.0.1:5057'
-$jobId = 'SampleAnalytics.BuildEcu5MinProfile'   # permanent GUID or activityId
+$jobId = '11111111-2222-3333-4444-555555555555'   # permanent GUID
 
 # Recent failures, newest first, with the attempt number they dead-lettered on.
-Invoke-RestMethod "$base/api/diagnostics/failures?take=200" |
-  Select-Object -ExpandProperty recentFailures |
+Invoke-RestMethod "$base/api/v1/operations/failures?jobId=$jobId&limit=200" |
+  Select-Object -ExpandProperty items |
   Where-Object status -eq 'DeadLettered' |
   Select-Object jobId, sliceStartUtc, attempt, reason
 
 # Preview the repair (writes nothing), then enqueue it echoing the previewed count.
 $range = @{ from = '2026-01-01T00:00:00Z'; to = '2026-01-02T00:00:00Z' }
-$preview = Invoke-RestMethod -Method Post -Uri "$base/api/jobs/$jobId/repair/preview" `
+$preview = Invoke-RestMethod -Method Post -Uri "$base/api/v1/jobs/$jobId/repair-previews" `
   -ContentType 'application/json' -Body ($range | ConvertTo-Json)
 
-Invoke-RestMethod -Method Post -Uri "$base/api/jobs/$jobId/repair" -ContentType 'application/json' `
+Invoke-RestMethod -Method Post -Uri "$base/api/v1/jobs/$jobId/repairs" -ContentType 'application/json' `
   -Body (($range + @{ reason = 'Requeue transient failures'; expectedSliceCount = $preview.repairableSliceCount }) | ConvertTo-Json)
 ```
 
 Re-running is safe: output carries an `ingest-by` tag plus `ingestIfNotExists`, so Kusto dedupes a
 repeat ingestion and no cleanup is needed. For the same reason repair only fills gaps — it cannot
 overwrite an already-`Completed` slice, which is what the [rerun flow](#rerun-and-cleanup) is for. See
-[local-api.md](local-api.md#repairing-failed-slices) for the full contract and guards.
+[local-api.md](local-api.md#repair) for the full contract and guards.
 
 A slice that dead-lettered on **attempt 1** with a transient reason is a good requeue candidate; one
 that dead-lettered on attempt 3 already exhausted its retries.
@@ -542,6 +542,6 @@ ORDER BY slice_start_utc;
 - **Unexpected live work:** restart with `--KoLite:Scheduler:Enabled=false`, pause jobs, or stop the local process and wait for active work to drain.
 - **Kusto auth failures:** verify Azure CLI sign-in, managed identity settings, target cluster/database, and Kusto permissions.
 - **Locked publish output:** stop the published app before republishing.
-- **SQLite inspection:** use the database path shown by `/status/health`; runtime sidecar files such as `*.db-wal` and `*.db-shm` are local artifacts.
-- **Local API unreachable:** the `/api/*` routes only exist while the app is running and only accept loopback callers; confirm the app is up via `/status/health` and use the loopback base URL.
+- **SQLite inspection:** use `database.path` from `/api/v1/system/status`; runtime sidecar files such as `*.db-wal` and `*.db-shm` are local artifacts.
+- **Local API unreachable:** `/api/v1` routes exist only while the app is running and accept loopback callers; confirm `/healthz`, then inspect `/api/v1/system/status`.
 - **Crash recovery:** long `queryTimeout` values also lengthen queue lease windows, so recovery after a hard crash can take longer for long-running jobs. A slice stuck as **Stalled (orphaned lease)** is recovered automatically on the next dispatch once its lease expires (for enabled jobs); resume a paused job, or use **Recover (re-queue) this slice** on the slice detail page, to recover it sooner. See [Orphaned leases and recovery](#orphaned-leases-and-recovery).

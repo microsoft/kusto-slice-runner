@@ -116,6 +116,50 @@ namespace KoLite.Local.Sqlite.Observability
             return results;
         }
 
+        public IReadOnlyList<RecentFailure> GetRecentFailuresPage(
+            int take,
+            string? jobId,
+            DateTimeOffset? cursorUpdatedAtUtc,
+            string? cursorId)
+        {
+            using var c = connectionFactory.OpenConnection();
+            using var cmd = SqliteStorage.Command(c, null, """
+                SELECT job_id,slice_start_utc,slice_end_utc,state,attempt,last_error_message,updated_at_utc
+                FROM current_slice_state
+                WHERE state IN ('Failed','DeadLettered')
+                  AND ($jobId IS NULL OR job_id=$jobId)
+                  AND (
+                      $cursorUpdated IS NULL
+                      OR updated_at_utc < $cursorUpdated
+                      OR (
+                          updated_at_utc = $cursorUpdated
+                          AND (job_id || '|' || slice_start_utc || '|' || slice_end_utc) < $cursorId
+                      )
+                  )
+                ORDER BY updated_at_utc DESC, job_id DESC, slice_start_utc DESC, slice_end_utc DESC
+                LIMIT $take;
+                """);
+            cmd.Add("$jobId", jobId);
+            cmd.Add("$cursorUpdated", cursorUpdatedAtUtc is null ? null : SqliteStorage.Utc(cursorUpdatedAtUtc.Value));
+            cmd.Add("$cursorId", cursorId);
+            cmd.Add("$take", take);
+            using var r = cmd.ExecuteReader();
+            var results = new List<RecentFailure>();
+            while (r.Read())
+            {
+                results.Add(new RecentFailure(
+                    r.GetString(0),
+                    SqliteStorage.ReadUtc(r, "slice_start_utc"),
+                    SqliteStorage.ReadUtc(r, "slice_end_utc"),
+                    r.GetString(3),
+                    r.GetInt32(4),
+                    r.IsDBNull(5) ? null : r.GetString(5),
+                    SqliteStorage.ReadUtc(r, "updated_at_utc")));
+            }
+
+            return results;
+        }
+
         public IReadOnlyList<RecentSliceEvent> GetRecentSliceEvents(int take = 50)
         {
             using var c = connectionFactory.OpenConnection();
@@ -196,6 +240,61 @@ namespace KoLite.Local.Sqlite.Observability
             return rows;
         }
 
+        public IReadOnlyList<SliceAttemptRow> GetSliceAttemptsPage(
+            string? jobId,
+            DateTimeOffset? sliceStartUtc,
+            DateTimeOffset? sliceEndUtc,
+            DateTimeOffset? cursorActivityAtUtc,
+            string? cursorId,
+            int take)
+        {
+            using var c = connectionFactory.OpenConnection();
+            using var cmd = SqliteStorage.Command(c, null, """
+                SELECT attempt_id, job_id, slice_start_utc, slice_end_utc, attempt, status, worker_id, started_at_utc, completed_at_utc, error_code, error_message, chunk_id, total_chunks
+                FROM slice_attempts
+                WHERE ($jobId IS NULL OR job_id=$jobId)
+                  AND ($sliceStart IS NULL OR slice_start_utc=$sliceStart)
+                  AND ($sliceEnd IS NULL OR slice_end_utc=$sliceEnd)
+                  AND (
+                      $cursorActivity IS NULL
+                      OR COALESCE(completed_at_utc, started_at_utc, slice_start_utc) < $cursorActivity
+                      OR (
+                          COALESCE(completed_at_utc, started_at_utc, slice_start_utc) = $cursorActivity
+                          AND attempt_id < $cursorId
+                      )
+                  )
+                ORDER BY COALESCE(completed_at_utc, started_at_utc, slice_start_utc) DESC, attempt_id DESC
+                LIMIT $take;
+                """);
+            cmd.Add("$jobId", jobId);
+            cmd.Add("$sliceStart", sliceStartUtc is null ? null : SqliteStorage.Utc(sliceStartUtc.Value));
+            cmd.Add("$sliceEnd", sliceEndUtc is null ? null : SqliteStorage.Utc(sliceEndUtc.Value));
+            cmd.Add("$cursorActivity", cursorActivityAtUtc is null ? null : SqliteStorage.Utc(cursorActivityAtUtc.Value));
+            cmd.Add("$cursorId", cursorId);
+            cmd.Add("$take", take);
+            using var r = cmd.ExecuteReader();
+            var rows = new List<SliceAttemptRow>();
+            while (r.Read())
+            {
+                rows.Add(new SliceAttemptRow(
+                    r.GetString(0),
+                    r.GetString(1),
+                    SqliteStorage.ReadUtc(r, "slice_start_utc"),
+                    SqliteStorage.ReadUtc(r, "slice_end_utc"),
+                    r.GetInt32(4),
+                    r.GetString(5),
+                    r.IsDBNull(6) ? null : r.GetString(6),
+                    SqliteStorage.ReadNullableUtc(r, "started_at_utc"),
+                    SqliteStorage.ReadNullableUtc(r, "completed_at_utc"),
+                    r.IsDBNull(9) ? null : r.GetString(9),
+                    r.IsDBNull(10) ? null : r.GetString(10),
+                    r.IsDBNull(11) ? null : r.GetInt32(11),
+                    r.IsDBNull(12) ? null : r.GetInt32(12)));
+            }
+
+            return rows;
+        }
+
         // Operational log lines for one job, optionally narrowed to a single slice window, newest first.
         // Backs the job-details "logs" readout.
         public IReadOnlyList<OperationalLogRow> GetOperationalLogs(string jobId, DateTimeOffset? sliceStartUtc = null, DateTimeOffset? sliceEndUtc = null, int take = 50)
@@ -252,6 +351,55 @@ namespace KoLite.Local.Sqlite.Observability
             cmd.Add("$jobId", jobId);
             cmd.Add("$sliceStart", sliceStartUtc is null ? null : SqliteStorage.Utc(sliceStartUtc.Value));
             cmd.Add("$sliceEnd", sliceEndUtc is null ? null : SqliteStorage.Utc(sliceEndUtc.Value));
+            cmd.Add("$take", take);
+            using var r = cmd.ExecuteReader();
+            var rows = new List<SliceStateEventRow>();
+            while (r.Read())
+            {
+                rows.Add(new SliceStateEventRow(
+                    r.GetString(0),
+                    r.GetString(1),
+                    SqliteStorage.ReadUtc(r, "slice_start_utc"),
+                    SqliteStorage.ReadUtc(r, "slice_end_utc"),
+                    r.GetString(4),
+                    r.IsDBNull(5) ? null : r.GetString(5),
+                    r.IsDBNull(6) ? null : r.GetInt32(6),
+                    r.IsDBNull(7) ? null : r.GetString(7),
+                    r.IsDBNull(8) ? null : r.GetString(8),
+                    SqliteStorage.ReadUtc(r, "recorded_at_utc")));
+            }
+
+            return rows;
+        }
+
+        public IReadOnlyList<SliceStateEventRow> GetSliceStateEventsPage(
+            string? jobId,
+            DateTimeOffset? sliceStartUtc,
+            DateTimeOffset? sliceEndUtc,
+            DateTimeOffset? cursorRecordedAtUtc,
+            string? cursorId,
+            int take)
+        {
+            using var c = connectionFactory.OpenConnection();
+            using var cmd = SqliteStorage.Command(c, null, """
+                SELECT event_id, job_id, slice_start_utc, slice_end_utc, event_type, state, attempt, reason, actor, recorded_at_utc
+                FROM slice_state_events
+                WHERE ($jobId IS NULL OR job_id=$jobId)
+                  AND ($sliceStart IS NULL OR slice_start_utc=$sliceStart)
+                  AND ($sliceEnd IS NULL OR slice_end_utc=$sliceEnd)
+                  AND (
+                      $cursorRecorded IS NULL
+                      OR recorded_at_utc < $cursorRecorded
+                      OR (recorded_at_utc = $cursorRecorded AND event_id < $cursorId)
+                  )
+                ORDER BY recorded_at_utc DESC, event_id DESC
+                LIMIT $take;
+                """);
+            cmd.Add("$jobId", jobId);
+            cmd.Add("$sliceStart", sliceStartUtc is null ? null : SqliteStorage.Utc(sliceStartUtc.Value));
+            cmd.Add("$sliceEnd", sliceEndUtc is null ? null : SqliteStorage.Utc(sliceEndUtc.Value));
+            cmd.Add("$cursorRecorded", cursorRecordedAtUtc is null ? null : SqliteStorage.Utc(cursorRecordedAtUtc.Value));
+            cmd.Add("$cursorId", cursorId);
             cmd.Add("$take", take);
             using var r = cmd.ExecuteReader();
             var rows = new List<SliceStateEventRow>();

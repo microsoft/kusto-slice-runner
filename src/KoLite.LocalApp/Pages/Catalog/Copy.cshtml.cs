@@ -27,7 +27,7 @@ namespace KoLite.LocalApp.Pages.Catalog
             }
 
             var json = CopySchedule(record.ScheduleJson);
-            Editor = new ScheduleEditorViewModel("/catalog/create", ScheduleFormInput.FromJson(json), AppFormatting.PrettyJson(json), null, false, "Create copied job", false, ScheduleEditorViewModel.BuildOptions(catalog, null));
+            Editor = new ScheduleEditorViewModel("/jobs/new", ScheduleFormInput.FromJson(json), AppFormatting.PrettyJson(json), null, false, "Create copied job", false, ScheduleEditorViewModel.BuildOptions(catalog, null));
             return Page();
         }
 

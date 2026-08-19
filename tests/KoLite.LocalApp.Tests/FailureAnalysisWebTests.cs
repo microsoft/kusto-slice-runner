@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -82,7 +83,7 @@ namespace KoLite.LocalApp.Tests
 
             // The run is retrievable by id and scoped to the job.
             var runId = root.GetProperty("runId").GetString();
-            var poll = await client.GetStringAsync($"/api/jobs/{JobId}/analyze-failures/{runId}");
+            var poll = await client.GetStringAsync($"/ui-api/v1/jobs/{Guid.ParseExact(JobId, "N"):D}/failure-analyses/{runId}");
             using var pollDoc = JsonDocument.Parse(poll);
             Assert.Equal("Completed", pollDoc.RootElement.GetProperty("status").GetString());
         }
@@ -93,7 +94,7 @@ namespace KoLite.LocalApp.Tests
             using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
             await SeedJobAsync(client);
 
-            using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/jobs/{JobId}/analyze-failures");
+            using var request = new HttpRequestMessage(HttpMethod.Post, $"/ui-api/v1/jobs/{Guid.ParseExact(JobId, "N"):D}/failure-analyses");
             using var response = await client.SendAsync(request);
 
             Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
@@ -127,14 +128,16 @@ namespace KoLite.LocalApp.Tests
               "target": { "clusterUri": "https://kolite-example.invalid", "database": "DemoDb" }
             }
             """;
-            using var response = await client.PostAsync("/api/jobs/import", new StringContent(schedule, Encoding.UTF8, "application/json"));
+            using var response = await client.PostAsJsonAsync(
+                "/api/v1/jobs",
+                new { schedule = JsonDocument.Parse(schedule).RootElement });
             var body = await response.Content.ReadAsStringAsync();
             Assert.True(response.IsSuccessStatusCode, body);
         }
 
         private static async Task<HttpResponseMessage> PostAnalyze(HttpClient client, string jobId, FormToken token)
         {
-            using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/jobs/{jobId}/analyze-failures");
+            using var request = new HttpRequestMessage(HttpMethod.Post, $"/ui-api/v1/jobs/{Guid.ParseExact(jobId, "N"):D}/failure-analyses");
             request.Headers.Add("X-CSRF-TOKEN", token.Value);
             request.Headers.Add("X-Requested-With", "XMLHttpRequest");
             if (!string.IsNullOrEmpty(token.Cookie)) request.Headers.Add("Cookie", token.Cookie);
@@ -163,7 +166,11 @@ namespace KoLite.LocalApp.Tests
                     ["KoLite:Scheduler:Enabled"] = "false",
                     ["KoLite:UpdateCheck:Enabled"] = "false"
                 }));
-                builder.ConfigureServices(services => services.AddLogging(logging => logging.ClearProviders()));
+                builder.ConfigureServices(services =>
+                {
+                    services.AddLogging(logging => logging.ClearProviders());
+                    services.AddTestLocalRequestPolicy();
+                });
             });
 
         public void Dispose()

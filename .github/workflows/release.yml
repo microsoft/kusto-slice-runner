@@ -136,6 +136,9 @@ jobs:
       - name: Restore JavaScript assets
         run: npm ci
 
+      - name: Test browser route behavior
+        run: npm run test:js
+
       - name: Restore .NET packages
         run: dotnet restore .\KoLite.Local.sln
 
@@ -354,8 +357,8 @@ jobs:
                       }
 
                       try {
-                          $health = Invoke-RestMethod -Method Get -Uri "$BaseUrl/status/health" -TimeoutSec 3
-                          if ($health.status -eq 'Healthy') {
+                          $health = Invoke-RestMethod -Method Get -Uri "$BaseUrl/healthz" -TimeoutSec 3
+                          if ($health.status -eq 'healthy') {
                               break
                           }
                       } catch {
@@ -367,12 +370,13 @@ jobs:
                   if ($null -eq $health) {
                       throw "$Name did not become healthy within two minutes."
                   }
-                  if ($health.scheduler.enabled -ne $false) {
+                  $systemStatus = Invoke-RestMethod -Method Get -Uri "$BaseUrl/api/v1/system/status" -TimeoutSec 5
+                  if ($systemStatus.scheduler.enabled -ne $false) {
                       throw "$Name smoke test unexpectedly started with scheduling enabled."
                   }
 
                   $expectedDatabasePath = [System.IO.Path]::GetFullPath($DatabasePath)
-                  $reportedDatabasePath = [System.IO.Path]::GetFullPath([string]$health.databasePath)
+                  $reportedDatabasePath = [System.IO.Path]::GetFullPath([string]$systemStatus.database.path)
                   if (-not [string]::Equals(
                       $expectedDatabasePath,
                       $reportedDatabasePath,
@@ -380,7 +384,7 @@ jobs:
                       throw "$Name reported database '$reportedDatabasePath' instead of '$expectedDatabasePath'."
                   }
 
-                  $builtSha = [string]$health.updateCheck.builtSha
+                  $builtSha = [string]$systemStatus.update.builtSha
                   if (-not [string]::Equals(
                       $builtSha,
                       $env:RELEASE_SHA,

@@ -180,6 +180,35 @@ namespace KoLite.Local.Sqlite.Tests
         }
 
         [Fact]
+        public void GetSliceAttemptsPage_uses_activity_time_and_attempt_id_keyset()
+        {
+            state.Append("attempt-state-c", JobId("job.obs"), At(0), At(5), DurableSliceStatus.Completed, expectedVersion: 0);
+            state.Append("attempt-state-b", JobId("job.obs"), At(5), At(10), DurableSliceStatus.Completed, expectedVersion: 0);
+            state.Append("attempt-state-a", JobId("job.obs"), At(10), At(15), DurableSliceStatus.Completed, expectedVersion: 0);
+            readModels.RecordAttempt("attempt-c", JobId("job.obs"), At(0), At(5), 1, "Succeeded", "worker", At(10), At(11));
+            readModels.RecordAttempt("attempt-b", JobId("job.obs"), At(5), At(10), 1, "Succeeded", "worker", At(10), At(11));
+            readModels.RecordAttempt("attempt-a", JobId("job.obs"), At(10), At(15), 1, "Succeeded", "worker", At(10), At(11));
+
+            var first = readModels.GetSliceAttemptsPage(
+                JobId("job.obs"),
+                sliceStartUtc: null,
+                sliceEndUtc: null,
+                cursorActivityAtUtc: null,
+                cursorId: null,
+                take: 2);
+            var second = readModels.GetSliceAttemptsPage(
+                JobId("job.obs"),
+                sliceStartUtc: null,
+                sliceEndUtc: null,
+                cursorActivityAtUtc: first[^1].CompletedAtUtc,
+                cursorId: first[^1].AttemptId,
+                take: 2);
+
+            Assert.Equal(new[] { "attempt-c", "attempt-b" }, first.Select(item => item.AttemptId));
+            Assert.Equal("attempt-a", Assert.Single(second).AttemptId);
+        }
+
+        [Fact]
         public void Recent_throughput_counts_complete_logical_windows_not_successful_chunks()
         {
             catalog.Create(Schedule("job.obs.chunks", chunks: 2));

@@ -235,7 +235,7 @@ if (-not $NoBrowser) {
     $browserJob = Start-Job -Name 'KoLiteUiBrowser' -ArgumentList $effectiveUrl -ScriptBlock {
         param([string]$Url)
         $ProgressPreference = 'SilentlyContinue'
-        $healthUrl = "$Url/status/health"
+        $healthUrl = "$Url/healthz"
         $deadline = (Get-Date).AddSeconds(90)
         $ready = $false
         while ((Get-Date) -lt $deadline) {

@@ -1,4 +1,4 @@
-@page "/catalog/{jobId}/hard-delete"
+@page "/jobs/{jobId:guid}/hard-delete"
 @model KoLite.LocalApp.Pages.Catalog.HardDeleteModel
 @{
     ViewData["Title"] = "Hard delete";
@@ -29,7 +29,7 @@ else
     <section class="card form-card">
         <h2>Confirm hard delete</h2>
         <p>Hard delete is allowed only after the job is disabled or soft-deleted and no active work is queued, leased, or running.</p>
-        <form method="post" action="/catalog/@Uri.EscapeDataString(Model.JobId)/hard-delete">
+        <form method="post" action="/jobs/@Uri.EscapeDataString(Model.JobId)/hard-delete">
             @Html.AntiForgeryToken()
             <label>Type <code>DELETE @Model.DisplayName</code><input name="confirmation" autocomplete="off" /></label>
             <label>Reason<textarea name="reason" rows="3">Hard deleted from web UI</textarea></label>

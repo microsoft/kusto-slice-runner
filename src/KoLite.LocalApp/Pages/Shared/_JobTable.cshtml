@@ -174,7 +174,7 @@
                 {
                     var dashboardSearchText = Model.EnableClientFilter ? BuildDashboardSearchText(Model, job) : null;
                     var inlineToggle = Model.EnableInlineToggle;
-                    var toggleBase = "/catalog/" + Uri.EscapeDataString(job.Record.JobId);
+                    var toggleBase = "/jobs/" + Uri.EscapeDataString(job.Record.JobId) + "/actions";
                     <tr data-dashboard-job-row="@Model.EnableClientFilter.ToString().ToLowerInvariant()" data-dashboard-job-id="@job.Record.JobId" data-dashboard-search="@dashboardSearchText">
                         @if (Model.EnableBulkSelect)
                         {
@@ -237,22 +237,22 @@
                                 {
                                     <a class="btn small icon-only" title="History" aria-label="History" href="/jobs/@Uri.EscapeDataString(job.Record.JobId)/history">@UiIcons.IconOnly("history", "History")</a>
                                 }
-                                <a class="btn small icon-only" title="Copy" aria-label="Copy" href="/catalog/@Uri.EscapeDataString(job.Record.JobId)/copy">@UiIcons.IconOnly("copy", "Copy")</a>
+                                <a class="btn small icon-only" title="Copy" aria-label="Copy" href="/jobs/@Uri.EscapeDataString(job.Record.JobId)/copy">@UiIcons.IconOnly("copy", "Copy")</a>
                                 @if (Model.SoftDeletedSection)
                                 {
-                                    <form method="post" action="/catalog/@Uri.EscapeDataString(job.Record.JobId)/restore" class="inline-form">
+                                    <form method="post" action="/jobs/@Uri.EscapeDataString(job.Record.JobId)/actions/restore" class="inline-form">
                                         @Html.AntiForgeryToken()
                                         <input type="hidden" name="expectedVersion" value="@job.Record.CatalogVersion" />
                                         <input type="hidden" name="reason" value="Restored from dashboard" />
                                         <button class="btn small icon-only" type="submit" title="Restore" aria-label="Restore">@UiIcons.IconOnly("restore", "Restore")</button>
                                     </form>
-                                    <a class="btn small icon-only danger" title="Hard delete" aria-label="Hard delete" href="/catalog/@Uri.EscapeDataString(job.Record.JobId)/hard-delete">@UiIcons.IconOnly("hard-delete", "Hard delete")</a>
+                                    <a class="btn small icon-only danger" title="Hard delete" aria-label="Hard delete" href="/jobs/@Uri.EscapeDataString(job.Record.JobId)/hard-delete">@UiIcons.IconOnly("hard-delete", "Hard delete")</a>
                                 }
                                 else
                                 {
                                     @if (job.Record.IsEnabled)
                                     {
-                                        <form method="post" action="@toggleBase/disable" class="inline-form" data-dashboard-toggle="@(inlineToggle ? "true" : null)" data-dashboard-job-id="@(inlineToggle ? job.Record.JobId : null)" data-toggle-base="@(inlineToggle ? toggleBase : null)">
+                                        <form method="post" action="@toggleBase/pause" class="inline-form" data-dashboard-toggle="@(inlineToggle ? "true" : null)" data-dashboard-job-id="@(inlineToggle ? job.Record.JobId : null)" data-toggle-base="@(inlineToggle ? toggleBase : null)">
                                             @Html.AntiForgeryToken()
                                             <input type="hidden" name="expectedVersion" value="@job.Record.CatalogVersion" />
                                             <button class="btn small icon-only" type="submit" title="Pause" aria-label="Pause">@UiIcons.IconOnly("pause", "Pause")</button>
@@ -260,7 +260,7 @@
                                     }
                                     else
                                     {
-                                        <form method="post" action="@toggleBase/enable" class="inline-form" data-dashboard-toggle="@(inlineToggle ? "true" : null)" data-dashboard-job-id="@(inlineToggle ? job.Record.JobId : null)" data-toggle-base="@(inlineToggle ? toggleBase : null)">
+                                        <form method="post" action="@toggleBase/resume" class="inline-form" data-dashboard-toggle="@(inlineToggle ? "true" : null)" data-dashboard-job-id="@(inlineToggle ? job.Record.JobId : null)" data-toggle-base="@(inlineToggle ? toggleBase : null)">
                                             @Html.AntiForgeryToken()
                                             <input type="hidden" name="expectedVersion" value="@job.Record.CatalogVersion" />
                                             <button class="btn small icon-only" type="submit" title="Resume" aria-label="Resume">@UiIcons.IconOnly("play", "Resume")</button>
@@ -268,7 +268,7 @@
                                     }
                                     @if (Model.ShowSoftDeleteAction)
                                     {
-                                        <form method="post" action="/catalog/@Uri.EscapeDataString(job.Record.JobId)/soft-delete" class="inline-form">
+                                        <form method="post" action="/jobs/@Uri.EscapeDataString(job.Record.JobId)/actions/soft-delete" class="inline-form">
                                             @Html.AntiForgeryToken()
                                             <input type="hidden" name="expectedVersion" value="@job.Record.CatalogVersion" />
                                             <input type="hidden" name="reason" value="Soft deleted from dashboard" />

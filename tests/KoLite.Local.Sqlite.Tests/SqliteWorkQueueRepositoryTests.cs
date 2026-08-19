@@ -43,6 +43,44 @@ namespace KoLite.Local.Sqlite.Tests
         }
 
         [Fact]
+        public void ListPage_filters_and_uses_created_time_plus_queue_id_cursor()
+        {
+            var firstItem = queue.Enqueue(JobId("job.queue"), At(0), At(5), "page-first", At(20));
+            Thread.Sleep(10);
+            var secondItem = queue.Enqueue(JobId("job.queue"), At(5), At(10), "page-second", At(20));
+
+            var first = queue.ListPage(
+                JobId("job.queue"),
+                queueName: "default",
+                DurableWorkQueueState.Queued,
+                cursorCreatedAtUtc: null,
+                cursorId: null,
+                take: 1);
+            var next = queue.ListPage(
+                JobId("job.queue"),
+                queueName: "default",
+                DurableWorkQueueState.Queued,
+                cursorCreatedAtUtc: first[0].CreatedAtUtc,
+                cursorId: first[0].QueueItemId,
+                take: 1);
+
+            Assert.Equal(secondItem.QueueItemId, Assert.Single(first).QueueItemId);
+            Assert.Equal(firstItem.QueueItemId, Assert.Single(next).QueueItemId);
+        }
+
+        [Fact]
+        public void ListPage_requires_a_positive_storage_limit()
+        {
+            Assert.Throws<ArgumentOutOfRangeException>(() => queue.ListPage(
+                JobId("job.queue"),
+                queueName: "default",
+                DurableWorkQueueState.Queued,
+                cursorCreatedAtUtc: null,
+                cursorId: null,
+                take: 0));
+        }
+
+        [Fact]
         public void Claim_orders_by_availability_then_priority_and_visibility_timeout()
         {
             queue.Enqueue(JobId("job.queue"), At(0), At(5), "low", At(10), priority: 0);

@@ -35,7 +35,7 @@ If you're familiar with [scheduled Kusto jobs](https://learn.microsoft.com/kusto
 - Bounds local database growth: a retention service prunes old operational telemetry (logs, terminal queue rows, old attempts) on a schedule while preserving the full slice window-history, so reruns and scheduling stay intact.
 - Detects Kusto ingestion-capacity throttling (429), shows how bad it is (the % of attempts throttled, with a trend chart), highlights slices lost to throttling, and recommends per-job `maxParallelism` reductions that never starve a job below the parallelism it needs to keep up (and only trim a backfilling job to what still clears its backlog in time); operators apply them explicitly.
 - Plans historical reruns and local state repair while leaving destructive Kusto cleanup to the operator.
-- Exposes a localhost-only JSON API so a same-machine agent can read jobs, create/update schedules (via the same validated import path as the dashboard), and soft-delete/restore a job — plus a read-only **diagnostics** API for slice states, leases, throughput, history, logs, and audit.
+- Exposes a versioned localhost-only JSON API under `/api/v1` with generated OpenAPI, first-class job create/update/pause/resume, ETag concurrency, safe soft-delete/restore and failed-work repair, plus cursor-paged operational diagnostics. Hard delete, whole-slice rerun, and Kusto cleanup remain browser/operator-only.
 - Ships **Copilot skills** in `.github/skills`: `ko-lite-job-manager` drives that API (import/upsert, pause/resume, soft-delete/restore, diagnostics), `ko-lite-schedule-json` authors and validates schedule JSON locally, and `ko-lite-release-highlights` writes AI highlights for an existing release draft to a local Markdown file.
 - Periodically checks GitHub (via the `gh` CLI) for a newer published KO Lite release and shows an update badge in the top bar.
 
@@ -53,7 +53,7 @@ az login
 .\Start-KoLiteApp.ps1 -AppArguments '--KoLite:Scheduler:Enabled=false'
 ```
 
-Open `http://127.0.0.1:5057` and check `http://127.0.0.1:5057/status/health`. Review the configured jobs and Kusto targets before restarting without the scheduler override. The local catalog and execution history remain in `%LOCALAPPDATA%\KoLite\ko-lite.db`, outside the extracted application folder, so replacing the application folder does not replace your runtime state.
+Open `http://127.0.0.1:5057` and check `http://127.0.0.1:5057/healthz`. Detailed local status is at `http://127.0.0.1:5057/api/v1/system/status`. Review the configured jobs and Kusto targets before restarting without the scheduler override. The local catalog and execution history remain in `%LOCALAPPDATA%\KoLite\ko-lite.db`, outside the extracted application folder, so replacing the application folder does not replace your runtime state.
 
 GitHub CLI is optional for basic execution but is required for the update badge; run `gh auth login` once to enable update checks. Copilot-powered failure analysis separately requires [GitHub Copilot CLI](https://docs.github.com/copilot/how-tos/use-copilot-agents/use-copilot-cli); install the `copilot` command and run `copilot login` once.
 
@@ -72,7 +72,7 @@ npm ci
 dotnet run --project .\src\KoLite.LocalApp\KoLite.LocalApp.csproj
 ```
 
-Open `http://127.0.0.1:5057` and check `http://127.0.0.1:5057/status/health`
+Open `http://127.0.0.1:5057` and check `http://127.0.0.1:5057/healthz`.
 
 You should be able to kill it at any point and it will restart without duplicating data (thanks to ingest-by tags) but to avoid any chance of issues, execute `scripts\Stop-KoLiteApp.ps1`. It will wait for the workers to drain and then shut down gracefully.
 

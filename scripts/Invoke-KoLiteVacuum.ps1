@@ -11,7 +11,7 @@ shrink the file with a one-off VACUUM after retention has removed a large backlo
 VACUUM rewrites the whole database and needs exclusive access plus enough free disk for a temporary
 copy, so the KO Lite app must be stopped first. The script:
 
-1. Resolves the in-use database path (from the running app's /status/health, an explicit
+1. Resolves the in-use database path (from the running app's /api/v1/system/status, an explicit
    -DatabasePath, or the default %LOCALAPPDATA%\KoLite\ko-lite.db).
 2. Refuses to run while the app is responding, unless -Force is supplied (not recommended:
    VACUUM will usually fail with "database is locked" while the app holds a connection).
@@ -95,15 +95,15 @@ function Resolve-SqliteAssembly {
 $isRunning = $false
 $health = $null
 try {
-    $health = Invoke-RestMethod -Method Get -Uri "$($BaseUrl.TrimEnd('/'))/status/health" -TimeoutSec 5
+    $health = Invoke-RestMethod -Method Get -Uri "$($BaseUrl.TrimEnd('/'))/api/v1/system/status" -TimeoutSec 5
     $isRunning = $true
 } catch {
     $isRunning = $false
 }
 
 if ([string]::IsNullOrWhiteSpace($DatabasePath)) {
-    if ($isRunning -and $null -ne $health -and $health.PSObject.Properties.Name -contains 'databasePath' -and -not [string]::IsNullOrWhiteSpace($health.databasePath)) {
-        $DatabasePath = $health.databasePath
+    if ($isRunning -and $null -ne $health -and $null -ne $health.database -and -not [string]::IsNullOrWhiteSpace($health.database.path)) {
+        $DatabasePath = [string]$health.database.path
     } else {
         $DatabasePath = Join-Path (Join-Path $env:LOCALAPPDATA 'KoLite') 'ko-lite.db'
     }

@@ -19,9 +19,8 @@ if ($Timeout -le [TimeSpan]::Zero) {
 }
 
 $root = $BaseUrl.TrimEnd('/')
-$encodedReason = [System.Uri]::EscapeDataString($Reason)
-$drainUrl = "$root/status/shutdown/drain?reason=$encodedReason"
-$statusUrl = "$root/status/shutdown"
+$drainUrl = "$root/control/v1/shutdown/drain"
+$statusUrl = "$root/control/v1/shutdown"
 
 function Get-ShutdownSnapshot {
     param(
@@ -63,7 +62,8 @@ if ($DryRun) {
 }
 
 try {
-    $response = Invoke-RestMethod -Method Post -Uri $drainUrl -TimeoutSec 10
+    $body = @{ reason = $Reason } | ConvertTo-Json -Compress
+    $response = Invoke-RestMethod -Method Post -Uri $drainUrl -Body $body -ContentType 'application/json' -TimeoutSec 10
     Write-Host "Drain requested: mode=$($response.mode), activeWorkerCount=$($response.activeWorkerCount)"
 } catch {
     # When the app is already drained it can stop immediately after accepting the request,

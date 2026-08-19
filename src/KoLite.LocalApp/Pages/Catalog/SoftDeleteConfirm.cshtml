@@ -1,4 +1,4 @@
-@page "/catalog/{jobId}/soft-delete-confirm"
+@page "/jobs/{jobId:guid}/soft-delete-confirm"
 @model KoLite.LocalApp.Pages.Catalog.SoftDeleteConfirmModel
 @{
     ViewData["Title"] = "Soft delete";
@@ -32,7 +32,7 @@
         <h2>Confirm soft delete</h2>
         <p>No active jobs depend on this job.</p>
     }
-    <form method="post" action="/catalog/@Uri.EscapeDataString(Model.JobId)/soft-delete" class="inline-form">
+    <form method="post" action="/jobs/@Uri.EscapeDataString(Model.JobId)/actions/soft-delete" class="inline-form">
         @Html.AntiForgeryToken()
         <input type="hidden" name="expectedVersion" value="@Model.CatalogVersion" />
         <input type="hidden" name="reason" value="Soft deleted from web UI" />

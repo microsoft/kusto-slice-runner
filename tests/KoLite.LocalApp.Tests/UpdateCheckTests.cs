@@ -364,9 +364,9 @@ namespace KoLite.LocalApp.Tests
             using var factory = CreateFactory(enableUpdateCheck: false);
             using var client = factory.CreateClient();
 
-            var health = await client.GetStringAsync("/status/health");
+            var health = await client.GetStringAsync("/api/v1/system/status");
             using var json = JsonDocument.Parse(health);
-            var updateCheck = json.RootElement.GetProperty("updateCheck");
+            var updateCheck = json.RootElement.GetProperty("update");
 
             Assert.Equal("Unavailable", updateCheck.GetProperty("status").GetString());
             Assert.Equal("Disabled", updateCheck.GetProperty("reason").GetString());
@@ -439,9 +439,9 @@ namespace KoLite.LocalApp.Tests
             var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
             while (DateTime.UtcNow < deadline)
             {
-                var health = await client.GetStringAsync("/status/health");
+                var health = await client.GetStringAsync("/api/v1/system/status");
                 using var json = JsonDocument.Parse(health);
-                var updateCheck = json.RootElement.GetProperty("updateCheck");
+                var updateCheck = json.RootElement.GetProperty("update");
                 if (string.Equals(updateCheck.GetProperty("status").GetString(), expectedStatus, StringComparison.Ordinal))
                 {
                     return updateCheck.Clone();
@@ -481,6 +481,7 @@ namespace KoLite.LocalApp.Tests
                 builder.ConfigureServices(services =>
                 {
                     services.AddLogging(logging => logging.ClearProviders());
+                    services.AddTestLocalRequestPolicy();
                     if (builtSha is not null)
                     {
                         services.RemoveAll<AppBuildVersion>();

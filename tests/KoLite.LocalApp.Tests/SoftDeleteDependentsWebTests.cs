@@ -40,14 +40,14 @@ namespace KoLite.LocalApp.Tests
             using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
 
             var token = await ReadFormToken(client, $"/jobs/{JobId("dep.upstream")}");
-            var response = await PostForm(client, $"/catalog/{JobId("dep.upstream")}/soft-delete", token, new Dictionary<string, string>
+            var response = await PostForm(client, $"/jobs/{JobId("dep.upstream")}/actions/soft-delete", token, new Dictionary<string, string>
             {
                 ["expectedVersion"] = "1",
                 ["reason"] = "blocked by dependents"
             });
 
             Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
-            Assert.Equal($"/catalog/{JobId("dep.upstream")}/soft-delete-confirm", response.Headers.Location?.OriginalString);
+            Assert.Equal($"/jobs/{JobId("dep.upstream")}/soft-delete-confirm", response.Headers.Location?.OriginalString);
 
             // Blocked, not soft-deleted: the upstream is still enabled in the catalog.
             Assert.True(catalog.Get(JobId("dep.upstream"))?.IsEnabled);
@@ -61,7 +61,7 @@ namespace KoLite.LocalApp.Tests
             catalog.Create(Schedule("dep.downstream", dependsOn: "dep.upstream"));
             using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
 
-            var html = await client.GetStringAsync($"/catalog/{JobId("dep.upstream")}/soft-delete-confirm");
+            var html = await client.GetStringAsync($"/jobs/{JobId("dep.upstream")}/soft-delete-confirm");
 
             Assert.Contains("Active jobs depend on this job", html);
             Assert.Contains("dep.downstream", html);
@@ -77,8 +77,8 @@ namespace KoLite.LocalApp.Tests
             catalog.Create(Schedule("dep.downstream", dependsOn: "dep.upstream"));
             using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
 
-            var token = await ReadFormToken(client, $"/catalog/{JobId("dep.upstream")}/soft-delete-confirm");
-            var response = await PostForm(client, $"/catalog/{JobId("dep.upstream")}/soft-delete", token, new Dictionary<string, string>
+            var token = await ReadFormToken(client, $"/jobs/{JobId("dep.upstream")}/soft-delete-confirm");
+            var response = await PostForm(client, $"/jobs/{JobId("dep.upstream")}/actions/soft-delete", token, new Dictionary<string, string>
             {
                 ["expectedVersion"] = "1",
                 ["reason"] = "forced past dependents",
@@ -98,11 +98,11 @@ namespace KoLite.LocalApp.Tests
             var upstream = catalog.Create(Schedule("dep.upstream"));
             catalog.Create(Schedule("dep.downstream", dependsOn: "dep.upstream"));
             using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
-            var token = await ReadFormToken(client, $"/catalog/{upstream.JobId}/soft-delete-confirm");
+            var token = await ReadFormToken(client, $"/jobs/{upstream.JobId}/soft-delete-confirm");
             var disabled = catalog.SetEnabled(upstream.JobId, enabled: false, expectedVersion: upstream.CatalogVersion);
             var current = catalog.SetEnabled(upstream.JobId, enabled: true, expectedVersion: disabled.CatalogVersion);
 
-            var response = await PostForm(client, $"/catalog/{upstream.JobId}/soft-delete", token, new Dictionary<string, string>
+            var response = await PostForm(client, $"/jobs/{upstream.JobId}/actions/soft-delete", token, new Dictionary<string, string>
             {
                 ["expectedVersion"] = upstream.CatalogVersion.ToString(),
                 ["reason"] = "stale forced soft delete",
@@ -131,7 +131,7 @@ namespace KoLite.LocalApp.Tests
             using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
 
             var token = await ReadFormToken(client, "/");
-            var response = await PostFormValues(client, "/catalog/bulk/soft-delete", token,
+            var response = await PostFormValues(client, "/jobs/actions/bulk/soft-delete", token,
             [
                 new("jobIds", JobId("bulk.upstream")), new("expectedVersions", "1"),
                 new("jobIds", JobId("bulk.free")), new("expectedVersions", "1")

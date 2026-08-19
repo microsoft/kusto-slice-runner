@@ -1,6 +1,6 @@
 namespace KoLite.LocalApp
 {
-    internal sealed record WorkerPoolSnapshot(
+    public sealed record WorkerPoolSnapshot(
         string Mode,
         bool Enabled,
         string EnabledSource,

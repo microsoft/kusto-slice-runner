@@ -1,4 +1,4 @@
-@page "/catalog/{jobId}/update"
+@page "/jobs/{jobId:guid}/edit"
 @model KoLite.LocalApp.Pages.Catalog.UpdateModel
 @{
     ViewData["Title"] = string.IsNullOrWhiteSpace(Model.ErrorMessage) ? "Edit job" : "Update job";

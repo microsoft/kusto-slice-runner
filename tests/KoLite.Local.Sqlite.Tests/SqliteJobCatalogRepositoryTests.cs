@@ -53,6 +53,7 @@ namespace KoLite.Local.Sqlite.Tests
             var updated = repository.Update(created.JobId, Schedule("job.catalog", paused: true, maxParallelism: 3), expectedVersion: disabled.CatalogVersion);
 
             Assert.False(disabled.IsEnabled);
+            Assert.True(disabled.Definition.IsPaused);
             Assert.False(updated.IsEnabled);
             Assert.Equal(3, updated.Definition.MaxParallelism);
             Assert.Empty(repository.List(enabledOnly: true));

@@ -31,23 +31,23 @@ else
         <partial name="_PausedIndicator" model="data" />
         <div class="button-row">
             <a class="btn" href="/">Back to jobs</a>
-            <a class="btn" href="/catalog/@Uri.EscapeDataString(data.Job.JobId)/export">Export</a>
-            <a class="btn" href="/catalog/@Uri.EscapeDataString(data.Job.JobId)/copy">Copy</a>
+            <a class="btn" href="/jobs/@Uri.EscapeDataString(data.Job.JobId)/export">Export</a>
+            <a class="btn" href="/jobs/@Uri.EscapeDataString(data.Job.JobId)/copy">Copy</a>
             @if (data.Lifecycle?.IsSoftDeleted == true)
             {
-                <form method="post" action="/catalog/@Uri.EscapeDataString(data.Job.JobId)/restore" class="inline-form">
+                <form method="post" action="/jobs/@Uri.EscapeDataString(data.Job.JobId)/actions/restore" class="inline-form">
                     @Html.AntiForgeryToken()
                     <input type="hidden" name="expectedVersion" value="@data.Job.CatalogVersion" />
                     <input type="hidden" name="reason" value="Restored from details page" />
                     <button class="btn" type="submit">Restore</button>
                 </form>
-                <a class="btn danger" href="/catalog/@Uri.EscapeDataString(data.Job.JobId)/hard-delete">Hard delete</a>
+                <a class="btn danger" href="/jobs/@Uri.EscapeDataString(data.Job.JobId)/hard-delete">Hard delete</a>
             }
             else
             {
                 @if (data.Job.IsEnabled)
                 {
-                    <form method="post" action="/catalog/@Uri.EscapeDataString(data.Job.JobId)/disable" class="inline-form">
+                    <form method="post" action="/jobs/@Uri.EscapeDataString(data.Job.JobId)/actions/pause" class="inline-form">
                         @Html.AntiForgeryToken()
                         <input type="hidden" name="expectedVersion" value="@data.Job.CatalogVersion" />
                         <button class="btn" type="submit">Pause</button>
@@ -55,13 +55,13 @@ else
                 }
                 else
                 {
-                    <form method="post" action="/catalog/@Uri.EscapeDataString(data.Job.JobId)/enable" class="inline-form">
+                    <form method="post" action="/jobs/@Uri.EscapeDataString(data.Job.JobId)/actions/resume" class="inline-form">
                         @Html.AntiForgeryToken()
                         <input type="hidden" name="expectedVersion" value="@data.Job.CatalogVersion" />
                         <button class="btn" type="submit">Resume</button>
                     </form>
                 }
-                <form method="post" action="/catalog/@Uri.EscapeDataString(data.Job.JobId)/soft-delete" class="inline-form">
+                <form method="post" action="/jobs/@Uri.EscapeDataString(data.Job.JobId)/actions/soft-delete" class="inline-form">
                     @Html.AntiForgeryToken()
                     <input type="hidden" name="expectedVersion" value="@data.Job.CatalogVersion" />
                     <input type="hidden" name="reason" value="Soft deleted from details page" />
@@ -175,7 +175,9 @@ else
                 <h2>Operations</h2>
                 <p class="muted">Recent execution attempts, state events, and logs for this job.</p>
             </div>
-            <div class="card analyze-failures-card" data-analyze-card data-job-id="@data.Job.JobId">
+            <div class="card analyze-failures-card"
+                 data-analyze-card
+                 data-analysis-start-url="/ui-api/v1/jobs/@Guid.ParseExact(data.Job.JobId, "N").ToString("D")/failure-analyses">
                 <div class="card-header">
                     <h3>Analyze failures with Copilot</h3>
                     <button type="button" class="btn primary" data-analyze-failures>Analyze failures</button>

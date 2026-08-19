@@ -11,8 +11,9 @@ metadata:
 Use this skill to author or edit a KO Lite job-schedule JSON file. The
 deliverable is **the JSON file only**. This skill never uploads, never writes
 to Kusto, never invokes import tooling, and never modifies the catalog. The
-user takes the file and imports it themselves through the local dashboard or
-approved import tooling (see `README.md` and `docs\schedule-json.md`).
+user takes the file and submits it through the `/jobs` dashboard or the
+`ko-lite-job-manager` skill's Create, Update, or Import action (see `README.md`
+and `docs\schedule-json.md`).
 
 ## When to activate
 
@@ -24,8 +25,8 @@ Activate when the user asks to:
 - scaffold a starter file from a template.
 
 Do **not** activate for catalog operations such as listing, importing,
-exporting, pausing, tombstoning, deleting, or resetting jobs — those go through
-the local dashboard or approved import tooling.
+exporting, pausing, soft-deleting, restoring, or repairing jobs — those go
+through the local dashboard or the versioned `/api/v1` job-manager workflow.
 
 ## Authoritative contract
 
@@ -62,7 +63,7 @@ Anything else is rejected by the validator.
 | `isPaused` | No | boolean | Default `false`. When `true`, the scheduler emits no work. |
 | `description` | No | string | Optional Markdown catalog metadata, up to 65,536 characters. KO Lite renders it on the job details page with raw HTML disabled. It is preserved by import/export and never passed to the Kusto function. |
 | `folder` | No | string | Informational only. KO Lite does not interpret. |
-| `tags` | No | array of strings | Optional local job organization tags. When present, must be an array of non-empty strings. KO Lite trims tags, normalizes them to lowercase, deduplicates after normalization, and uses them for dashboard/catalog filters. Tags are separate from Kusto ingestion tags and from `folder`. |
+| `tags` | No | array of strings | Optional local job organization tags. When present, must be an array of non-empty strings. KO Lite trims tags, normalizes them to lowercase, deduplicates after normalization, and uses them for dashboard/job filters. Tags are separate from Kusto ingestion tags and from `folder`. |
 | `dependsOn` | No | array of objects | Each entry references an upstream by `activityId` and/or `id` (the upstream's GUID): `{ "activityId": "<label>" }`, `{ "id": "<guid>" }`, or both. At least one is required per entry. No bare-string shorthand. No self-dependency. KO Lite resolves the reference to the upstream's GUID and stores the edge by `id`, so upstream renames don't break it; referencing by `activityId` requires the upstream to exist (in the catalog or same import batch). |
 | `jobSettings` | No | any JSON | Opaque pass-through for downstream code. KO Lite stores it but does not interpret it. |
 | `healthPolicy` | No | string enum | `complete` (default) or `recent` (case-insensitive). Controls how the dashboard scores the job's health. `complete` (strict) also flags unaddressed historical gaps — terminal dead-lettered slices — as an amber half on the status pill; `recent` colors purely by the recent-slice trend and ignores old gaps. Absent means `complete`. |

@@ -12,6 +12,7 @@ From the repository root:
 
 ```powershell
 npm ci
+npm run test:js
 dotnet restore .\KoLite.Local.sln
 dotnet format .\KoLite.Local.sln --verify-no-changes --no-restore --verbosity minimal
 dotnet build .\KoLite.Local.sln --no-restore --nologo
@@ -41,6 +42,7 @@ For targeted changes, run the narrow relevant test project first, then decide wh
 - Use the .NET SDK from `global.json`. When writing C#, use block-scoped namespace declarations (`namespace Name { ... }`) instead of file-scoped namespaces, keep app entry points inside an explicit `Program` class instead of top-level statements, and use conventional class declarations with explicit constructors instead of class primary constructors.
 - Preserve local-first safety defaults. Do not enable live scheduling, widen destructive operations, weaken explicit confirmations, or execute Kusto cleanup/import actions unless the user explicitly asks for that outcome.
 - Treat local SQLite files as durable user runtime state. Do not reset or delete them unless the user explicitly requests it and the existing code path requires confirmation.
+- Preserve the three HTTP boundaries: versioned loopback-only agent JSON under `/api/v1` (generated OpenAPI, named contracts, Problem Details, ETag/If-Match, opaque cursor pagination), canonical browser job routes under `/jobs`, and minimal `/healthz` plus loopback-only `/control/v1`. Agent actions may create/update/pause/resume/soft-delete/restore and repair failed work, but must never expose hard delete, whole-slice rerun, Kusto cleanup, or arbitrary Kusto writes.
 - The local app should use the real Kusto output writer for user-facing execution. Test projects may use in-memory or fake executors where they already exist.
 - Scheduler enqueue behavior and worker claim/execution behavior are separate. Preserve per-job `maxParallelism`, global worker concurrency, visibility/query timeout leases, pause/delete state, and dependency readiness semantics.
 - Optional `chunks` (1-32) splits one logical time window into 0-based child executions. The parent window is complete, dependency-ready, and healthy only after every chunk completes. `maxParallelism` counts execution units (one per chunk or unchunked slice), has no upper limit, and is enforced per job. The all-up worker pool is unbounded by default but can be configured with `KoLite:WorkerPool:MaxConcurrency`; `MaxDispatchStartsPerCycle=100` limits starts per cycle, not total concurrency. Pause stops new chunk scheduling/claims/retries immediately while in-flight chunks finish. `chunks` is immutable after a job starts.

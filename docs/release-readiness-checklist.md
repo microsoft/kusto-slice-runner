@@ -53,7 +53,7 @@ $db = "$env:LOCALAPPDATA\KoLite\ko-lite-smoke.db"
 dotnet "$publishDir\KoLite.LocalApp.dll" --ConnectionStrings:KoLiteSqlite="$db" --KoLite:Scheduler:Enabled=false --KoLite:Kusto:AuthMode=AzureCli
 ```
 
-Open `http://127.0.0.1:5057/status/health`, confirm the database path and scheduler-disabled state, then stop the process before deleting the disposable database.
+Open `http://127.0.0.1:5057/healthz`, then inspect `http://127.0.0.1:5057/api/v1/system/status` to confirm the database path and scheduler-disabled state. Stop the process before deleting the disposable database.
 
 ## GitHub Release draft
 

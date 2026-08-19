@@ -50,7 +50,7 @@ namespace KoLite.LocalApp.Pages.Jobs
             Charts = chartQuery.GetJobDetailsCharts(jobId, ChartRangeOptions.Parse(Range));
             DependencyGraph = dependencyGraphQuery.Build(new[] { Data.Job.JobId });
             Editor = new ScheduleEditorViewModel(
-                $"/catalog/{Uri.EscapeDataString(Data.Job.JobId)}/update",
+                $"/jobs/{Uri.EscapeDataString(Data.Job.JobId)}/edit",
                 ScheduleFormInput.FromDefinition(Data.Definition),
                 AppFormatting.PrettyJson(Data.Job.ScheduleJson),
                 Data.Job.CatalogVersion,

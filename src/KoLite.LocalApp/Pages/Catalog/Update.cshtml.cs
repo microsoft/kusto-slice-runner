@@ -1,4 +1,6 @@
 using KoLite.Local.Sqlite.Catalog;
+using KoLite.LocalApp.Application;
+using KoLite.LocalApp.Application.Jobs;
 using KoLite.LocalApp.Ui;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
@@ -8,10 +10,12 @@ namespace KoLite.LocalApp.Pages.Catalog
     public sealed class UpdateModel : PageModel
     {
         private readonly SqliteJobCatalogRepository catalog;
+        private readonly JobApplicationService jobs;
 
-        public UpdateModel(SqliteJobCatalogRepository catalog)
+        public UpdateModel(SqliteJobCatalogRepository catalog, JobApplicationService jobs)
         {
             this.catalog = catalog;
+            this.jobs = jobs;
         }
 
         [BindProperty] public ScheduleFormInput Input { get; set; } = ScheduleFormInput.Default();
@@ -27,12 +31,6 @@ namespace KoLite.LocalApp.Pages.Catalog
         {
             CatalogConflictMessage = CatalogConflictFeedback.Read(TempData);
 
-            // /catalog/{jobId}/update is POST-only; the GET entry point is the /catalog/{jobId}/edit alias.
-            if (!IsEditRoute())
-            {
-                return StatusCode(StatusCodes.Status405MethodNotAllowed);
-            }
-
             var record = catalog.Get(jobId);
             if (record is null)
             {
@@ -43,7 +41,7 @@ namespace KoLite.LocalApp.Pages.Catalog
             JobId = record.JobId;
             ExpectedVersion = record.CatalogVersion;
             Editor = new ScheduleEditorViewModel(
-                $"/catalog/{Uri.EscapeDataString(record.JobId)}/update",
+                $"/jobs/{Uri.EscapeDataString(record.JobId)}/edit",
                 ScheduleFormInput.FromDefinition(record.Definition),
                 AppFormatting.PrettyJson(record.ScheduleJson),
                 record.CatalogVersion,
@@ -56,11 +54,6 @@ namespace KoLite.LocalApp.Pages.Catalog
 
         public IActionResult OnPost(string jobId)
         {
-            if (IsEditRoute())
-            {
-                return StatusCode(StatusCodes.Status405MethodNotAllowed);
-            }
-
             JobId = jobId;
             var useRawJson = string.Equals(FormMode, "json", StringComparison.OrdinalIgnoreCase)
                 || (Request.Form.ContainsKey("scheduleJson") && !Request.Form.ContainsKey("Input.ActivityId"));
@@ -70,17 +63,17 @@ namespace KoLite.LocalApp.Pages.Catalog
 
             try
             {
-                catalog.Update(jobId, scheduleJson, ExpectedVersion, actor: "local-web");
+                jobs.Replace(jobId, scheduleJson, ExpectedVersion, actor: "local-web");
                 return Redirect($"/jobs/{Uri.EscapeDataString(jobId)}");
             }
-            catch (CatalogVersionConflictException)
+            catch (ApplicationProblemException ex) when (ex.Code == "etag-mismatch")
             {
                 TempData[CatalogConflictFeedback.TempDataKey] = CatalogConflictFeedback.Message;
-                return Redirect($"/catalog/{Uri.EscapeDataString(jobId)}/edit");
+                return Redirect($"/jobs/{Uri.EscapeDataString(jobId)}/edit");
             }
-            catch (Exception ex) when (ex is InvalidOperationException or System.Text.Json.JsonException)
+            catch (ApplicationProblemException ex)
             {
-                Response.StatusCode = StatusCodes.Status400BadRequest;
+                Response.StatusCode = ex.StatusCode;
                 ErrorMessage = ex.Message;
                 ScheduleJson = scheduleJson;
                 if (useRawJson)
@@ -88,15 +81,9 @@ namespace KoLite.LocalApp.Pages.Catalog
                     Input = ScheduleFormInput.FromJson(scheduleJson);
                 }
 
-                Editor = new ScheduleEditorViewModel($"/catalog/{Uri.EscapeDataString(JobId)}/update", Input, ScheduleJson, ExpectedVersion, true, "Save job", catalog.HasStarted(JobId), ScheduleEditorViewModel.BuildOptions(catalog, JobId));
+                Editor = new ScheduleEditorViewModel($"/jobs/{Uri.EscapeDataString(JobId)}/edit", Input, ScheduleJson, ExpectedVersion, true, "Save job", catalog.HasStarted(JobId), ScheduleEditorViewModel.BuildOptions(catalog, JobId));
                 return Page();
             }
-        }
-
-        private bool IsEditRoute()
-        {
-            var path = Request.Path.Value;
-            return path is not null && path.TrimEnd('/').EndsWith("/edit", StringComparison.OrdinalIgnoreCase);
         }
     }
 }

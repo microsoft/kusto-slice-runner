@@ -4,7 +4,7 @@ namespace KoLite.LocalApp.Tests
 {
     internal static class TestCleanup
     {
-        // Some LocalApp tests (notably the /status/shutdown/drain endpoint) trigger a real app
+        // Some LocalApp tests (notably the /control/v1/shutdown/drain endpoint) trigger a real app
         // shutdown whose detached stop task briefly opens a SQLite connection (RecordLog) after the
         // HTTP response has been sent. Under parallel load that connection can still hold the
         // fixture's temporary web.db when Dispose() deletes its directory, which surfaces as

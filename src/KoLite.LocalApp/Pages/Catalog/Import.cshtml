@@ -1,4 +1,4 @@
-@page "/catalog/import"
+@page "/jobs/import"
 @model KoLite.LocalApp.Pages.Catalog.ImportModel
 @{
     ViewData["Title"] = "Import job";
@@ -50,7 +50,7 @@
 }
 
 <div class="grid-two">
-    <form method="post" action="/catalog/import" class="card form-card">
+    <form method="post" action="/jobs/import" class="card form-card">
         @Html.AntiForgeryToken()
         <input type="hidden" name="importSource" value="paste" />
         <div class="card-header">
@@ -61,7 +61,7 @@
         <button class="btn primary" type="submit">Import pasted JSON</button>
     </form>
 
-    <form method="post" action="/catalog/import" enctype="multipart/form-data" class="card form-card">
+    <form method="post" action="/jobs/import" enctype="multipart/form-data" class="card form-card">
         @Html.AntiForgeryToken()
         <input type="hidden" name="importSource" value="file" />
         <div class="card-header">

@@ -192,7 +192,7 @@ namespace KoLite.LocalApp.Tests
             using var client = factory.CreateClient();
 
             using var response = await client.PostAsJsonAsync(
-                "/api/dependency-graph/kusto-consumers",
+                "/api/v1/dependency-graphs/kusto-lineage",
                 new { jobIds = new[] { JobId("kusto.job") } });
 
             response.EnsureSuccessStatusCode();
@@ -212,7 +212,7 @@ namespace KoLite.LocalApp.Tests
             using var client = factory.CreateClient();
 
             using var response = await client.PostAsJsonAsync(
-                "/api/dependency-graph/kusto-consumers",
+                "/api/v1/dependency-graphs/kusto-lineage",
                 new { jobIds = new[] { JobId("src.job") } });
 
             response.EnsureSuccessStatusCode();
@@ -231,7 +231,7 @@ namespace KoLite.LocalApp.Tests
             using var client = factory.CreateClient();
 
             using var response = await client.PostAsJsonAsync(
-                "/api/dependency-graph/kusto-consumers",
+                "/api/v1/dependency-graphs/kusto-lineage",
                 new { jobIds = new[] { JobId("remote.job") } });
 
             response.EnsureSuccessStatusCode();
@@ -251,7 +251,7 @@ namespace KoLite.LocalApp.Tests
             using var client = factory.CreateClient();
 
             using var response = await client.PostAsJsonAsync(
-                "/api/dependency-graph/kusto-consumers",
+                "/api/v1/dependency-graphs/kusto-lineage",
                 new { jobIds = new[] { JobId("xdb.job") } });
 
             response.EnsureSuccessStatusCode();
@@ -270,7 +270,7 @@ namespace KoLite.LocalApp.Tests
             using var client = factory.CreateClient();
 
             using var response = await client.PostAsJsonAsync(
-                "/api/dependency-graph/kusto-consumers",
+                "/api/v1/dependency-graphs/kusto-lineage",
                 new { jobIds = new[] { JobId("wild.job") } });
 
             response.EnsureSuccessStatusCode();
@@ -290,7 +290,7 @@ namespace KoLite.LocalApp.Tests
             using var client = factory.CreateClient();
 
             using var response = await client.PostAsJsonAsync(
-                "/api/dependency-graph/kusto-consumers",
+                "/api/v1/dependency-graphs/kusto-lineage",
                 new { jobIds = new[] { JobId("impl.b") } });
 
             response.EnsureSuccessStatusCode();
@@ -311,7 +311,7 @@ namespace KoLite.LocalApp.Tests
             using var client = factory.CreateClient();
 
             using var response = await client.PostAsJsonAsync(
-                "/api/dependency-graph/kusto-consumers",
+                "/api/v1/dependency-graphs/kusto-lineage",
                 new { jobIds = new[] { JobId("decl.b") } });
 
             response.EnsureSuccessStatusCode();
@@ -330,12 +330,12 @@ namespace KoLite.LocalApp.Tests
             using var client = factory.CreateClient();
 
             using var response = await client.PostAsJsonAsync(
-                "/api/dependency-graph/kusto-consumers",
+                "/api/v1/dependency-graphs/kusto-lineage",
                 new { jobIds = new[] { JobId("kusto.fail") } });
 
             Assert.Equal(HttpStatusCode.BadGateway, response.StatusCode);
             var payload = await response.Content.ReadFromJsonAsync<JsonElement>();
-            Assert.Contains("kusto unreachable", payload.GetProperty("error").GetString());
+            Assert.Contains("kusto unreachable", payload.GetProperty("detail").GetString());
         }
 
         public void Dispose()
@@ -376,6 +376,7 @@ namespace KoLite.LocalApp.Tests
                     // No live Kusto in tests: the enrichment endpoint reads through this fake.
                     services.RemoveAll<IKustoEntityDependencyReader>();
                     services.AddSingleton<IKustoEntityDependencyReader>(kustoReader);
+                    services.AddTestLocalRequestPolicy();
                 });
             });
 

@@ -967,7 +967,7 @@
     }
 
     if (base) {
-      form.setAttribute("action", base + (enabled ? "/disable" : "/enable"));
+      form.setAttribute("action", base + (enabled ? "/pause" : "/resume"));
     }
 
     var button = form.querySelector("button[type='submit']");
@@ -1731,7 +1731,10 @@
       statusEl.textContent = "Resolving Kusto lineage\u2026";
     }
 
-    fetch("/api/dependency-graph/kusto-consumers", {
+    var lineageUrl = figure.getAttribute("data-kusto-lineage-url");
+    if (!lineageUrl) return;
+
+    fetch(lineageUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ jobIds: jobIds })
@@ -1739,7 +1742,7 @@
       return response.json().then(function (body) { return { ok: response.ok, body: body }; });
     }).then(function (result) {
       if (!result.ok || !result.body || result.body.error) {
-        throw new Error((result.body && result.body.error) || "Failed to resolve Kusto lineage.");
+        throw new Error((result.body && (result.body.detail || result.body.error)) || "Failed to resolve Kusto lineage.");
       }
       drawDependencyGraph(figure, result.body);
       var kustoCount = (result.body.nodes || []).filter(function (node) {
@@ -1928,10 +1931,8 @@
     var statusEl = card.querySelector("[data-analyze-status]");
     var outputEl = card.querySelector("[data-analyze-output]");
     var tokenInput = card.querySelector("input[name='__RequestVerificationToken']");
-    var jobId = card.getAttribute("data-job-id");
-    if (!button || !statusEl || !outputEl || !jobId) return;
-
-    var baseUrl = "/api/jobs/" + encodeURIComponent(jobId) + "/analyze-failures";
+    var baseUrl = card.getAttribute("data-analysis-start-url");
+    if (!button || !statusEl || !outputEl || !baseUrl) return;
     var maxPolls = 90;
 
     function setStatus(text, kind) {
@@ -1982,7 +1983,7 @@
           });
         }).then(function (result) {
           if (!result.ok || !result.data) {
-            setStatus((result.data && result.data.error) || "Could not read the analysis status.", "error");
+            setStatus((result.data && (result.data.detail || result.data.error)) || "Could not read the analysis status.", "error");
             finish();
             return;
           }
@@ -2017,7 +2018,7 @@
         });
       }).then(function (result) {
         if (!result.ok || !result.data) {
-          setStatus((result.data && result.data.error) || ("Request failed (" + result.status + ")."), "error");
+          setStatus((result.data && (result.data.detail || result.data.error)) || ("Request failed (" + result.status + ")."), "error");
           finish();
           return;
         }

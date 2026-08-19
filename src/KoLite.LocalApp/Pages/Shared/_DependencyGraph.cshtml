@@ -14,7 +14,11 @@ else
     var payloadJson = JsonSerializer.Serialize(DependencyGraphPayload.Build(graph));
     var focalIds = string.Join(" ", Model.FocalJobIds.Where(id => !string.IsNullOrWhiteSpace(id)));
 
-    <figure class="dependency-graph" data-dependency-graph data-dependency-graph-focal="@focalIds" aria-label="Job dependency graph">
+    <figure class="dependency-graph"
+            data-dependency-graph
+            data-dependency-graph-focal="@focalIds"
+            data-kusto-lineage-url="/api/v1/dependency-graphs/kusto-lineage"
+            aria-label="Job dependency graph">
         <div class="dependency-graph-toolbar">
             <div class="dependency-graph-legend" data-dependency-graph-legend>
                 @foreach (var item in graph.Legend)

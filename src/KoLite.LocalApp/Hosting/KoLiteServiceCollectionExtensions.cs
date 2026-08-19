@@ -16,6 +16,12 @@ using KoLite.Local.Sqlite.Schema;
 using KoLite.Local.Sqlite.State;
 using KoLite.Local.Sqlite.Throttling;
 using KoLite.LocalApp.FailureAnalysis;
+using KoLite.LocalApp.Application.Jobs;
+using KoLite.LocalApp.Application.Lineage;
+using KoLite.LocalApp.Application.Operations;
+using KoLite.LocalApp.Application.Repair;
+using KoLite.LocalApp.Application.System;
+using KoLite.LocalApp.Http;
 using KoLite.LocalApp.Repair;
 using KoLite.LocalApp.Retention;
 using KoLite.LocalApp.Ui;
@@ -36,7 +42,19 @@ namespace KoLite.LocalApp
             AddRetention(services);
             AddUpdates(services);
             AddFailureAnalysis(services, configuration);
+            AddApplicationServices(services);
             return services;
+        }
+
+        private static void AddApplicationServices(IServiceCollection services)
+        {
+            services.AddSingleton<ILocalRequestPolicy, LoopbackLocalRequestPolicy>();
+            services.AddScoped<JobApplicationService>();
+            services.AddScoped<JobProjectionApplicationService>();
+            services.AddScoped<OperationsApplicationService>();
+            services.AddScoped<RepairApplicationService>();
+            services.AddScoped<LineageApplicationService>();
+            services.AddScoped<SystemStatusApplicationService>();
         }
 
         private static void AddPersistence(IServiceCollection services, IConfiguration configuration)

@@ -1,4 +1,4 @@
-@page "/catalog/soft-deleted"
+@page "/jobs/soft-deleted"
 @model KoLite.LocalApp.Pages.Catalog.SoftDeletedModel
 @{
     ViewData["Title"] = "Manage soft-deleted jobs";
@@ -41,7 +41,7 @@
             @Html.AntiForgeryToken()
             <span class="bulk-action-inputs" data-bulk-inputs></span>
             <div class="button-row">
-                <button class="btn small danger" type="submit" formaction="/catalog/bulk/hard-delete">@UiIcons.IconText("hard-delete", "Hard delete")</button>
+                <button class="btn small danger" type="submit" formaction="/jobs/soft-deleted/hard-delete">@UiIcons.IconText("hard-delete", "Hard delete")</button>
                 <button class="btn small" type="button" data-bulk-clear>@UiIcons.IconText("x", "Clear")</button>
             </div>
         </form>

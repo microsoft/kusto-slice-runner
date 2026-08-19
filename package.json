@@ -7,6 +7,7 @@
     "copy:chartjs": "node ./scripts/copy-chartjs.mjs",
     "copy:cytoscape": "node ./scripts/copy-cytoscape.mjs",
     "copy:marked": "node ./scripts/copy-marked.mjs",
+    "test:js": "node ./scripts/test-site-routes.mjs",
     "postinstall": "npm run copy:chartjs && npm run copy:cytoscape && npm run copy:marked"
   },
   "license": "UNLICENSED",
@@ -16,5 +17,8 @@
     "cytoscape": "^3.34.1",
     "cytoscape-dagre": "^4.0.0",
     "marked": "^18.0.9"
+  },
+  "devDependencies": {
+    "jsdom": "^26.1.0"
   }
 }
