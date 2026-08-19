@@ -20,12 +20,19 @@ namespace KoLite.LocalApp.Pages.Jobs
         public string? StatusMessage { get; private set; }
         public string? ErrorMessage { get; private set; }
 
-        public IActionResult OnGet(string jobId, DateTimeOffset start, DateTimeOffset end)
+        public IActionResult OnGet(string jobId, DateTimeOffset start, DateTimeOffset end, string? repairBatchId)
         {
             Data = query.GetSlice(jobId, start, end);
             if (Data is null)
             {
                 Response.StatusCode = StatusCodes.Status404NotFound;
+            }
+            else if (!string.IsNullOrWhiteSpace(repairBatchId))
+            {
+                var repairedChunks = repair.GetRepairChunkExecutions(repairBatchId);
+                StatusMessage = repairedChunks.Count == 0
+                    ? $"Repair batch {repairBatchId} completed without queueing chunk work."
+                    : $"Repair batch {repairBatchId} queued chunk ID(s) {string.Join(", ", repairedChunks.Select(chunk => chunk.ChunkId))}.";
             }
 
             return Page();

@@ -56,6 +56,7 @@ Each execution attempt has a client-side deadline (job `queryTimeout` plus a sma
 - Live Kusto execution uses the configured `target`, `functionName`, and `outputTable`.
 - Kusto append commands use idempotency tags so duplicate slice execution can be suppressed by Kusto.
 - Unchunked ingest-by identities are unchanged. A chunk's identity includes parent slice, chunk id, and total chunks and remains stable across retry, repair, recovery, and restart.
+- Chunk failure evidence is retained per execution in child state/events, attempts, logs, queue rows, and repair history. Repair excludes chunks with automatic retry work, records each repaired chunk/queue mapping atomically, and updates logical repair summaries from child outcomes.
 - Pausing a job prevents new scheduling and queued retry claims; already-running slices are allowed to finish.
 - Rerun planning suggests Kusto cleanup commands but leaves execution of cleanup to the operator.
 - The ingestion throttling advisor only recommends `maxParallelism` reductions; applying one is an explicit, audited operator action scoped to the throttled cluster, and a server-side keep-up floor prevents reducing a job below the parallelism it needs to keep up with real time. A job that is behind real time (a real backlog) is treated as a backfill and only trimmed to the catch-up floor that still clears its backlog within the configured target, with the catch-up ETA trade-off shown.

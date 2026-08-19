@@ -200,6 +200,19 @@ jobs share that finite cap. `MaxDispatchStartsPerCycle` is separate and defaults
 Repair requeues only failed/dead-lettered chunks and reuses their stable ingest-by identities.
 Rerun still resets every chunk in the selected logical window because cleanup is time-window based.
 
+Open a red slice and choose **Repair or rerun this slice**:
+
+- **Repair failed chunks** is selected by default when terminal failed work exists. The preview names
+  the raw 0-based chunk IDs and errors, excludes chunks with an automatic retry already queued or
+  leased, and queues every remaining terminal failed chunk after confirmation. No Kusto cleanup is
+  required; successful sibling chunks remain complete.
+- **Rerun whole slice** resets every chunk in the logical window and affected downstream slices after
+  you run/acknowledge the suggested time-window cleanup.
+- **Recover expired lease** remains a separate stalled-worker operation. It is neither repair nor rerun.
+
+Slice detail and localhost diagnostics expose the same chunk IDs in current state, child events,
+attempts, durable logs, queue rows, recent failure summaries, and repair history.
+
 ## Local management API
 
 KO Lite hosts a localhost-only JSON API so a same-machine agent or tool can read jobs, create/update schedules, and re-run failed slices without using the dashboard. It starts and stops with the app. Schedule writes go through the same validated, additive/update-only import path as the dashboard; the API also exposes soft-delete and restore (each requiring the job's current catalogVersion, and soft-delete blocks on active downstream dependents unless forced), and repair of `Failed`/`DeadLettered` slices (preview first, then enqueue with a reason and the previewed slice count) — but no hard-delete, generic enable/disable, or rerun surface. Reads are `GET /api/jobs`, `GET /api/jobs/{jobId}`, and `GET /api/jobs/export`; writes are `POST /api/jobs/import`, `POST /api/jobs/{jobId}/soft-delete`, `POST /api/jobs/{jobId}/restore`, and `POST /api/jobs/{jobId}/repair` (with a read-only `/repair/preview`). The one Kusto-touching route is the on-demand, read-only dependency-graph consumer endpoint (`POST /api/dependency-graph/kusto-consumers`; see [Dependency graph](#dependency-graph)). All `/api` routes are loopback-only. See [local-api.md](local-api.md) for the full contract and the `ko-lite-job-manager` skill that drives it.

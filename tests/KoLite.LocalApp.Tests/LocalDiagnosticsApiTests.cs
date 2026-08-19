@@ -138,6 +138,10 @@ namespace KoLite.LocalApp.Tests
             Assert.Equal("Queued", rows[0].GetProperty("status").GetString());
             Assert.Equal(1, rows[1].GetProperty("chunkId").GetInt32());
             Assert.Equal("Missing", rows[1].GetProperty("status").GetString());
+            var events = document.RootElement.GetProperty("events").EnumerateArray().ToList();
+            Assert.Contains(events, evt =>
+                evt.GetProperty("chunkId").GetInt32() == 0
+                && evt.GetProperty("status").GetString() == "Queued");
         }
 
         [Fact]
@@ -180,6 +184,81 @@ namespace KoLite.LocalApp.Tests
             Assert.Contains(
                 global.RootElement.GetProperty("logs").EnumerateArray(),
                 row => row.GetProperty("message").GetString() == "Slice dispatched.");
+        }
+
+        [Fact]
+        public async Task Logs_endpoints_include_optional_chunk_identity()
+        {
+            var catalog = new SqliteJobCatalogRepository(sqlite);
+            catalog.Create(Schedule("logs.chunks", "ChunkLogsFunction", chunks: 3));
+            var observability = new SqliteOperationalReadModelRepository(sqlite);
+            observability.RecordLog(
+                "Error",
+                "Slice chunk dead-lettered.",
+                "worker",
+                JobId("logs.chunks"),
+                At(0),
+                At(5),
+                chunkId: 1,
+                totalChunks: 3);
+
+            using var client = factory.CreateClient();
+            using var jobLogs = JsonDocument.Parse(await client.GetStringAsync($"/api/jobs/{JobId("logs.chunks")}/logs"));
+            var jobRow = jobLogs.RootElement.GetProperty("logs").EnumerateArray().Single();
+            Assert.Equal(1, jobRow.GetProperty("chunkId").GetInt32());
+            Assert.Equal(3, jobRow.GetProperty("totalChunks").GetInt32());
+
+            using var globalLogs = JsonDocument.Parse(await client.GetStringAsync($"/api/diagnostics/logs?jobId={JobId("logs.chunks")}"));
+            var globalRow = globalLogs.RootElement.GetProperty("logs").EnumerateArray().Single();
+            Assert.Equal(1, globalRow.GetProperty("chunkId").GetInt32());
+            Assert.Equal(3, globalRow.GetProperty("totalChunks").GetInt32());
+        }
+
+        [Fact]
+        public async Task Failures_endpoint_identifies_terminal_failed_chunks()
+        {
+            var catalog = new SqliteJobCatalogRepository(sqlite);
+            catalog.Create(Schedule("failures.chunks", "ChunkFailuresFunction", chunks: 2));
+            var slice = new KoLite.Local.Core.Scheduling.SliceRange(JobId("failures.chunks"), At(0), At(5));
+            var chunks = new SqliteChunkStateRepository(sqlite);
+            foreach (var child in chunks.EnsureWindow(slice, 2, "test"))
+            {
+                chunks.MarkQueued($"queued-{child.ChunkId}", child.Execution, actor: "test");
+                var lease = chunks.AcquireLease($"lease-{child.ChunkId}", child.Execution, "worker", TimeSpan.FromMinutes(5), At(10))!;
+                if (child.ChunkId == 0)
+                {
+                    chunks.DeadLetterLease("dead-0", child.Execution, "worker", lease.LeaseToken!, At(11), "bad partition", "Permanent");
+                }
+                else
+                {
+                    chunks.CompleteLease("complete-1", child.Execution, "worker", lease.LeaseToken!, At(11));
+                }
+            }
+
+            using var client = factory.CreateClient();
+            using var document = JsonDocument.Parse(await client.GetStringAsync($"/api/diagnostics/failures?jobId={JobId("failures.chunks")}"));
+
+            var failure = document.RootElement.GetProperty("recentFailures").EnumerateArray().Single();
+            Assert.Equal(1, failure.GetProperty("failedChunkCount").GetInt32());
+            Assert.Equal([0], failure.GetProperty("failedChunkIds").EnumerateArray().Select(value => value.GetInt32()).ToArray());
+        }
+
+        [Fact]
+        public async Task Failures_endpoint_applies_job_filter_before_take_limit()
+        {
+            var catalog = new SqliteJobCatalogRepository(sqlite);
+            catalog.Create(Schedule("failures.target", "TargetFailuresFunction"));
+            catalog.Create(Schedule("failures.noise", "NoiseFailuresFunction"));
+            var state = new SqliteSliceStateRepository(sqlite);
+            state.Append("target-failed", JobId("failures.target"), At(0), At(5), DurableSliceStatus.DeadLettered, expectedVersion: 0, reason: "target");
+            await Task.Delay(20);
+            state.Append("noise-failed", JobId("failures.noise"), At(0), At(5), DurableSliceStatus.DeadLettered, expectedVersion: 0, reason: "noise");
+
+            using var client = factory.CreateClient();
+            using var document = JsonDocument.Parse(await client.GetStringAsync($"/api/diagnostics/failures?jobId={JobId("failures.target")}&take=1"));
+
+            var failure = document.RootElement.GetProperty("recentFailures").EnumerateArray().Single();
+            Assert.Equal(JobId("failures.target"), failure.GetProperty("jobId").GetString());
         }
 
         [Fact]

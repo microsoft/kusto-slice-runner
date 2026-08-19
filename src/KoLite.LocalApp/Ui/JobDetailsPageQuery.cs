@@ -59,6 +59,7 @@ namespace KoLite.LocalApp.Ui
         IReadOnlyList<OperationalLogReadout> Logs,
         IReadOnlyList<SliceEventReadout> Events,
         IReadOnlyList<DurableChunkState> Chunks,
+        IReadOnlyList<ChunkStateEventReadout> ChunkEvents,
         bool IsOrphaned);
 
     public sealed class JobDetailsPageQuery
@@ -188,6 +189,9 @@ namespace KoLite.LocalApp.Ui
             var chunks = job.Definition.Chunks is null || chunkState is null
                 ? Array.Empty<DurableChunkState>()
                 : chunkState.List(new SliceRange(jobId, sliceStartUtc, sliceEndUtc));
+            var chunkEvents = job.Definition.Chunks is null || chunkState is null
+                ? Array.Empty<ChunkStateEventReadout>()
+                : chunkState.ListEvents(new SliceRange(jobId, sliceStartUtc, sliceEndUtc), 100);
             var isOrphaned = queueItems.Any(q => IsOrphanedLease(q, now))
                 || chunks.Any(chunk => chunk.Status == DurableSliceStatus.Running
                     && (chunk.LeaseExpiresAtUtc is null || chunk.LeaseExpiresAtUtc <= now.ToUniversalTime()));
@@ -202,6 +206,7 @@ namespace KoLite.LocalApp.Ui
                 operationalDetails.GetLogs(jobId, sliceStartUtc, sliceEndUtc, 100),
                 operationalDetails.GetEvents(jobId, sliceStartUtc, sliceEndUtc, 100),
                 chunks,
+                chunkEvents,
                 isOrphaned);
         }
 

@@ -571,6 +571,8 @@ namespace KoLite.Local.Sqlite.Rerun
             {
                 currentState = QueryRows(connection, transaction, "SELECT * FROM current_slice_state WHERE job_id=$job AND slice_start_utc=$start AND slice_end_utc=$end;", jobId, start, end),
                 stateEvents = QueryRows(connection, transaction, "SELECT * FROM slice_state_events WHERE job_id=$job AND slice_start_utc=$start AND slice_end_utc=$end ORDER BY recorded_at_utc, event_id;", jobId, start, end),
+                chunkStates = QueryRows(connection, transaction, "SELECT * FROM current_slice_chunk_state WHERE job_id=$job AND slice_start_utc=$start AND slice_end_utc=$end ORDER BY chunk_id;", jobId, start, end),
+                chunkEvents = QueryRows(connection, transaction, "SELECT * FROM slice_chunk_state_events WHERE job_id=$job AND slice_start_utc=$start AND slice_end_utc=$end ORDER BY chunk_id, recorded_at_utc, event_id;", jobId, start, end),
                 attempts = QueryRows(connection, transaction, "SELECT * FROM slice_attempts WHERE job_id=$job AND slice_start_utc=$start AND slice_end_utc=$end ORDER BY attempt, attempt_id;", jobId, start, end),
                 logs = QueryRows(connection, transaction, "SELECT * FROM operational_logs WHERE job_id=$job AND slice_start_utc=$start AND slice_end_utc=$end ORDER BY recorded_at_utc, log_id;", jobId, start, end),
                 scheduledSlices = QueryRows(connection, transaction, "SELECT * FROM scheduled_slices WHERE job_id=$job AND slice_start_utc=$start AND slice_end_utc=$end;", jobId, start, end),
@@ -580,6 +582,8 @@ namespace KoLite.Local.Sqlite.Rerun
                     queueRows = Count(connection, transaction, "work_queue", jobId, start, end),
                     attemptRows = Count(connection, transaction, "slice_attempts", jobId, start, end),
                     eventRows = Count(connection, transaction, "slice_state_events", jobId, start, end),
+                    chunkStateRows = Count(connection, transaction, "current_slice_chunk_state", jobId, start, end),
+                    chunkEventRows = Count(connection, transaction, "slice_chunk_state_events", jobId, start, end),
                     logRows = Count(connection, transaction, "operational_logs", jobId, start, end),
                     scheduledRows = Count(connection, transaction, "scheduled_slices", jobId, start, end)
                 }

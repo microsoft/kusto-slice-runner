@@ -170,7 +170,103 @@ namespace KoLite.Local.Sqlite.Queue
             var utc = nowUtc.ToUniversalTime();
             return utc - DateTimeOffset.MinValue < grace ? DateTimeOffset.MinValue : utc - grace;
         }
-        private bool Terminal(string id, string worker, DurableWorkQueueState state) { using var c = connectionFactory.OpenConnection(); using var cmd = SqliteStorage.Command(c, null, "UPDATE work_queue SET state=$s, locked_by=NULL, locked_until_utc=NULL, updated_at_utc=$u WHERE queue_item_id=$id AND state='Leased' AND locked_by=$w;"); cmd.Add("$s", state.ToString()); cmd.Add("$u", SqliteStorage.Utc(DateTimeOffset.UtcNow)); cmd.Add("$id", id); cmd.Add("$w", worker); return cmd.ExecuteNonQuery() == 1; }
+        private bool Terminal(string id, string worker, DurableWorkQueueState state)
+        {
+            using var c = connectionFactory.OpenConnection();
+            using var tx = c.BeginTransaction(System.Data.IsolationLevel.Serializable);
+            var now = SqliteStorage.Utc(DateTimeOffset.UtcNow);
+            using var cmd = SqliteStorage.Command(c, tx, "UPDATE work_queue SET state=$s, locked_by=NULL, locked_until_utc=NULL, updated_at_utc=$u WHERE queue_item_id=$id AND state='Leased' AND locked_by=$w;");
+            cmd.Add("$s", state.ToString());
+            cmd.Add("$u", now);
+            cmd.Add("$id", id);
+            cmd.Add("$w", worker);
+            var changed = cmd.ExecuteNonQuery() == 1;
+            if (changed)
+            {
+                using var repair = SqliteStorage.Command(c, tx, """
+                    UPDATE repair_chunk_executions
+                    SET status=$status, updated_at_utc=$now
+                    WHERE enqueued_queue_item_id=$id;
+                    """);
+                repair.Add("$status", state == DurableWorkQueueState.Completed
+                    ? KoLite.Local.Core.Repair.RepairSliceStatus.Completed.ToString()
+                    : KoLite.Local.Core.Repair.RepairSliceStatus.Failed.ToString());
+                repair.Add("$now", now);
+                repair.Add("$id", id);
+                repair.ExecuteNonQuery();
+
+                using var repairSlices = SqliteStorage.Command(c, tx, """
+                    UPDATE repair_slices
+                    SET status=CASE
+                            WHEN EXISTS (
+                                SELECT 1 FROM repair_chunk_executions child
+                                WHERE child.repair_batch_id=repair_slices.repair_batch_id
+                                  AND child.job_id=repair_slices.job_id
+                                  AND child.slice_start_utc=repair_slices.slice_start_utc
+                                  AND child.slice_end_utc=repair_slices.slice_end_utc
+                                  AND child.status='Failed'
+                            ) THEN 'Failed'
+                            WHEN NOT EXISTS (
+                                SELECT 1 FROM repair_chunk_executions child
+                                WHERE child.repair_batch_id=repair_slices.repair_batch_id
+                                  AND child.job_id=repair_slices.job_id
+                                  AND child.slice_start_utc=repair_slices.slice_start_utc
+                                  AND child.slice_end_utc=repair_slices.slice_end_utc
+                                  AND child.status NOT IN ('Completed','Failed')
+                            ) THEN 'Completed'
+                            ELSE 'Queued'
+                        END,
+                        updated_at_utc=$now
+                    WHERE EXISTS (
+                        SELECT 1 FROM repair_chunk_executions trigger
+                        WHERE trigger.enqueued_queue_item_id=$id
+                          AND trigger.repair_batch_id=repair_slices.repair_batch_id
+                          AND trigger.job_id=repair_slices.job_id
+                          AND trigger.slice_start_utc=repair_slices.slice_start_utc
+                          AND trigger.slice_end_utc=repair_slices.slice_end_utc
+                    );
+                    """);
+                repairSlices.Add("$now", now);
+                repairSlices.Add("$id", id);
+                repairSlices.ExecuteNonQuery();
+
+                using var repairBatches = SqliteStorage.Command(c, tx, """
+                    UPDATE repair_batches
+                    SET status=CASE
+                            WHEN EXISTS (
+                                SELECT 1 FROM repair_slices slice
+                                WHERE slice.repair_batch_id=repair_batches.repair_batch_id
+                                  AND slice.status='Failed'
+                            ) THEN 'Failed'
+                            WHEN NOT EXISTS (
+                                SELECT 1 FROM repair_slices slice
+                                WHERE slice.repair_batch_id=repair_batches.repair_batch_id
+                                  AND slice.status IN ('Planned','Queued','Running','Blocked')
+                            ) THEN 'Completed'
+                            ELSE 'Queued'
+                        END,
+                        completed_at_utc=CASE
+                            WHEN NOT EXISTS (
+                                SELECT 1 FROM repair_slices slice
+                                WHERE slice.repair_batch_id=repair_batches.repair_batch_id
+                                  AND slice.status IN ('Planned','Queued','Running','Blocked')
+                            ) THEN $now
+                            ELSE completed_at_utc
+                        END
+                    WHERE repair_batch_id IN (
+                        SELECT repair_batch_id
+                        FROM repair_chunk_executions
+                        WHERE enqueued_queue_item_id=$id
+                    );
+                    """);
+                repairBatches.Add("$now", now);
+                repairBatches.Add("$id", id);
+                repairBatches.ExecuteNonQuery();
+            }
+
+            tx.Commit();
+            return changed;
+        }
         private static DurableWorkItem? ByKey(SqliteConnection c, SqliteTransaction tx, string key) { using var cmd = SqliteStorage.Command(c, tx, "SELECT * FROM work_queue WHERE idempotency_key=$k;"); cmd.Add("$k", key); using var r = cmd.ExecuteReader(); return r.Read() ? Read(r) : null; }
         private static DurableWorkItem Read(SqliteDataReader r) => new(r.GetString(r.GetOrdinal("queue_item_id")), r.GetString(r.GetOrdinal("job_id")), SqliteStorage.ReadUtc(r, "slice_start_utc"), SqliteStorage.ReadUtc(r, "slice_end_utc"), r.GetString(r.GetOrdinal("queue_name")), r.GetInt32(r.GetOrdinal("priority")), Enum.Parse<DurableWorkQueueState>(r.GetString(r.GetOrdinal("state"))), SqliteStorage.ReadUtc(r, "available_at_utc"), r.IsDBNull(r.GetOrdinal("locked_by")) ? null : r.GetString(r.GetOrdinal("locked_by")), SqliteStorage.ReadNullableUtc(r, "locked_until_utc"), r.GetInt32(r.GetOrdinal("attempts")), r.GetInt32(r.GetOrdinal("max_attempts")), r.GetString(r.GetOrdinal("idempotency_key")), r.GetString(r.GetOrdinal("payload_json")), SqliteStorage.ReadUtc(r, "created_at_utc"), SqliteStorage.ReadUtc(r, "updated_at_utc"), r.IsDBNull(r.GetOrdinal("chunk_id")) ? null : r.GetInt32(r.GetOrdinal("chunk_id")), r.IsDBNull(r.GetOrdinal("total_chunks")) ? null : r.GetInt32(r.GetOrdinal("total_chunks")));
     }

@@ -3,7 +3,7 @@ name: ko-lite-job-manager
 description: "Use when the user wants an agent to read KO Lite jobs, inspect read-only operational diagnostics (slice states, leases, throughput, catalog history, logs, audit), re-run slices that failed, or create/update job schedules directly in a running KO Lite app (instead of clicking through the dashboard). Drives the KO Lite localhost JSON API; it reads state, upserts schedules - including pausing or resuming a job via the schedule's isPaused field - can soft-delete or restore a job (reversible), and can repair (re-run) Failed/DeadLettered slices after a dry-run preview; it never hard-deletes jobs, runs Kusto by hand, reruns, or overwrites existing output. Requires the KO Lite app to be running locally."
 metadata:
   author: Azure Core Team
-  version: "1.5.0"
+  version: "1.6.0"
 ---
 
 # KO Lite job manager
@@ -146,8 +146,8 @@ again with `"isPaused": false` to resume. An import always re-activates an
 | POST | `/api/jobs/import` | Body is schedule JSON (single object or array). Returns `{ created, updated, total, items[] }`. 400 with `{ error }` on validation/mutation failure. |
 | POST | `/api/jobs/{jobId}/soft-delete` | Soft-delete (hide) a job — reversible. `{jobId}` is the permanent GUID. Body `{ expectedVersion (required), reason?, force? }`. Returns `{ job }`. 400/404/409; 409 `{ error, dependents[] }` when active dependents block it and `force` is not set. |
 | POST | `/api/jobs/{jobId}/restore` | Restore a soft-deleted job. Body `{ expectedVersion (required), reason? }`. Returns `{ job }`. 400/404/409 (no dependents check). |
-| POST | `/api/jobs/{jobId}/repair/preview` | Dry run. Returns logical-slice/execution counts and an exact `previewToken`; chunked slices identify failed child ids. Writes nothing. |
-| POST | `/api/jobs/{jobId}/repair` | Enqueue the previewed failures. Always echo `expectedSliceCount`; chunked jobs also echo `expectedExecutionCount` and `previewToken`. A changed set returns 409. |
+| POST | `/api/jobs/{jobId}/repair/preview` | Dry run. Returns logical/execution counts, exact terminal failed chunk IDs, and `previewToken`; automatic retry-pending chunks are excluded. |
+| POST | `/api/jobs/{jobId}/repair` | Enqueue all previewed terminal failures. Echo the preview counts/token. Response includes per-chunk previous state and queue mapping. |
 
 ## Read-only diagnostics
 
@@ -167,7 +167,7 @@ it accepts the GUID **or** the `activityId`):
 | --- | --- | --- |
 | `Get-JobStatus` | `…/status` | Slice-state counts + `maxParallelism`/paused/started + queue counts. |
 | `Get-Slices` | `…/slices` | Logical slice states **with lease owner/expiry/attempt** (`-Query @{ state='Running' }`). |
-| `Get-Chunks` | `…/chunks` | Per-chunk child state for one logical slice; requires `-Query @{ start='...'; end='...' }`. |
+| `Get-Chunks` | `…/chunks` | Per-chunk child state and event timeline for one logical slice; requires `-Query @{ start='...'; end='...' }`. |
 | `Get-Attempts` | `…/attempts` | Recent attempts (incl. in-flight `Started` rows with no completion). |
 | `Get-Events` | `…/events` | Slice-state event timeline. |
 | `Get-JobLogs` | `…/logs` | Operational logs (`-Query @{ level='Warning' }`). |
@@ -185,7 +185,7 @@ Cross-job / global — `GET /api/diagnostics/…`:
 | `Get-Throughput` | `…/throughput` | Global completion series; `-Query @{ groupBy='job' }` answers "is the whole app stalled or just one job?". |
 | `Get-Queue` | `…/queue` | Queue status summary (queued/leased/expired). |
 | `Get-Logs` | `…/logs` | Operational logs across all jobs. |
-| `Get-Failures` | `…/failures` | Recent failed/dead-lettered slices + failure-summary runs. |
+| `Get-Failures` | `…/failures` | Recent failed/dead-lettered logical slices with failed chunk IDs/count + failure-summary runs. |
 | `Get-Audit` | `…/audit` | System audit trail (rerun planned/executed, lifecycle, …). |
 | `Get-Reruns` | `…/reruns` | Rerun-batch **history**; `-Query @{ batchId='…' }` for one batch's slices. |
 | `Get-Repairs` | `…/repairs` | Repair-batch **history**; `-Query @{ batchId='…' }` for one batch's repair slices. |
@@ -278,8 +278,8 @@ running a repair that appears to work and changes nothing.
 3. **Pick an aligned range.** `from`/`to` must land on the job's slice boundaries
    (anchored at `startFrom`, stepped by `queryWindowSize`). An unaligned range is
    rejected with the nearest aligned range in the error — use that.
-4. **Preview.** `Preview-Repair` reports exactly which slices would re-run. It
-   writes nothing.
+4. **Preview.** `Preview-Repair` reports exact terminal failed chunk IDs. Chunks
+   with an automatic retry already queued/leased are deliberately absent. It writes nothing.
 5. **Show the user and get approval.** List the logical windows and, for chunked jobs, the exact child ids.
 6. **Repair.** Pass a meaningful `-Reason` (recorded on the batch and in the audit
    trail), `-ExpectedSliceCount`, and for chunked jobs `-ExpectedExecutionCount`

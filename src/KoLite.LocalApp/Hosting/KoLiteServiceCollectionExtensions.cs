@@ -16,6 +16,7 @@ using KoLite.Local.Sqlite.Schema;
 using KoLite.Local.Sqlite.State;
 using KoLite.Local.Sqlite.Throttling;
 using KoLite.LocalApp.FailureAnalysis;
+using KoLite.LocalApp.Repair;
 using KoLite.LocalApp.Retention;
 using KoLite.LocalApp.Ui;
 using KoLite.LocalApp.Updates;
@@ -57,6 +58,7 @@ namespace KoLite.LocalApp
             services.AddScoped<SqliteThrottleAdvisorReadModel>();
             services.AddScoped<SqliteRerunService>();
             services.AddScoped<SqliteRepairService>();
+            services.AddScoped<RepairApprovalCoordinator>();
         }
 
         private static void AddReadModels(IServiceCollection services)

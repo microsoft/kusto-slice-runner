@@ -94,6 +94,12 @@ Each chunk has a distinct stable Kusto idempotency key and matching `ingest-by:`
 chunk reuses that identity across retry, repair, orphan recovery, and restart. Local queue keys are
 separate and may vary by work source.
 
+If one or more chunks dead-letter, the logical slice is incomplete but successful siblings retain
+their state and output. **Repair failed chunks** requeues every terminal failed chunk that does not
+already have an automatic retry queued or leased; it never reexecutes successful siblings and
+requires no Kusto cleanup. **Rerun whole slice** is different: after manual time-window cleanup it
+resets every chunk in the logical slice (plus affected downstream slices).
+
 ## Dependencies
 
 ```json

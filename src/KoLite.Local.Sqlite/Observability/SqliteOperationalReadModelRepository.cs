@@ -107,11 +107,11 @@ namespace KoLite.Local.Sqlite.Observability
             return results.ToDictionary(kvp => kvp.Key, kvp => (IReadOnlyList<string>)kvp.Value, StringComparer.Ordinal);
         }
 
-        public IReadOnlyList<RecentFailure> GetRecentFailures(int take = 20)
+        public IReadOnlyList<RecentFailure> GetRecentFailures(int take = 20, string? jobId = null)
         {
             using var c = connectionFactory.OpenConnection();
-            using var cmd = SqliteStorage.Command(c, null, "SELECT job_id,slice_start_utc,slice_end_utc,state,attempt,last_error_message,updated_at_utc FROM current_slice_state WHERE state IN ('Failed','DeadLettered') ORDER BY updated_at_utc DESC LIMIT $take;");
-            cmd.Add("$take", take); using var r = cmd.ExecuteReader(); var results = new List<RecentFailure>();
+            using var cmd = SqliteStorage.Command(c, null, "SELECT job_id,slice_start_utc,slice_end_utc,state,attempt,last_error_message,updated_at_utc FROM current_slice_state WHERE state IN ('Failed','DeadLettered') AND ($jobId IS NULL OR job_id=$jobId) ORDER BY updated_at_utc DESC LIMIT $take;");
+            cmd.Add("$jobId", jobId); cmd.Add("$take", take); using var r = cmd.ExecuteReader(); var results = new List<RecentFailure>();
             while (r.Read()) results.Add(new RecentFailure(r.GetString(0), SqliteStorage.ReadUtc(r, "slice_start_utc"), SqliteStorage.ReadUtc(r, "slice_end_utc"), r.GetString(3), r.GetInt32(4), r.IsDBNull(5) ? null : r.GetString(5), SqliteStorage.ReadUtc(r, "updated_at_utc")));
             return results;
         }

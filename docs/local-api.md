@@ -58,9 +58,9 @@ Base URL defaults to `http://127.0.0.1:5057`.
 | POST | `/api/jobs/import` | Body is schedule JSON (single object **or** array). Returns `{ "created", "updated", "total", "items": [ { "jobId", "action", "catalogVersion" } ] }`. `400` with `{ "error" }` on JSON, validation, or mutation-policy failure. |
 | POST | `/api/jobs/{jobId}/soft-delete` | Soft-delete (hide) a job — reversible. `{jobId}` is the permanent GUID. Body `{ "expectedVersion": <current catalogVersion, required>, "reason"?, "force"? }`. Returns `{ "job": { ...summary, "isSoftDeleted": true } }`. Errors: `400` (missing/invalid body or absent `expectedVersion`), `404` (unknown job), `409` (version conflict), or `409` `{ "error", "dependents": [ { "jobId", "activityId" } ] }` when active downstream jobs depend on it and `force` is not `true`. |
 | POST | `/api/jobs/{jobId}/restore` | Restore (un-hide) a soft-deleted job. `{jobId}` is the permanent GUID. Body `{ "expectedVersion": <required>, "reason"? }`. Returns `{ "job": { ...summary, "isEnabled": true } }`. Errors: `400`/`404`/`409` as above (no dependents check). |
-| POST | `/api/jobs/{jobId}/repair/preview` | Dry run of a repair. Body `{ "from", "to" }` (ISO-8601 UTC). Returns logical-slice and execution counts plus an exact `previewToken`; chunked slices list failed child ids. Writes nothing. |
-| POST | `/api/jobs/{jobId}/repair` | Re-queue the `Failed`/`DeadLettered` slices in the range. Body always includes `from`, `to`, `reason`, and `expectedSliceCount`; chunked jobs additionally require the preview's `expectedExecutionCount` and `previewToken`. |
-| GET | `/api/jobs/{jobId}/chunks?start=...&end=...` | Bounded child-state detail for one logical slice. Returns 0-32 chunks with state, attempt, lease, and error fields. |
+| POST | `/api/jobs/{jobId}/repair/preview` | Dry run. Returns logical-slice/execution counts, exact sorted terminal failed `chunkIds`, and a `previewToken`. Chunks with queued/leased automatic retry work are excluded. Writes nothing. |
+| POST | `/api/jobs/{jobId}/repair` | Requeue every previewed terminal failed chunk. Body always includes `from`, `to`, `reason`, and `expectedSliceCount`; chunked jobs additionally require `expectedExecutionCount` and `previewToken`. Response includes exact chunk/queue mapping. |
+| GET | `/api/jobs/{jobId}/chunks?start=...&end=...` | Bounded child-state and child-event detail for one logical slice. Returns 0-32 chunks with state, attempt, lease, error, and event fields. |
 
 The potentially large `description` value is not duplicated into `GET /api/jobs`
 summaries. Read it from the single-job `schedule` object or an export. It is Markdown
@@ -145,6 +145,8 @@ slices at all.
 - **Only `Failed`/`DeadLettered`.** `Completed` slices are never touched.
   `Queued`/`Running` work is never disturbed. `Missing` slices are skipped — the
   scheduler already enqueues those on its own.
+- **No duplicate automatic retries.** A failed chunk with an active `Queued`/`Leased` work row is
+  retry-pending, not manually repairable. Mixed slices repair only terminal gaps.
 - **No `outputStrategy` knob.** Repairs always just re-run the slice. The
   unimplemented `CleanSliceOutputThenExecute` and the execute-nothing
   `MarkCompletedOnly` strategies are not reachable from the API.
@@ -236,10 +238,10 @@ dashboard's bookmark redirect). Unknown jobs return `404` with `{ "error" }`.
 | --- | --- |
 | `GET …/status` | Identity + `maxParallelism`/paused/started + logical slice-state counts (`missing/queued/running/completed/failed/deadLettered/dependencyBlocked`) + queue counts. `maxParallelism` is execution-unit concurrency (one slot per chunk or unchunked slice), minimum 1 with no maximum. |
 | `GET …/slices` | Materialized slice states **with lease fields** (`leaseOwner`, `leaseExpiresAtUtc`, `leaseExpired`, `attempt`, `lastError*`). Filters: `state`, `from`, `to`, `take`. |
-| `GET …/chunks` | Per-chunk child state for one logical slice. Requires exact `start` and `end` query parameters. |
+| `GET …/chunks` | Per-chunk child state and event timeline for one logical slice. Requires exact `start` and `end` query parameters. |
 | `GET …/attempts` | Recent slice attempts (incl. in-flight `Started` rows with no `completedAtUtc`). Optional exact slice via `start`/`end`; `take`. |
 | `GET …/events` | Slice-state event timeline. Optional exact slice via `start`/`end`; `take`. |
-| `GET …/logs` | Operational logs. Filters: `level`, `category`, `from`, `to`, `take`. |
+| `GET …/logs` | Operational logs including optional `chunkId`/`totalChunks`. Filters: `level`, `category`, `from`, `to`, `take`. |
 | `GET …/queue` | Work-queue items for the job incl. `lockedBy`/`lockedUntilUtc`. |
 | `GET …/history` | Catalog version history **with a computed JSON diff** per version (e.g. a `maxParallelism` change). |
 | `GET …/throughput` | Succeeded-completion series bucketed over `[from, to)` + a throughput `sample`. Params: `from`, `to`, `bucket`. |
@@ -254,10 +256,10 @@ dashboard's bookmark redirect). Unknown jobs return `404` with `{ "error" }`.
 | `GET …/throughput` | Global completion series; `groupBy=job` splits each bucket per job ("is the whole app stalled or just one job?"). |
 | `GET …/queue` | Queue status summary (`queued/leased/completed/deadLettered/expiredLease`). |
 | `GET …/logs` | Operational logs across all jobs. Filters: `jobId`, `level`, `category`, `from`, `to`, `take`. |
-| `GET …/failures` | Recent failed/dead-lettered slices + persisted failure-summary runs. |
+| `GET …/failures` | Recent failed/dead-lettered logical slices with compact failed chunk IDs/count + persisted failure-summary runs. |
 | `GET …/audit` | System audit trail (rerun planned/executed, lifecycle, …). Filters: `subjectType`, `subjectId`, `action`, `from`, `to`. |
 | `GET …/reruns` | Rerun-batch listing (`jobId` filter); `?batchId=` returns one batch with its slices. |
-| `GET …/repairs` | Repair-batch listing (`jobId` filter); `?batchId=` returns that batch's repair slices. |
+| `GET …/repairs` | Repair-batch listing (`jobId` filter); `?batchId=` returns logical repair slices plus durable per-chunk previous state, outcome, and queue-item mapping. |
 
 ### Examples
 

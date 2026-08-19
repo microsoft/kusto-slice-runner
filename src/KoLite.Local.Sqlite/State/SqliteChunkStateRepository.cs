@@ -30,6 +30,19 @@ namespace KoLite.Local.Sqlite.State
         public string? LeaseToken => Status == DurableSliceStatus.Running ? LastEventId : null;
     }
 
+    public sealed record ChunkStateEventReadout(
+        string EventId,
+        string JobId,
+        DateTimeOffset SliceStartUtc,
+        DateTimeOffset SliceEndUtc,
+        int ChunkId,
+        int TotalChunks,
+        DurableSliceStatus Status,
+        string? Reason,
+        int Attempt,
+        string? Actor,
+        DateTimeOffset RecordedAtUtc);
+
     public sealed class SqliteChunkStateRepository
     {
         private readonly IKoLiteSqliteConnectionFactory connectionFactory;
@@ -109,6 +122,39 @@ namespace KoLite.Local.Sqlite.State
             RequireChunked(execution);
             using var connection = connectionFactory.OpenConnection();
             return Get(connection, null, execution);
+        }
+
+        public IReadOnlyList<ChunkStateEventReadout> ListEvents(SliceRange slice, int take = 100)
+        {
+            using var connection = connectionFactory.OpenConnection();
+            using var command = SqliteStorage.Command(connection, null, """
+                SELECT event_id,job_id,slice_start_utc,slice_end_utc,chunk_id,total_chunks,state,reason,attempt,actor,recorded_at_utc
+                FROM slice_chunk_state_events
+                WHERE job_id=$job AND slice_start_utc=$start AND slice_end_utc=$end
+                ORDER BY recorded_at_utc DESC, event_id DESC
+                LIMIT $take;
+                """);
+            BindSlice(command, slice);
+            command.Add("$take", Math.Max(1, take));
+            using var reader = command.ExecuteReader();
+            var results = new List<ChunkStateEventReadout>();
+            while (reader.Read())
+            {
+                results.Add(new ChunkStateEventReadout(
+                    reader.GetString(0),
+                    reader.GetString(1),
+                    SqliteStorage.ReadUtc(reader, "slice_start_utc"),
+                    SqliteStorage.ReadUtc(reader, "slice_end_utc"),
+                    reader.GetInt32(4),
+                    reader.GetInt32(5),
+                    Enum.Parse<DurableSliceStatus>(reader.GetString(6)),
+                    reader.IsDBNull(7) ? null : reader.GetString(7),
+                    reader.GetInt32(8),
+                    reader.IsDBNull(9) ? null : reader.GetString(9),
+                    SqliteStorage.ReadUtc(reader, "recorded_at_utc")));
+            }
+
+            return results;
         }
 
         public DurableChunkState MarkQueued(string operationId, SliceExecutionUnit execution, string? reason = null, string? actor = null, string payloadJson = "{}")
@@ -224,16 +270,45 @@ namespace KoLite.Local.Sqlite.State
             int priority,
             string queueName,
             int maxAttempts,
-            string payloadJson)
+            string payloadJson,
+            string repairBatchId,
+            string repairChunkExecutionId)
         {
             RequireChunked(execution);
             using var connection = connectionFactory.OpenConnection();
             using var transaction = connection.BeginTransaction(System.Data.IsolationLevel.Serializable);
+            using (var enabled = SqliteStorage.Command(connection, transaction, "SELECT is_enabled FROM job_definitions WHERE job_id=$job;"))
+            {
+                enabled.Add("$job", execution.Slice.JobId);
+                if (Convert.ToInt32(enabled.ExecuteScalar(), CultureInfo.InvariantCulture) != 1)
+                {
+                    throw new InvalidOperationException($"Job '{execution.Slice.JobId}' is paused, soft-deleted, or missing. Resume it before repairing failed chunks.");
+                }
+            }
+
             var current = GetRequired(connection, transaction, execution);
             if (current.Status is not (DurableSliceStatus.Failed or DurableSliceStatus.DeadLettered))
             {
                 transaction.Commit();
                 return null;
+            }
+
+            using (var active = SqliteStorage.Command(connection, transaction, """
+                SELECT COUNT(*)
+                FROM work_queue
+                WHERE job_id=$job
+                  AND slice_start_utc=$start
+                  AND slice_end_utc=$end
+                  AND (chunk_id=$chunk OR chunk_id IS NULL)
+                  AND state IN ('Queued','Leased');
+                """))
+            {
+                BindExecution(active, execution);
+                if (Convert.ToInt32(active.ExecuteScalar(), CultureInfo.InvariantCulture) > 0)
+                {
+                    transaction.Commit();
+                    return null;
+                }
             }
 
             var now = DateTimeOffset.UtcNow;
@@ -258,6 +333,30 @@ namespace KoLite.Local.Sqlite.State
                 enqueue.Add("$payload", payloadJson);
                 enqueue.Add("$now", SqliteStorage.Utc(now));
                 enqueue.ExecuteNonQuery();
+            }
+
+            using (var history = SqliteStorage.Command(connection, transaction, """
+                INSERT INTO repair_chunk_executions (
+                    repair_chunk_execution_id,repair_batch_id,job_id,slice_start_utc,slice_end_utc,
+                    chunk_id,total_chunks,previous_state,previous_attempt,status,enqueued_queue_item_id,
+                    created_at_utc,updated_at_utc)
+                VALUES (
+                    $repairExecution,$repairBatch,$job,$start,$end,$chunk,$chunks,$previousState,
+                    $previousAttempt,'Queued',$queueItem,$now,$now)
+                ON CONFLICT(repair_chunk_execution_id) DO UPDATE SET
+                    status=excluded.status,
+                    enqueued_queue_item_id=excluded.enqueued_queue_item_id,
+                    updated_at_utc=excluded.updated_at_utc;
+                """))
+            {
+                BindExecution(history, execution);
+                history.Add("$repairExecution", repairChunkExecutionId);
+                history.Add("$repairBatch", repairBatchId);
+                history.Add("$previousState", current.Status.ToString());
+                history.Add("$previousAttempt", current.Attempt);
+                history.Add("$queueItem", queueItemId);
+                history.Add("$now", SqliteStorage.Utc(now));
+                history.ExecuteNonQuery();
             }
 
             InsertEvent(connection, transaction, operationId, execution, DurableSliceStatus.Queued, reason, current.Attempt, payloadJson, actor, now);

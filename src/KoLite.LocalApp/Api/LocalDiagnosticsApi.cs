@@ -146,6 +146,17 @@ namespace KoLite.LocalApp.Api
                         chunk.LastErrorMessage,
                         chunk.UpdatedAtUtc,
                     }),
+                    events = chunks.ListEvents(slice, DiagnosticsQuery.Take(http.Request, 100)).Select(evt => new
+                    {
+                        evt.EventId,
+                        evt.ChunkId,
+                        evt.TotalChunks,
+                        status = evt.Status.ToString(),
+                        evt.Reason,
+                        evt.Attempt,
+                        evt.Actor,
+                        evt.RecordedAtUtc,
+                    }),
                 });
             });
 
@@ -338,13 +349,39 @@ namespace KoLite.LocalApp.Api
             api.MapGet("/diagnostics/failures", (
                 HttpContext http,
                 SqliteOperationalReadModelRepository readModels,
-                SqliteDiagnosticsReadModelRepository diagnostics) =>
+                SqliteDiagnosticsReadModelRepository diagnostics,
+                SqliteJobCatalogRepository catalog,
+                SqliteChunkStateRepository chunks) =>
             {
                 var take = DiagnosticsQuery.Take(http.Request);
                 var jobId = DiagnosticsQuery.Text(http.Request, "jobId");
+                var recentFailures = readModels.GetRecentFailures(take, jobId)
+                    .Select(failure =>
+                    {
+                        var definition = catalog.Get(failure.JobId)?.Definition;
+                        var failedChunkIds = definition?.Chunks is null
+                            ? Array.Empty<int>()
+                            : chunks.List(new SliceRange(failure.JobId, failure.SliceStartUtc, failure.SliceEndUtc))
+                                .Where(chunk => chunk.Status is DurableSliceStatus.Failed or DurableSliceStatus.DeadLettered)
+                                .Select(chunk => chunk.ChunkId)
+                                .Order()
+                                .ToArray();
+                        return new
+                        {
+                            failure.JobId,
+                            failure.SliceStartUtc,
+                            failure.SliceEndUtc,
+                            failure.Status,
+                            failure.Attempt,
+                            failure.Reason,
+                            failure.UpdatedAtUtc,
+                            failedChunkCount = failedChunkIds.Length,
+                            failedChunkIds,
+                        };
+                    });
                 return Results.Json(new
                 {
-                    recentFailures = readModels.GetRecentFailures(take),
+                    recentFailures,
                     summaries = diagnostics.ListFailureSummaries(jobId, take),
                 });
             });
@@ -391,7 +428,23 @@ namespace KoLite.LocalApp.Api
                 var batchId = DiagnosticsQuery.Text(http.Request, "batchId");
                 if (batchId is not null)
                 {
-                    return Results.Json(new { repairBatchId = batchId, repairSlices = repair.GetRepairSlices(batchId) });
+                    return Results.Json(new
+                    {
+                        repairBatchId = batchId,
+                        repairSlices = repair.GetRepairSlices(batchId),
+                        repairChunks = repair.GetRepairChunkExecutions(batchId).Select(chunk => new
+                        {
+                            chunk.RepairBatchId,
+                            chunk.JobId,
+                            chunk.Slice,
+                            chunk.ChunkId,
+                            chunk.TotalChunks,
+                            previousStatus = chunk.PreviousStatus.ToString(),
+                            chunk.PreviousAttempt,
+                            status = chunk.Status.ToString(),
+                            chunk.WorkItemId,
+                        }),
+                    });
                 }
 
                 var repairs = diagnostics.ListRepairBatches(DiagnosticsQuery.Text(http.Request, "jobId"), DiagnosticsQuery.Take(http.Request));

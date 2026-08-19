@@ -426,6 +426,10 @@ switch ($Action) {
         $bounds = Get-RepairBounds
         $result = Invoke-KoLiteApi -Method 'POST' -RelativeUri "/api/jobs/$($bounds.EncodedJobId)/repair/preview" -Body $bounds.Body
         Write-Host "Repair preview: $($result.repairableSliceCount) logical slice(s) / $($result.repairableExecutionCount) execution(s) would re-run, $($result.blockedSliceCount) blocked, $($result.skippedSliceCount) untouched. Nothing was changed."
+        $chunkSets = @($result.slices | Where-Object { $null -ne $_.chunkIds -and @($_.chunkIds).Count -gt 0 })
+        foreach ($slice in $chunkSets) {
+            Write-Host "  $($slice.startUtc) - $($slice.endUtc): chunk ID(s) $(@($slice.chunkIds) -join ', ')"
+        }
         return $result
     }
     'Repair' {

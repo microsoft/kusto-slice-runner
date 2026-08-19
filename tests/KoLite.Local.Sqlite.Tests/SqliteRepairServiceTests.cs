@@ -109,6 +109,347 @@ namespace KoLite.Local.Sqlite.Tests
             Assert.Equal(DurableSliceStatus.Completed, chunkState.Get(SliceExecutionUnit.Chunk(slice, 0, 2))!.Status);
             Assert.Equal(DurableSliceStatus.Queued, chunkState.Get(SliceExecutionUnit.Chunk(slice, 1, 2))!.Status);
             Assert.Equal(DurableSliceStatus.Queued, state.Get(JobId("job.chunk-repair"), At(0), At(5)).Status);
+            Assert.Equal(1, QueryInt(
+                "SELECT COUNT(*) FROM repair_chunk_executions WHERE repair_batch_id=$batch AND job_id=$job AND chunk_id=1 AND total_chunks=2 AND previous_state='DeadLettered' AND status='Queued' AND enqueued_queue_item_id IS NOT NULL;",
+                ("$batch", result.RepairBatchId),
+                ("$job", JobId("job.chunk-repair"))));
+
+            var claimedRepair = queue.Claim("default", "retention-worker", TimeSpan.FromMinutes(5), At(30))!;
+            Assert.True(queue.Complete(claimedRepair.QueueItemId, "retention-worker"));
+            Assert.Equal(1, readModels.CleanupOldReadModels(DateTimeOffset.UtcNow.AddDays(1), DateTimeOffset.UtcNow.AddDays(1)).QueueRowsDeleted);
+            Assert.Empty(queue.List(JobId("job.chunk-repair")));
+            Assert.Equal(1, QueryInt(
+                "SELECT COUNT(*) FROM repair_chunk_executions WHERE repair_batch_id=$batch AND chunk_id=1 AND enqueued_queue_item_id IS NOT NULL;",
+                ("$batch", result.RepairBatchId)));
+        }
+
+        [Fact]
+        public void Chunked_repair_skips_failed_chunk_with_an_active_automatic_retry()
+        {
+            catalog.Create(Schedule("job.chunk-retry-pending", chunks: 2));
+            var slice = new SliceRange(JobId("job.chunk-retry-pending"), At(0), At(5));
+            var children = chunkState.EnsureWindow(slice, 2, "test");
+
+            chunkState.MarkQueued("complete-queued", children[0].Execution, actor: "test");
+            var completedLease = chunkState.AcquireLease("complete-lease", children[0].Execution, "worker-0", TimeSpan.FromMinutes(5), At(10))!;
+            Assert.True(chunkState.CompleteLease("complete", children[0].Execution, "worker-0", completedLease.LeaseToken!, At(11)));
+
+            chunkState.MarkQueued("retry-queued", children[1].Execution, actor: "test");
+            var originalWork = queue.Enqueue(
+                slice.JobId,
+                slice.StartUtc,
+                slice.EndUtc,
+                $"normal|{children[1].Execution.ExecutionKey}",
+                At(10),
+                chunkId: 1,
+                totalChunks: 2);
+            var claimed = queue.Claim("default", "worker-1", TimeSpan.FromMinutes(5), At(10))!;
+            var failedLease = chunkState.AcquireLease("retry-lease", children[1].Execution, "worker-1", TimeSpan.FromMinutes(5), At(10))!;
+            Assert.True(chunkState.FailLease("retry-failed", children[1].Execution, "worker-1", failedLease.LeaseToken!, At(11), "transient", "Transient"));
+            Assert.True(queue.Abandon(claimed.QueueItemId, "worker-1", At(12)));
+
+            var request = new RepairPlanRequest(
+                slice.JobId,
+                slice.StartUtc,
+                slice.EndUtc,
+                "tester",
+                "do not duplicate retry",
+                Scope: RepairSliceScope.FailedAndDeadLetteredOnly);
+            var preview = Service().Preview(request);
+            var result = Service().PlanAndEnqueue(request);
+
+            Assert.Equal(0, preview.Repairable);
+            Assert.Equal(0, preview.RepairableExecutions);
+            Assert.Equal(1, preview.Skipped);
+            Assert.Equal(0, result.Queued);
+            var remaining = Assert.Single(queue.List(slice.JobId));
+            Assert.Equal(originalWork.QueueItemId, remaining.QueueItemId);
+            Assert.Equal(DurableWorkQueueState.Queued, remaining.State);
+            Assert.Equal(DurableSliceStatus.Failed, chunkState.Get(children[1].Execution)!.Status);
+        }
+
+        [Fact]
+        public void Chunked_repair_selects_terminal_gap_but_not_retry_pending_sibling()
+        {
+            catalog.Create(Schedule("job.chunk-mixed-failures", chunks: 3));
+            var slice = new SliceRange(JobId("job.chunk-mixed-failures"), At(0), At(5));
+            var children = chunkState.EnsureWindow(slice, 3, "test");
+            foreach (var child in children)
+            {
+                chunkState.MarkQueued($"queued-{child.ChunkId}", child.Execution, actor: "test");
+                var lease = chunkState.AcquireLease($"lease-{child.ChunkId}", child.Execution, $"worker-{child.ChunkId}", TimeSpan.FromMinutes(5), At(10))!;
+                if (child.ChunkId == 0)
+                {
+                    Assert.True(chunkState.CompleteLease("complete-0", child.Execution, "worker-0", lease.LeaseToken!, At(11)));
+                }
+                else if (child.ChunkId == 1)
+                {
+                    Assert.True(chunkState.DeadLetterLease("dead-1", child.Execution, "worker-1", lease.LeaseToken!, At(11), "permanent", "Permanent"));
+                }
+                else
+                {
+                    Assert.True(chunkState.FailLease("failed-2", child.Execution, "worker-2", lease.LeaseToken!, At(11), "transient", "Transient"));
+                }
+            }
+
+            var retryWork = queue.Enqueue(
+                slice.JobId,
+                slice.StartUtc,
+                slice.EndUtc,
+                $"normal|{children[2].Execution.ExecutionKey}",
+                At(12),
+                chunkId: 2,
+                totalChunks: 3);
+            var request = new RepairPlanRequest(
+                slice.JobId,
+                slice.StartUtc,
+                slice.EndUtc,
+                "tester",
+                "repair terminal gap only",
+                Scope: RepairSliceScope.FailedAndDeadLetteredOnly);
+
+            var preview = Service().Preview(request);
+            var result = Service().PlanAndEnqueue(request);
+
+            var previewSlice = Assert.Single(preview.Slices, item => item.Outcome == RepairSliceOutcome.Repairable);
+            Assert.Equal([1], previewSlice.ChunkIds);
+            Assert.Equal(1, preview.RepairableExecutions);
+            Assert.Equal(1, result.Queued);
+            var work = queue.List(slice.JobId);
+            Assert.Equal(2, work.Count);
+            Assert.Contains(work, item => item.QueueItemId == retryWork.QueueItemId && item.ChunkId == 2);
+            Assert.Contains(work, item => item.ChunkId == 1 && item.IdempotencyKey.StartsWith("repair|", StringComparison.Ordinal));
+            Assert.Equal(DurableSliceStatus.Completed, chunkState.Get(children[0].Execution)!.Status);
+            Assert.Equal(DurableSliceStatus.Queued, chunkState.Get(children[1].Execution)!.Status);
+            Assert.Equal(DurableSliceStatus.Failed, chunkState.Get(children[2].Execution)!.Status);
+        }
+
+        [Fact]
+        public async Task Concurrent_chunk_repairs_create_only_one_runnable_queue_row()
+        {
+            catalog.Create(Schedule("job.chunk-concurrent-repair", chunks: 1));
+            var slice = new SliceRange(JobId("job.chunk-concurrent-repair"), At(0), At(5));
+            var child = Assert.Single(chunkState.EnsureWindow(slice, 1, "test"));
+            chunkState.MarkQueued("queued", child.Execution, actor: "test");
+            var lease = chunkState.AcquireLease("lease", child.Execution, "worker", TimeSpan.FromMinutes(5), At(10))!;
+            Assert.True(chunkState.DeadLetterLease("dead", child.Execution, "worker", lease.LeaseToken!, At(11), "permanent", "Permanent"));
+
+            var requests = new[]
+            {
+                new RepairPlanRequest(slice.JobId, slice.StartUtc, slice.EndUtc, "tester-a", "repair-a", Scope: RepairSliceScope.FailedAndDeadLetteredOnly),
+                new RepairPlanRequest(slice.JobId, slice.StartUtc, slice.EndUtc, "tester-b", "repair-b", Scope: RepairSliceScope.FailedAndDeadLetteredOnly),
+            };
+
+            var results = await Task.WhenAll(requests.Select(request => Task.Run(() => Service().PlanAndEnqueue(request))));
+
+            Assert.Equal(1, results.Sum(result => result.Queued));
+            Assert.Single(queue.List(slice.JobId), item => item.State == DurableWorkQueueState.Queued && item.ChunkId == 0);
+            Assert.Equal(1, QueryInt("SELECT COUNT(*) FROM repair_chunk_executions WHERE job_id=$job;", ("$job", slice.JobId)));
+        }
+
+        [Fact]
+        public async Task Repaired_terminal_chunks_complete_parent_without_reexecuting_successful_sibling()
+        {
+            catalog.Create(Schedule("job.chunk-repair-execute", chunks: 3));
+            var slice = new SliceRange(JobId("job.chunk-repair-execute"), At(0), At(5));
+            var children = chunkState.EnsureWindow(slice, 3, "test");
+            foreach (var child in children)
+            {
+                chunkState.MarkQueued($"queued-{child.ChunkId}", child.Execution, actor: "test");
+                var lease = chunkState.AcquireLease($"lease-{child.ChunkId}", child.Execution, $"worker-{child.ChunkId}", TimeSpan.FromMinutes(5), At(10))!;
+                if (child.ChunkId == 0)
+                {
+                    chunkState.CompleteLease("complete-0", child.Execution, "worker-0", lease.LeaseToken!, At(11));
+                }
+                else
+                {
+                    chunkState.DeadLetterLease($"dead-{child.ChunkId}", child.Execution, $"worker-{child.ChunkId}", lease.LeaseToken!, At(11), "permanent", "Permanent");
+                }
+            }
+
+            var repair = Service().PlanAndEnqueue(new RepairPlanRequest(
+                slice.JobId,
+                slice.StartUtc,
+                slice.EndUtc,
+                "tester",
+                "repair terminal chunks",
+                Scope: RepairSliceScope.FailedAndDeadLetteredOnly));
+            var executor = new ChunkRecordingExecutor();
+            var worker = new SqliteLocalWorker(
+                catalog,
+                state,
+                queue,
+                readModels,
+                executor,
+                clock,
+                new LocalWorkerOptions(WorkerId: "repair-chunk-worker"),
+                chunkState: chunkState);
+
+            Assert.True((await worker.RunOnceAsync()).Succeeded);
+            Assert.True((await worker.RunOnceAsync()).Succeeded);
+
+            Assert.Equal([1, 2], executor.Executions.Select(execution => execution.ChunkId).Order().ToArray());
+            Assert.Equal(DurableSliceStatus.Completed, state.Get(slice.JobId, slice.StartUtc, slice.EndUtc).Status);
+            var final = chunkState.List(slice);
+            Assert.All(final, child => Assert.Equal(DurableSliceStatus.Completed, child.Status));
+            Assert.Equal(1, final.Single(child => child.ChunkId == 0).Attempt);
+            Assert.Equal(2, final.Single(child => child.ChunkId == 1).Attempt);
+            Assert.Equal(2, final.Single(child => child.ChunkId == 2).Attempt);
+            Assert.All(Service().GetRepairChunkExecutions(repair.RepairBatchId), repaired => Assert.Equal(RepairSliceStatus.Completed, repaired.Status));
+            Assert.Equal(RepairSliceStatus.Completed, Assert.Single(Service().GetRepairSlices(repair.RepairBatchId)).Status);
+            Assert.Equal("Completed", QueryString("SELECT status FROM repair_batches WHERE repair_batch_id=$id;", ("$id", repair.RepairBatchId)));
+        }
+
+        [Fact]
+        public async Task Repaired_chunk_that_fails_again_keeps_successful_sibling_untouched()
+        {
+            catalog.Create(Schedule("job.chunk-repair-refail", chunks: 2));
+            var slice = new SliceRange(JobId("job.chunk-repair-refail"), At(0), At(5));
+            var children = chunkState.EnsureWindow(slice, 2, "test");
+            foreach (var child in children)
+            {
+                chunkState.MarkQueued($"queued-{child.ChunkId}", child.Execution, actor: "test");
+                var lease = chunkState.AcquireLease($"lease-{child.ChunkId}", child.Execution, $"worker-{child.ChunkId}", TimeSpan.FromMinutes(5), At(10))!;
+                if (child.ChunkId == 0)
+                {
+                    chunkState.CompleteLease("complete-0", child.Execution, "worker-0", lease.LeaseToken!, At(11));
+                }
+                else
+                {
+                    chunkState.DeadLetterLease("dead-1", child.Execution, "worker-1", lease.LeaseToken!, At(11), "permanent", "Permanent");
+                }
+            }
+
+            var repair = Service().PlanAndEnqueue(new RepairPlanRequest(
+                slice.JobId,
+                slice.StartUtc,
+                slice.EndUtc,
+                "tester",
+                "repair then fail",
+                Scope: RepairSliceScope.FailedAndDeadLetteredOnly));
+            var executor = new ChunkRecordingExecutor(LocalSliceOutputResult.Failure("StillBroken", "still broken", isRetryable: false));
+            var worker = new SqliteLocalWorker(
+                catalog,
+                state,
+                queue,
+                readModels,
+                executor,
+                clock,
+                new LocalWorkerOptions(WorkerId: "repair-refail-worker"),
+                chunkState: chunkState);
+
+            var run = await worker.RunOnceAsync();
+
+            Assert.True(run.DeadLettered);
+            Assert.Equal([1], executor.Executions.Select(execution => execution.ChunkId).ToArray());
+            Assert.Equal(DurableSliceStatus.DeadLettered, state.Get(slice.JobId, slice.StartUtc, slice.EndUtc).Status);
+            Assert.Equal(DurableSliceStatus.Completed, chunkState.Get(children[0].Execution)!.Status);
+            Assert.Equal(1, chunkState.Get(children[0].Execution)!.Attempt);
+            Assert.Equal(DurableSliceStatus.DeadLettered, chunkState.Get(children[1].Execution)!.Status);
+            Assert.Equal(2, chunkState.Get(children[1].Execution)!.Attempt);
+            Assert.Equal(RepairSliceStatus.Failed, Assert.Single(Service().GetRepairChunkExecutions(repair.RepairBatchId)).Status);
+            Assert.Equal(RepairSliceStatus.Failed, Assert.Single(Service().GetRepairSlices(repair.RepairBatchId)).Status);
+            Assert.Equal("Failed", QueryString("SELECT status FROM repair_batches WHERE repair_batch_id=$id;", ("$id", repair.RepairBatchId)));
+        }
+
+        [Fact]
+        public async Task Dead_lettered_repair_can_be_repaired_again_with_same_reason()
+        {
+            catalog.Create(Schedule("job.chunk-rerepair-same-reason", chunks: 1));
+            var slice = new SliceRange(JobId("job.chunk-rerepair-same-reason"), At(0), At(5));
+            var child = Assert.Single(chunkState.EnsureWindow(slice, 1, "test"));
+            chunkState.MarkQueued("queued", child.Execution, actor: "test");
+            var lease = chunkState.AcquireLease("lease", child.Execution, "worker", TimeSpan.FromMinutes(5), At(10))!;
+            chunkState.DeadLetterLease("dead", child.Execution, "worker", lease.LeaseToken!, At(11), "permanent", "Permanent");
+            var request = new RepairPlanRequest(
+                slice.JobId,
+                slice.StartUtc,
+                slice.EndUtc,
+                "tester",
+                "same reason",
+                Scope: RepairSliceScope.FailedAndDeadLetteredOnly);
+            var first = Service().PlanAndEnqueue(request);
+            var firstWorker = new SqliteLocalWorker(
+                catalog,
+                state,
+                queue,
+                readModels,
+                new ChunkRecordingExecutor(LocalSliceOutputResult.Failure("StillBroken", "still broken", isRetryable: false)),
+                clock,
+                new LocalWorkerOptions(WorkerId: "first-repair-worker"),
+                chunkState: chunkState);
+            Assert.True((await firstWorker.RunOnceAsync()).DeadLettered);
+
+            var second = Service().PlanAndEnqueue(request);
+
+            Assert.NotEqual(first.RepairBatchId, second.RepairBatchId);
+            Assert.Equal(1, second.Queued);
+            var work = queue.List(slice.JobId);
+            Assert.Equal(2, work.Count);
+            Assert.Single(work, item => item.State == DurableWorkQueueState.DeadLettered);
+            Assert.Single(work, item => item.State == DurableWorkQueueState.Queued);
+        }
+
+        [Fact]
+        public void Pausing_chunked_job_after_preview_prevents_repair_enqueue()
+        {
+            var created = catalog.Create(Schedule("job.chunk-pause-after-preview", chunks: 1));
+            var slice = new SliceRange(created.JobId, At(0), At(5));
+            var child = Assert.Single(chunkState.EnsureWindow(slice, 1, "test"));
+            chunkState.MarkQueued("queued", child.Execution, actor: "test");
+            var lease = chunkState.AcquireLease("lease", child.Execution, "worker", TimeSpan.FromMinutes(5), At(10))!;
+            chunkState.DeadLetterLease("dead", child.Execution, "worker", lease.LeaseToken!, At(11), "permanent", "Permanent");
+            var request = new RepairPlanRequest(
+                slice.JobId,
+                slice.StartUtc,
+                slice.EndUtc,
+                "tester",
+                "pause race",
+                Scope: RepairSliceScope.FailedAndDeadLetteredOnly);
+            Assert.Equal(1, Service().Preview(request).RepairableExecutions);
+            catalog.SetEnabled(created.JobId, enabled: false, expectedVersion: created.CatalogVersion);
+
+            var error = Assert.Throws<InvalidOperationException>(() => Service().PlanAndEnqueue(request));
+
+            Assert.Contains("paused", error.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Empty(queue.List(slice.JobId));
+        }
+
+        [Fact]
+        public void Chunk_repair_parent_exists_before_queue_row_becomes_visible()
+        {
+            catalog.Create(Schedule("job.chunk-parent-first", chunks: 1));
+            var slice = new SliceRange(JobId("job.chunk-parent-first"), At(0), At(5));
+            var child = Assert.Single(chunkState.EnsureWindow(slice, 1, "test"));
+            chunkState.MarkQueued("queued", child.Execution, actor: "test");
+            var lease = chunkState.AcquireLease("lease", child.Execution, "worker", TimeSpan.FromMinutes(5), At(10))!;
+            chunkState.DeadLetterLease("dead", child.Execution, "worker", lease.LeaseToken!, At(11), "permanent", "Permanent");
+            ExecuteNonQuery("""
+                CREATE TRIGGER repair_parent_before_queue
+                BEFORE INSERT ON work_queue
+                WHEN NEW.idempotency_key LIKE 'repair|%'
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM repair_slices parent
+                      WHERE parent.job_id=NEW.job_id
+                        AND parent.slice_start_utc=NEW.slice_start_utc
+                        AND parent.slice_end_utc=NEW.slice_end_utc
+                  )
+                BEGIN
+                    SELECT RAISE(ABORT, 'repair parent missing before queue insert');
+                END;
+                """);
+
+            var result = Service().PlanAndEnqueue(new RepairPlanRequest(
+                slice.JobId,
+                slice.StartUtc,
+                slice.EndUtc,
+                "tester",
+                "parent first",
+                Scope: RepairSliceScope.FailedAndDeadLetteredOnly));
+
+            Assert.Equal(1, result.Queued);
+            Assert.Equal(RepairSliceStatus.Queued, Assert.Single(Service().GetRepairSlices(result.RepairBatchId)).Status);
         }
 
         [Fact]
@@ -438,6 +779,14 @@ namespace KoLite.Local.Sqlite.Tests
             return cmd.ExecuteScalar();
         }
 
+        private void ExecuteNonQuery(string sql)
+        {
+            using var connection = factory.OpenConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = sql;
+            command.ExecuteNonQuery();
+        }
+
         private static string Schedule(string activityId, string? dependsOn = null, int? chunks = null) => $$"""
         {
           "id": "{{JobId(activityId)}}",
@@ -463,6 +812,27 @@ namespace KoLite.Local.Sqlite.Tests
             {
                 Requests.Add(slice);
                 return Task.FromResult(LocalSliceOutputResult.Success("test://repair"));
+            }
+        }
+
+        private sealed class ChunkRecordingExecutor : ILocalSliceOutputExecutor
+        {
+            private readonly LocalSliceOutputResult result;
+
+            public ChunkRecordingExecutor(LocalSliceOutputResult? result = null)
+            {
+                this.result = result ?? LocalSliceOutputResult.Success("test://chunk-repair");
+            }
+
+            public List<SliceExecutionUnit> Executions { get; } = [];
+
+            public Task<LocalSliceOutputResult> ExecuteAsync(JobDefinition job, SliceRange slice, CancellationToken cancellationToken = default) =>
+                Task.FromResult(LocalSliceOutputResult.Success($"test://{slice.ToKey().Value}"));
+
+            public Task<LocalSliceOutputResult> ExecuteAsync(JobDefinition job, SliceExecutionUnit execution, CancellationToken cancellationToken = default)
+            {
+                Executions.Add(execution);
+                return Task.FromResult(result);
             }
         }
     }

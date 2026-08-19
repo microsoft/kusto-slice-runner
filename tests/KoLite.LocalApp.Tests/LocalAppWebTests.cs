@@ -12,6 +12,7 @@ using KoLite.Local.Sqlite.Schema;
 using KoLite.Local.Sqlite.Observability;
 using KoLite.Local.Sqlite.Orchestration;
 using KoLite.Local.Sqlite.Queue;
+using KoLite.Local.Sqlite.Repair;
 using KoLite.Local.Sqlite.State;
 using KoLite.Local.Sqlite.Throttling;
 using KoLite.LocalApp.Retention;
@@ -929,6 +930,35 @@ namespace KoLite.LocalApp.Tests
         }
 
         [Fact]
+        public async Task Slice_detail_labels_chunk_logs_and_child_events()
+        {
+            var catalog = new SqliteJobCatalogRepository(sqlite);
+            var record = catalog.Create(Schedule("job.chunk.evidence", "ChunkEvidenceFunction", isPaused: false, chunks: 2));
+            var slice = new SliceRange(record.JobId, At(0), At(5));
+            var chunks = new SqliteChunkStateRepository(sqlite);
+            var children = chunks.EnsureWindow(slice, 2, "test");
+            chunks.MarkQueued("chunk-0-queued", children[0].Execution, actor: "test");
+            new SqliteOperationalReadModelRepository(sqlite).RecordLog(
+                "Error",
+                "chunk one failed",
+                "worker",
+                record.JobId,
+                At(0),
+                At(5),
+                chunkId: 1,
+                totalChunks: 2);
+            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+
+            var html = await client.GetStringAsync(
+                $"/jobs/{record.JobId}/slices?start={Uri.EscapeDataString(AppFormatting.Iso(At(0)))}&end={Uri.EscapeDataString(AppFormatting.Iso(At(5)))}");
+
+            Assert.Contains("data-chunk-event=\"0\"", html, StringComparison.Ordinal);
+            Assert.Contains("Chunk 0/2", html, StringComparison.Ordinal);
+            Assert.Contains("data-chunk-log=\"1\"", html, StringComparison.Ordinal);
+            Assert.Contains("chunk one failed", html, StringComparison.Ordinal);
+        }
+
+        [Fact]
         public async Task Schedule_editor_posts_multiple_normalized_tags()
         {
             var catalog = new SqliteJobCatalogRepository(sqlite);
@@ -1843,8 +1873,10 @@ namespace KoLite.LocalApp.Tests
             var preview = await client.GetStringAsync(previewPath);
             var createToken = await ReadFormToken(client, previewPath);
 
-            Assert.Contains("Rerun this slice", slice);
-            Assert.Contains("Plan rerun: job.web", preview);
+            Assert.Contains("Repair or rerun this slice", slice);
+            Assert.Contains("Repair or rerun: job.web", preview);
+            Assert.Contains("value=\"rerun\" checked", preview);
+            Assert.Contains("Rerun whole slice", preview);
             Assert.Contains(".delete table Output records &lt;|", preview);
             Assert.Contains("StartTime &lt; datetime(2026-01-01T00:05:00.0000000Z)", preview);
             Assert.Contains("Create rerun batch", preview);
@@ -1879,6 +1911,81 @@ namespace KoLite.LocalApp.Tests
             Assert.Contains("Archived previous local details", completedBatch);
             Assert.Contains("attempt-s0", completedBatch);
             Assert.Contains("No attempts recorded.", resetSlice);
+        }
+
+        [Fact]
+        public async Task Failed_chunked_slice_defaults_to_repair_and_queues_all_terminal_chunks()
+        {
+            var catalog = new SqliteJobCatalogRepository(sqlite);
+            var record = catalog.Create(Schedule("job.web.chunk-repair", "ChunkRepairFunction", isPaused: false, chunks: 3));
+            var slice = new SliceRange(record.JobId, At(0), At(5));
+            var chunks = new SqliteChunkStateRepository(sqlite);
+            foreach (var child in chunks.EnsureWindow(slice, 3, "test"))
+            {
+                chunks.MarkQueued($"queued-{child.ChunkId}", child.Execution, actor: "test");
+                var lease = chunks.AcquireLease($"lease-{child.ChunkId}", child.Execution, $"worker-{child.ChunkId}", TimeSpan.FromMinutes(5), At(10))!;
+                if (child.ChunkId == 0)
+                {
+                    chunks.CompleteLease("complete-0", child.Execution, "worker-0", lease.LeaseToken!, At(11));
+                }
+                else
+                {
+                    chunks.DeadLetterLease($"dead-{child.ChunkId}", child.Execution, $"worker-{child.ChunkId}", lease.LeaseToken!, At(11), $"chunk {child.ChunkId} failed", "Permanent");
+                }
+            }
+
+            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+            var slicePath = $"/jobs/{record.JobId}/slices?start=2026-01-01T00%3A00%3A00Z&end=2026-01-01T00%3A05%3A00Z";
+            var combinedPath = $"/jobs/{record.JobId}/rerun?start=2026-01-01T00%3A00&end=2026-01-01T00%3A05";
+            var sliceHtml = await client.GetStringAsync(slicePath);
+            var previewHtml = await client.GetStringAsync(combinedPath);
+            var token = await ReadFormToken(client, combinedPath);
+            var preview = new SqliteRepairService(
+                sqlite,
+                catalog,
+                new SqliteSliceStateRepository(sqlite),
+                new SqliteWorkQueueRepository(sqlite),
+                SystemClock.Instance,
+                chunks).Preview(new RepairPlanRequest(
+                    record.JobId,
+                    slice.StartUtc,
+                    slice.EndUtc,
+                    "local-web",
+                    "Repair failed chunks",
+                    Scope: RepairSliceScope.FailedAndDeadLetteredOnly));
+
+            Assert.Contains("Repair or rerun this slice", sliceHtml, StringComparison.Ordinal);
+            Assert.Contains("Repair or rerun: job.web.chunk-repair", previewHtml, StringComparison.Ordinal);
+            Assert.Contains("value=\"repair\" checked", previewHtml, StringComparison.Ordinal);
+            Assert.Contains("Repair failed chunks", previewHtml, StringComparison.Ordinal);
+            Assert.Contains("Chunk 1/3", previewHtml, StringComparison.Ordinal);
+            Assert.Contains("Chunk 2/3", previewHtml, StringComparison.Ordinal);
+            Assert.Contains("No Kusto cleanup is required", previewHtml, StringComparison.Ordinal);
+            Assert.Contains("Rerun whole slice", previewHtml, StringComparison.Ordinal);
+            Assert.DoesNotContain("Suggested Kusto cleanup", previewHtml, StringComparison.Ordinal);
+
+            var response = await PostForm(client, $"/jobs/{record.JobId}/rerun", token, new Dictionary<string, string>
+            {
+                ["mode"] = "repair",
+                ["start"] = "2026-01-01T00:00",
+                ["end"] = "2026-01-01T00:05",
+                ["requestedBy"] = "web-test",
+                ["reason"] = "Repair failed chunks",
+                ["expectedSliceCount"] = preview.Repairable.ToString(),
+                ["expectedExecutionCount"] = preview.RepairableExecutions.ToString(),
+                ["previewToken"] = preview.PreviewToken
+            });
+
+            Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
+            Assert.StartsWith($"/jobs/{record.JobId}/slices?", response.Headers.Location?.OriginalString, StringComparison.Ordinal);
+            var repairedHtml = await client.GetStringAsync(response.Headers.Location!.OriginalString);
+            Assert.Contains("queued chunk ID(s) 1, 2", repairedHtml, StringComparison.Ordinal);
+            var repairRows = new SqliteWorkQueueRepository(sqlite).List(record.JobId)
+                .Where(item => item.IdempotencyKey.StartsWith("repair|", StringComparison.Ordinal))
+                .OrderBy(item => item.ChunkId)
+                .ToArray();
+            Assert.Equal([1, 2], repairRows.Select(item => item.ChunkId).ToArray());
+            Assert.Equal(DurableSliceStatus.Completed, chunks.Get(SliceExecutionUnit.Chunk(slice, 0, 3))!.Status);
         }
 
         [Fact]
@@ -2459,7 +2566,7 @@ namespace KoLite.LocalApp.Tests
             var token = await ReadFormToken(client, slicePath);
             var html = await client.GetStringAsync(slicePath);
             Assert.Contains("Orphaned lease", html, StringComparison.Ordinal);
-            Assert.Contains("Recover (re-queue) this slice", html, StringComparison.Ordinal);
+            Assert.Contains("Recover expired lease (re-queue)", html, StringComparison.Ordinal);
 
             using var recover = await PostForm(client, $"/jobs/{JobId("job.orphan.web")}/slices?handler=Recover", token, new Dictionary<string, string>
             {
@@ -2492,7 +2599,7 @@ namespace KoLite.LocalApp.Tests
 
             Assert.Contains("Orphaned lease", html, StringComparison.Ordinal);
             Assert.Contains("paused or deleted", html, StringComparison.Ordinal);
-            Assert.DoesNotContain("Recover (re-queue) this slice", html, StringComparison.Ordinal);
+            Assert.DoesNotContain("Recover expired lease (re-queue)", html, StringComparison.Ordinal);
         }
 
         [Fact]

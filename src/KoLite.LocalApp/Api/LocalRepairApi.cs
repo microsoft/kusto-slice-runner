@@ -3,6 +3,7 @@ using System.Text.Json;
 using KoLite.Local.Core.Repair;
 using KoLite.Local.Sqlite.Catalog;
 using KoLite.Local.Sqlite.Repair;
+using KoLite.LocalApp.Repair;
 
 namespace KoLite.LocalApp.Api
 {
@@ -55,7 +56,8 @@ namespace KoLite.LocalApp.Api
                 string jobId,
                 HttpContext http,
                 SqliteJobCatalogRepository catalog,
-                SqliteRepairService repair) =>
+                SqliteRepairService repair,
+                RepairApprovalCoordinator approvals) =>
             {
                 var (record, request, failure) = await ResolveRequest(jobId, http, catalog, requireEnqueueFields: true);
                 if (failure is not null)
@@ -64,67 +66,37 @@ namespace KoLite.LocalApp.Api
                 }
 
                 var planRequest = BuildPlanRequest(record!, request!);
-
-                RepairPreviewResult preview;
+                ApprovedRepair approved;
                 try
                 {
-                    preview = repair.Preview(planRequest);
+                    approved = approvals.Enqueue(
+                        planRequest,
+                        request!.ExpectedSliceCount,
+                        request.ExpectedExecutionCount,
+                        request.PreviewToken);
+                }
+                catch (RepairApprovalConflictException ex)
+                {
+                    return Results.Json(
+                        new
+                        {
+                            error = ex.Message,
+                            expectedSliceCount = ex.ExpectedSliceCount,
+                            actualSliceCount = ex.Preview?.Repairable,
+                            expectedExecutionCount = ex.ExpectedExecutionCount,
+                            actualExecutionCount = ex.Preview?.RepairableExecutions,
+                            expectedPreviewToken = ex.ExpectedPreviewToken,
+                            actualPreviewToken = ex.Preview?.PreviewToken,
+                        },
+                        statusCode: StatusCodes.Status409Conflict);
                 }
                 catch (InvalidOperationException ex)
                 {
                     return BadRequest(ex.Message);
                 }
 
-                // Optimistic-concurrency equivalent for slice state: the caller approved a specific number
-                // of slices, so a changed count means the world moved and the approval no longer applies.
-                if (preview.Repairable != request!.ExpectedSliceCount)
-                {
-                    return Results.Json(
-                        new
-                        {
-                            error = $"Expected {request.ExpectedSliceCount} repairable slice(s) but found {preview.Repairable}. Re-run the preview and retry with the current count.",
-                            expectedSliceCount = request.ExpectedSliceCount,
-                            actualSliceCount = preview.Repairable,
-                        },
-                        statusCode: StatusCodes.Status409Conflict);
-                }
-
-                if (record!.Definition.Chunks is not null
-                    && (request.ExpectedExecutionCount != preview.RepairableExecutions
-                        || !StringComparer.Ordinal.Equals(request.PreviewToken, preview.PreviewToken)))
-                {
-                    return Results.Json(
-                        new
-                        {
-                            error = "The repairable chunk set changed or was not acknowledged. Re-run the preview and retry with its repairableExecutionCount and previewToken.",
-                            expectedExecutionCount = request.ExpectedExecutionCount,
-                            actualExecutionCount = preview.RepairableExecutions,
-                            expectedPreviewToken = request.PreviewToken,
-                            actualPreviewToken = preview.PreviewToken,
-                        },
-                        statusCode: StatusCodes.Status409Conflict);
-                }
-
-                RepairPlanResult result;
-                try
-                {
-                    // Re-read immediately before enqueuing: the enabled check above ran before the preview,
-                    // and work queued for a job paused in between would never be claimed (the queue claim
-                    // filters on is_enabled). This narrows that window to the width of this call.
-                    if (catalog.Get(record!.JobId) is not { IsEnabled: true })
-                    {
-                        return Results.Json(
-                            new { error = $"Job '{record!.DisplayName}' was paused or soft-deleted while the repair was being prepared. Resume it and retry." },
-                            statusCode: StatusCodes.Status409Conflict);
-                    }
-
-                    result = repair.PlanAndEnqueue(planRequest);
-                }
-                catch (InvalidOperationException ex)
-                {
-                    return BadRequest(ex.Message);
-                }
-
+                var preview = approved.Preview;
+                var result = approved.Result;
                 return Results.Json(new
                 {
                     repairBatchId = result.RepairBatchId,
@@ -141,6 +113,17 @@ namespace KoLite.LocalApp.Api
                         endUtc = slice.Slice.EndUtc,
                         status = slice.Status.ToString(),
                         queueItemId = slice.WorkItemId,
+                    }),
+                    chunks = repair.GetRepairChunkExecutions(result.RepairBatchId).Select(chunk => new
+                    {
+                        startUtc = chunk.Slice.StartUtc,
+                        endUtc = chunk.Slice.EndUtc,
+                        chunk.ChunkId,
+                        chunk.TotalChunks,
+                        previousState = chunk.PreviousStatus.ToString(),
+                        chunk.PreviousAttempt,
+                        status = chunk.Status.ToString(),
+                        queueItemId = chunk.WorkItemId,
                     }),
                 });
             });

@@ -140,10 +140,23 @@ namespace KoLite.LocalApp.Tests
                 });
 
             Assert.Equal(HttpStatusCode.OK, repaired.StatusCode);
+            using var repairedBody = JsonDocument.Parse(await repaired.Content.ReadAsStringAsync());
+            var repairedRoot = repairedBody.RootElement;
+            var repairedChunk = repairedRoot.GetProperty("chunks").EnumerateArray().Single();
+            Assert.Equal(1, repairedChunk.GetProperty("chunkId").GetInt32());
+            Assert.Equal(2, repairedChunk.GetProperty("totalChunks").GetInt32());
+            Assert.Equal("DeadLettered", repairedChunk.GetProperty("previousState").GetString());
+            Assert.False(string.IsNullOrWhiteSpace(repairedChunk.GetProperty("queueItemId").GetString()));
             var work = Assert.Single(new SqliteWorkQueueRepository(sqlite).List(JobId("repair.chunks")));
             Assert.Equal(1, work.ChunkId);
             Assert.Equal(DurableSliceStatus.Completed, chunks.Get(KoLite.Local.Core.Scheduling.SliceExecutionUnit.Chunk(slice, 0, 2))!.Status);
             Assert.Equal(DurableSliceStatus.Queued, chunks.Get(KoLite.Local.Core.Scheduling.SliceExecutionUnit.Chunk(slice, 1, 2))!.Status);
+
+            var batchId = repairedRoot.GetProperty("repairBatchId").GetString();
+            using var history = JsonDocument.Parse(await client.GetStringAsync($"/api/diagnostics/repairs?batchId={batchId}"));
+            var historyChunk = history.RootElement.GetProperty("repairChunks").EnumerateArray().Single();
+            Assert.Equal(1, historyChunk.GetProperty("chunkId").GetInt32());
+            Assert.Equal(repairedChunk.GetProperty("queueItemId").GetString(), historyChunk.GetProperty("workItemId").GetString());
         }
 
         [Fact]
@@ -179,6 +192,49 @@ namespace KoLite.LocalApp.Tests
             Assert.Equal(4, body.RootElement.GetProperty("expectedSliceCount").GetInt32());
             Assert.Equal(1, body.RootElement.GetProperty("actualSliceCount").GetInt32());
             Assert.Empty(new SqliteWorkQueueRepository(sqlite).List(JobId("count.job")));
+        }
+
+        [Fact]
+        public async Task Chunked_repair_rejects_preview_when_automatic_retry_appears()
+        {
+            CreateJob("repair.retry-race", chunks: 1);
+            var slice = new KoLite.Local.Core.Scheduling.SliceRange(JobId("repair.retry-race"), At(0), At(5));
+            var chunks = new SqliteChunkStateRepository(sqlite);
+            var child = Assert.Single(chunks.EnsureWindow(slice, 1, "test"));
+            chunks.MarkQueued("queued", child.Execution, actor: "test");
+            var lease = chunks.AcquireLease("lease", child.Execution, "worker", TimeSpan.FromMinutes(5), At(10))!;
+            chunks.DeadLetterLease("dead", child.Execution, "worker", lease.LeaseToken!, At(11), "permanent", "Permanent");
+
+            using var client = factory.CreateClient();
+            using var previewResponse = await client.PostAsJsonAsync(
+                $"/api/jobs/{slice.JobId}/repair/preview",
+                new { from = slice.StartUtc, to = slice.EndUtc });
+            using var previewBody = JsonDocument.Parse(await previewResponse.Content.ReadAsStringAsync());
+            var preview = previewBody.RootElement;
+            var existingRetry = new SqliteWorkQueueRepository(sqlite).Enqueue(
+                slice.JobId,
+                slice.StartUtc,
+                slice.EndUtc,
+                $"normal|{child.Execution.ExecutionKey}",
+                At(12),
+                chunkId: 0,
+                totalChunks: 1);
+
+            using var repair = await client.PostAsJsonAsync(
+                $"/api/jobs/{slice.JobId}/repair",
+                new
+                {
+                    from = slice.StartUtc,
+                    to = slice.EndUtc,
+                    reason = "stale after retry appeared",
+                    expectedSliceCount = preview.GetProperty("repairableSliceCount").GetInt32(),
+                    expectedExecutionCount = preview.GetProperty("repairableExecutionCount").GetInt32(),
+                    previewToken = preview.GetProperty("previewToken").GetString(),
+                });
+
+            Assert.Equal(HttpStatusCode.Conflict, repair.StatusCode);
+            var remaining = Assert.Single(new SqliteWorkQueueRepository(sqlite).List(slice.JobId));
+            Assert.Equal(existingRetry.QueueItemId, remaining.QueueItemId);
         }
 
         [Fact]

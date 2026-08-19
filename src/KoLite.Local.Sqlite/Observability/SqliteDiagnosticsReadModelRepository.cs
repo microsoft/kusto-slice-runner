@@ -45,7 +45,9 @@ namespace KoLite.Local.Sqlite.Observability
         string Message,
         string? Category,
         string? Exception,
-        DateTimeOffset RecordedAtUtc);
+        DateTimeOffset RecordedAtUtc,
+        int? ChunkId,
+        int? TotalChunks);
 
     public sealed record AuditEventReadout(
         string AuditId,
@@ -361,7 +363,7 @@ namespace KoLite.Local.Sqlite.Observability
         {
             using var c = connectionFactory.OpenConnection();
             using var cmd = SqliteStorage.Command(c, null, """
-                SELECT log_id, job_id, slice_start_utc, slice_end_utc, level, message, category, exception, recorded_at_utc
+                SELECT log_id, job_id, slice_start_utc, slice_end_utc, level, message, category, exception, recorded_at_utc, chunk_id, total_chunks
                 FROM operational_logs
                 WHERE ($jobId IS NULL OR job_id = $jobId)
                   AND ($level IS NULL OR level = $level)
@@ -390,7 +392,9 @@ namespace KoLite.Local.Sqlite.Observability
                     r.GetString(5),
                     r.IsDBNull(6) ? null : r.GetString(6),
                     r.IsDBNull(7) ? null : r.GetString(7),
-                    SqliteStorage.ReadUtc(r, "recorded_at_utc")));
+                    SqliteStorage.ReadUtc(r, "recorded_at_utc"),
+                    r.IsDBNull(9) ? null : r.GetInt32(9),
+                    r.IsDBNull(10) ? null : r.GetInt32(10)));
             }
 
             return results;

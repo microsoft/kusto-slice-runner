@@ -16,7 +16,7 @@ else
             <p class="muted">@Model.Data.Job.ActivityId: @AppFormatting.Iso(Model.Data.SliceStartUtc) - @AppFormatting.Iso(Model.Data.SliceEndUtc)</p>
         </div>
         <div class="button-row">
-            <a class="btn primary" href="/jobs/@Uri.EscapeDataString(Model.Data.Job.JobId)/rerun?start=@Uri.EscapeDataString(AppFormatting.DateTimeInputUtc(Model.Data.SliceStartUtc))&end=@Uri.EscapeDataString(AppFormatting.DateTimeInputUtc(Model.Data.SliceEndUtc))">Rerun this slice</a>
+            <a class="btn primary" href="/jobs/@Uri.EscapeDataString(Model.Data.Job.JobId)/rerun?start=@Uri.EscapeDataString(AppFormatting.DateTimeInputUtc(Model.Data.SliceStartUtc))&end=@Uri.EscapeDataString(AppFormatting.DateTimeInputUtc(Model.Data.SliceEndUtc))">Repair or rerun this slice</a>
             <a class="btn" href="/jobs/@Uri.EscapeDataString(Model.Data.Job.JobId)">Back to details</a>
         </div>
     </div>
@@ -39,7 +39,7 @@ else
                     @Html.AntiForgeryToken()
                     <input type="hidden" name="start" value="@AppFormatting.Iso(Model.Data.SliceStartUtc)" />
                     <input type="hidden" name="end" value="@AppFormatting.Iso(Model.Data.SliceEndUtc)" />
-                    <button class="btn primary" type="submit">Recover (re-queue) this slice</button>
+                    <button class="btn primary" type="submit">Recover expired lease (re-queue)</button>
                 </form>
             }
             else
@@ -107,13 +107,17 @@ else
         <div class="card">
             <div class="card-header"><h2>Events and logs</h2></div>
             <ul class="plain-list">
+                @foreach (var evt in Model.Data.ChunkEvents)
+                {
+                    <li data-chunk-event="@evt.ChunkId"><span class="badge">@evt.Status</span> <strong>Chunk @evt.ChunkId/@evt.TotalChunks</strong> <span class="muted">@AppFormatting.Local(evt.RecordedAtUtc)</span> @evt.Reason</li>
+                }
                 @foreach (var evt in Model.Data.Events)
                 {
                     <li><span class="badge">@evt.EventType</span> <span class="muted">@AppFormatting.Local(evt.RecordedAtUtc)</span> @evt.Reason</li>
                 }
                 @foreach (var log in Model.Data.Logs)
                 {
-                    <li><span class="badge">@log.Level</span> <span class="muted">@AppFormatting.Local(log.RecordedAtUtc)</span> @log.Message</li>
+                    <li data-chunk-log="@log.ChunkId"><span class="badge">@log.Level</span> @if (log.ChunkId is { } chunkId && log.TotalChunks is { } totalChunks) { <strong>Chunk @chunkId/@totalChunks</strong> } <span class="muted">@AppFormatting.Local(log.RecordedAtUtc)</span> @log.Message</li>
                 }
             </ul>
         </div>

@@ -287,6 +287,27 @@ namespace KoLite.Local.Sqlite.Schema
                 FOREIGN KEY (enqueued_queue_item_id) REFERENCES work_queue(queue_item_id) ON DELETE SET NULL
             );
 
+            CREATE TABLE IF NOT EXISTS repair_chunk_executions (
+                repair_chunk_execution_id TEXT NOT NULL PRIMARY KEY,
+                repair_batch_id TEXT NOT NULL,
+                job_id TEXT NOT NULL,
+                slice_start_utc TEXT NOT NULL,
+                slice_end_utc TEXT NOT NULL,
+                chunk_id INTEGER NOT NULL,
+                total_chunks INTEGER NOT NULL,
+                previous_state TEXT NOT NULL,
+                previous_attempt INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                enqueued_queue_item_id TEXT NULL,
+                created_at_utc TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+                updated_at_utc TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+                UNIQUE (repair_batch_id, job_id, slice_start_utc, slice_end_utc, chunk_id),
+                FOREIGN KEY (repair_batch_id) REFERENCES repair_batches(repair_batch_id) ON DELETE CASCADE,
+                FOREIGN KEY (job_id) REFERENCES job_definitions(job_id) ON DELETE CASCADE,
+                CHECK (total_chunks >= 1 AND total_chunks <= 32),
+                CHECK (chunk_id >= 0 AND chunk_id < total_chunks)
+            );
+
             CREATE TABLE IF NOT EXISTS retention_runs (
                 retention_run_id TEXT NOT NULL PRIMARY KEY,
                 policy_name TEXT NOT NULL,
@@ -383,6 +404,9 @@ namespace KoLite.Local.Sqlite.Schema
             CREATE INDEX IF NOT EXISTS ix_repair_batches_job ON repair_batches(job_id);
             CREATE INDEX IF NOT EXISTS ix_repair_slices_batch_status ON repair_slices(repair_batch_id, status);
             CREATE INDEX IF NOT EXISTS ix_repair_slices_job_slice ON repair_slices(job_id, slice_start_utc, slice_end_utc);
+            CREATE INDEX IF NOT EXISTS ix_repair_chunk_executions_batch_status ON repair_chunk_executions(repair_batch_id, status);
+            CREATE INDEX IF NOT EXISTS ix_repair_chunk_executions_job_slice ON repair_chunk_executions(job_id, slice_start_utc, slice_end_utc, chunk_id);
+            CREATE INDEX IF NOT EXISTS ix_repair_chunk_executions_queue_item ON repair_chunk_executions(enqueued_queue_item_id);
             CREATE INDEX IF NOT EXISTS ix_retention_runs_policy_started ON retention_runs(policy_name, started_at_utc);
             CREATE INDEX IF NOT EXISTS ix_purge_runs_job_requested ON purge_runs(job_id, requested_at_utc);
             CREATE INDEX IF NOT EXISTS ix_job_lifecycle_events_job_recorded ON job_lifecycle_events(job_id, recorded_at_utc);

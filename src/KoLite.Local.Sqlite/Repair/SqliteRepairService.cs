@@ -55,6 +55,17 @@ namespace KoLite.Local.Sqlite.Repair
         int RepairableExecutions,
         string PreviewToken);
 
+    public sealed record RepairChunkExecution(
+        string RepairBatchId,
+        string JobId,
+        SliceRange Slice,
+        int ChunkId,
+        int TotalChunks,
+        DurableSliceStatus PreviousStatus,
+        int PreviousAttempt,
+        RepairSliceStatus Status,
+        string? WorkItemId);
+
     public sealed class SqliteRepairService
     {
         private readonly IKoLiteSqliteConnectionFactory connectionFactory;
@@ -82,7 +93,14 @@ namespace KoLite.Local.Sqlite.Repair
             }
 
             var job = catalog.Get(request.JobId) ?? throw new InvalidOperationException($"Job '{request.JobId}' does not exist.");
-            var batchId = StableId("repair-batch", request.JobId, SqliteStorage.Utc(request.StartUtc), SqliteStorage.Utc(request.EndUtc), request.OutputStrategy.ToString(), request.Reason);
+            if (!job.IsEnabled)
+            {
+                throw new InvalidOperationException($"Job '{job.DisplayName}' is paused or soft-deleted. Resume it before repairing failed work.");
+            }
+
+            var batchId = job.Definition.Chunks is null
+                ? StableId("repair-batch", request.JobId, SqliteStorage.Utc(request.StartUtc), SqliteStorage.Utc(request.EndUtc), request.OutputStrategy.ToString(), request.Reason)
+                : StableId("repair-batch", request.JobId, SqliteStorage.Utc(request.StartUtc), SqliteStorage.Utc(request.EndUtc), request.OutputStrategy.ToString(), request.Reason, ChunkRepairGeneration(job, request));
             var queued = 0;
             var blocked = 0;
             var skipped = 0;
@@ -122,17 +140,15 @@ namespace KoLite.Local.Sqlite.Repair
                 {
                     var chunks = chunkState
                         ?? throw new InvalidOperationException("Chunk state persistence is required to repair a chunked job.");
-                    var failedChunks = chunks.List(slice)
-                        .Where(child => child.Status is DurableSliceStatus.Failed or DurableSliceStatus.DeadLettered)
-                        .OrderBy(child => child.ChunkId)
-                        .ToArray();
-                    if (failedChunks.Length == 0)
+                    var failedChunks = ListRepairableChunks(slice);
+                    if (failedChunks.Count == 0)
                     {
                         skipped++;
                         UpsertRepairSlice(batchId, slice, RepairSliceStatus.Skipped, null, "No failed chunks remain for this slice.");
                         continue;
                     }
 
+                    UpsertRepairSlice(batchId, slice, RepairSliceStatus.Queued, null, $"Preparing {failedChunks.Count} failed chunk(s).");
                     string? firstQueueItemId = null;
                     foreach (var child in failedChunks)
                     {
@@ -157,7 +173,9 @@ namespace KoLite.Local.Sqlite.Repair
                             priority: 100,
                             queueName: "default",
                             maxAttempts: 3,
-                            payloadJson);
+                            payloadJson,
+                            batchId,
+                            StableId("repair-chunk", batchId, child.Execution.ExecutionKey));
                         if (queueItemId is null)
                         {
                             continue;
@@ -174,7 +192,7 @@ namespace KoLite.Local.Sqlite.Repair
                     }
 
                     queued++;
-                    UpsertRepairSlice(batchId, slice, RepairSliceStatus.Queued, firstQueueItemId, $"Requeued {failedChunks.Length} failed chunk(s).");
+                    UpsertRepairSlice(batchId, slice, RepairSliceStatus.Queued, firstQueueItemId, $"Requeued {failedChunks.Count} failed chunk(s).");
                     continue;
                 }
 
@@ -227,12 +245,9 @@ namespace KoLite.Local.Sqlite.Repair
                     {
                         var chunks = chunkState
                             ?? throw new InvalidOperationException("Chunk state persistence is required to preview a chunked repair.");
-                        var failed = chunks.List(candidate.Slice)
-                            .Where(child => child.Status is DurableSliceStatus.Failed or DurableSliceStatus.DeadLettered)
-                            .OrderBy(child => child.ChunkId)
-                            .ToArray();
+                        var failed = ListRepairableChunks(candidate.Slice);
                         chunkIds = failed.Select(child => child.ChunkId).ToArray();
-                        repairableExecutions += failed.Length;
+                        repairableExecutions += failed.Count;
                         tokenParts.AddRange(failed.Select(child =>
                             $"{child.Execution.ExecutionKey}:{child.Status}:{child.Attempt}:{SqliteStorage.Utc(child.UpdatedAtUtc)}"));
                     }
@@ -280,6 +295,20 @@ namespace KoLite.Local.Sqlite.Repair
                     continue;
                 }
 
+                if (job.Definition.Chunks is not null && ListRepairableChunks(slice).Count == 0)
+                {
+                    yield return new SliceClassification(slice, current, RepairSliceOutcome.Skipped, Persist: false, "Failed chunks already have active retry work or no terminal failed chunks remain.");
+                    continue;
+                }
+
+                if (job.Definition.Chunks is null
+                    && current.Status is DurableSliceStatus.Failed or DurableSliceStatus.DeadLettered
+                    && HasActiveQueueRows(slice))
+                {
+                    yield return new SliceClassification(slice, current, RepairSliceOutcome.Skipped, Persist: false, "The slice already has active retry work.");
+                    continue;
+                }
+
                 if (!IsInScope(current.Status, request.Scope))
                 {
                     // Out-of-scope states are also not persisted: a narrow-scope repair over a wide range
@@ -299,6 +328,49 @@ namespace KoLite.Local.Sqlite.Repair
                 yield return new SliceClassification(slice, current, RepairSliceOutcome.Repairable, Persist: true, null);
             }
         }
+
+        private IReadOnlyList<DurableChunkState> ListRepairableChunks(SliceRange slice)
+        {
+            var chunks = chunkState
+                ?? throw new InvalidOperationException("Chunk state persistence is required to inspect a chunked repair.");
+            var activeRows = queue.List(slice.JobId)
+                .Where(item => item.SliceStartUtc == slice.StartUtc
+                    && item.SliceEndUtc == slice.EndUtc
+                    && item.State is DurableWorkQueueState.Queued or DurableWorkQueueState.Leased)
+                .ToArray();
+            var allChunksBlocked = activeRows.Any(item => item.ChunkId is null);
+            var activeChunkIds = activeRows
+                .Where(item => item.ChunkId is not null)
+                .Select(item => item.ChunkId!.Value)
+                .ToHashSet();
+            return chunks.List(slice)
+                .Where(child => child.Status is DurableSliceStatus.Failed or DurableSliceStatus.DeadLettered)
+                .Where(child => !allChunksBlocked && !activeChunkIds.Contains(child.ChunkId))
+                .OrderBy(child => child.ChunkId)
+                .ToArray();
+        }
+
+        private string ChunkRepairGeneration(JobCatalogRecord job, RepairPlanRequest request)
+        {
+            var parts = new List<string>();
+            foreach (var slice in SliceEnumerator.Enumerate(
+                request.JobId,
+                request.StartUtc,
+                request.EndUtc,
+                job.Definition.QueryWindowSize))
+            {
+                parts.AddRange(ListRepairableChunks(slice).Select(child =>
+                    $"{child.Execution.ExecutionKey}:{child.Status}:{child.Attempt}:{SqliteStorage.Utc(child.UpdatedAtUtc)}"));
+            }
+
+            return parts.Count == 0 ? "no-repairable-chunks" : string.Join(";", parts);
+        }
+
+        private bool HasActiveQueueRows(SliceRange slice) =>
+            queue.List(slice.JobId).Any(item =>
+                item.SliceStartUtc == slice.StartUtc
+                && item.SliceEndUtc == slice.EndUtc
+                && item.State is DurableWorkQueueState.Queued or DurableWorkQueueState.Leased);
 
         private static bool IsInScope(DurableSliceStatus status, RepairSliceScope scope) => scope switch
         {
@@ -511,6 +583,37 @@ namespace KoLite.Local.Sqlite.Repair
             return rows;
         }
 
+        public IReadOnlyList<RepairChunkExecution> GetRepairChunkExecutions(string repairBatchId)
+        {
+            using var c = connectionFactory.OpenConnection();
+            using var cmd = SqliteStorage.Command(c, null, """
+                SELECT repair_batch_id,job_id,slice_start_utc,slice_end_utc,chunk_id,total_chunks,
+                       previous_state,previous_attempt,status,enqueued_queue_item_id
+                FROM repair_chunk_executions
+                WHERE repair_batch_id=$id
+                ORDER BY slice_start_utc,chunk_id;
+                """);
+            cmd.Add("$id", repairBatchId);
+            using var r = cmd.ExecuteReader();
+            var rows = new List<RepairChunkExecution>();
+            while (r.Read())
+            {
+                var slice = new SliceRange(r.GetString(1), SqliteStorage.ReadUtc(r, "slice_start_utc"), SqliteStorage.ReadUtc(r, "slice_end_utc"));
+                rows.Add(new RepairChunkExecution(
+                    r.GetString(0),
+                    r.GetString(1),
+                    slice,
+                    r.GetInt32(4),
+                    r.GetInt32(5),
+                    Enum.Parse<DurableSliceStatus>(r.GetString(6)),
+                    r.GetInt32(7),
+                    Enum.Parse<RepairSliceStatus>(r.GetString(8)),
+                    r.IsDBNull(9) ? null : r.GetString(9)));
+            }
+
+            return rows;
+        }
+
         // Repair batches previously recorded no audit row at all, unlike reruns. An agent-driven repair
         // must be visible in the system audit trail (GET /api/diagnostics/audit) or the required-reason
         // guard on the API is unverifiable after the fact.
@@ -518,6 +621,19 @@ namespace KoLite.Local.Sqlite.Repair
         {
             using var c = connectionFactory.OpenConnection();
             using var cmd = SqliteStorage.Command(c, null, "INSERT INTO system_audit (audit_id,actor,action,subject_type,subject_id,payload_json) VALUES ($id,$actor,$action,$type,$subject,$payload);");
+            var repairedChunks = GetRepairChunkExecutions(batchId)
+                .Select(chunk => new
+                {
+                    startUtc = chunk.Slice.StartUtc,
+                    endUtc = chunk.Slice.EndUtc,
+                    chunk.ChunkId,
+                    chunk.TotalChunks,
+                    previousState = chunk.PreviousStatus.ToString(),
+                    chunk.PreviousAttempt,
+                    status = chunk.Status.ToString(),
+                    queueItemId = chunk.WorkItemId,
+                })
+                .ToArray();
             cmd.Add("$id", Guid.NewGuid().ToString("N"));
             cmd.Add("$actor", request.RequestedBy);
             cmd.Add("$action", "RepairEnqueued");
@@ -535,6 +651,8 @@ namespace KoLite.Local.Sqlite.Repair
                     queued,
                     blocked,
                     skipped,
+                    repairableExecutionCount = repairedChunks.Length,
+                    repairedChunks,
                 },
                 SqliteStorage.JsonOptions));
             cmd.ExecuteNonQuery();
@@ -563,7 +681,13 @@ namespace KoLite.Local.Sqlite.Repair
             using var cmd = SqliteStorage.Command(c, null, """
                 INSERT INTO repair_slices (repair_slice_id,repair_batch_id,job_id,slice_start_utc,slice_end_utc,status,enqueued_queue_item_id,created_at_utc,updated_at_utc)
                 VALUES ($id,$batch,$job,$start,$end,$status,$work,$now,$now)
-                ON CONFLICT(repair_slice_id) DO UPDATE SET status=excluded.status,enqueued_queue_item_id=excluded.enqueued_queue_item_id,updated_at_utc=excluded.updated_at_utc;
+                ON CONFLICT(repair_slice_id) DO UPDATE SET
+                    status=CASE
+                        WHEN repair_slices.status IN ('Completed','Failed') THEN repair_slices.status
+                        ELSE excluded.status
+                    END,
+                    enqueued_queue_item_id=COALESCE(excluded.enqueued_queue_item_id,repair_slices.enqueued_queue_item_id),
+                    updated_at_utc=excluded.updated_at_utc;
                 """);
             cmd.Add("$id", StableId("repair-slice", batchId, slice.ToKey().Value));
             cmd.Add("$batch", batchId);
@@ -579,7 +703,14 @@ namespace KoLite.Local.Sqlite.Repair
         private void UpdateBatchStatus(string batchId, RepairBatchStatus status)
         {
             using var c = connectionFactory.OpenConnection();
-            using var cmd = SqliteStorage.Command(c, null, "UPDATE repair_batches SET status=$status WHERE repair_batch_id=$id;");
+            using var cmd = SqliteStorage.Command(c, null, """
+                UPDATE repair_batches
+                SET status=CASE
+                        WHEN status IN ('Completed','Failed') THEN status
+                        ELSE $status
+                    END
+                WHERE repair_batch_id=$id;
+                """);
             cmd.Add("$status", status.ToString());
             cmd.Add("$id", batchId);
             cmd.ExecuteNonQuery();

@@ -96,12 +96,83 @@ namespace KoLite.LocalApp.Tests
                 && HasScopeValue(entry, "JobId", "ccaa54932f874b3c8c15faf7e52bcc70"));
         }
 
+        [Fact]
+        public void Chunked_progress_logs_raw_chunk_identity_in_message_and_scope()
+        {
+            var provider = new RecordingLoggerProvider();
+            using var factory = CreateFactory(provider);
+            using var scope = factory.Services.CreateScope();
+            var sink = scope.ServiceProvider.GetRequiredService<ILocalWorkerProgressSink>();
+            var progress = new LocalWorkerProgressEvent(
+                "chunked-job-id",
+                "queue-item-chunk-2",
+                At(10),
+                At(15),
+                3,
+                "console-worker",
+                LocalWorkerProgressStatus.Started,
+                At(20),
+                DisplayName: "Chunked Export",
+                ChunkId: 2,
+                TotalChunks: 4);
+
+            sink.RecordStarted(progress);
+            sink.RecordFinished(progress with
+            {
+                Status = LocalWorkerProgressStatus.DeadLettered,
+                CompletedAtUtc = At(21),
+                ErrorCode = "Permanent",
+                ErrorMessage = "chunk failed",
+                DeadLettered = true
+            });
+
+            Assert.Contains(provider.Entries, entry =>
+                entry.Level == LogLevel.Information
+                && entry.Message.Contains("chunk 2/4", StringComparison.Ordinal)
+                && HasValue(entry, "ChunkId", 2)
+                && HasValue(entry, "TotalChunks", 4)
+                && HasScopeValue(entry, "ChunkId", 2)
+                && HasScopeValue(entry, "TotalChunks", 4));
+            Assert.Contains(provider.Entries, entry =>
+                entry.Level == LogLevel.Error
+                && entry.Message.Contains("chunk 2/4", StringComparison.Ordinal)
+                && entry.Message.Contains("chunk failed", StringComparison.Ordinal)
+                && HasValue(entry, "ChunkId", 2)
+                && HasValue(entry, "TotalChunks", 4));
+        }
+
         public void Dispose()
         {
             TestCleanup.DeleteDirectoryBestEffort(testDirectory);
         }
 
         private static DateTimeOffset At(int minutes) => new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero).AddMinutes(minutes);
+
+        private WebApplicationFactory<Program> CreateFactory(RecordingLoggerProvider provider) =>
+            new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+            {
+                builder.ConfigureAppConfiguration((_, config) =>
+                {
+                    config.AddInMemoryCollection(new Dictionary<string, string?>
+                    {
+                        ["ConnectionStrings:KoLiteSqlite"] = databasePath,
+                        ["KoLite:Scheduler:Enabled"] = "false"
+                    });
+                });
+                builder.ConfigureServices(services =>
+                {
+                    services.AddLogging(logging =>
+                    {
+                        logging.ClearProviders();
+                        logging.AddProvider(provider);
+                    });
+                    services.PostConfigure<LoggerFilterOptions>(options =>
+                    {
+                        options.Rules.Clear();
+                        options.MinLevel = LogLevel.Trace;
+                    });
+                });
+            });
 
         private static bool HasValue(LogEntry entry, string key, object expected) =>
             entry.Values.TryGetValue(key, out var actual) && Equals(actual, expected);

@@ -73,6 +73,28 @@ namespace KoLite.Local.Sqlite.Tests
         }
 
         [Fact]
+        public void Plan_blocks_chunked_slice_with_active_child_queue_work()
+        {
+            catalog.Create(Schedule("active-chunk", "ActiveChunkOutput", chunks: 2));
+            var slice = new SliceRange(JobId("active-chunk"), At(0), At(5));
+            var child = chunkState.EnsureWindow(slice, 2, "test")[0];
+            chunkState.MarkQueued("queued-child", child.Execution, actor: "test");
+            queue.Enqueue(
+                slice.JobId,
+                slice.StartUtc,
+                slice.EndUtc,
+                $"normal|{child.Execution.ExecutionKey}",
+                At(0),
+                chunkId: child.ChunkId,
+                totalChunks: child.TotalChunks);
+
+            var plan = Service().Plan(new RerunPlanRequest(slice.JobId, slice.StartUtc, slice.EndUtc, "tester", "active child"));
+
+            Assert.Equal(RerunBatchStatus.Blocked, plan.Status);
+            Assert.Contains(plan.BlockedSlices, item => item.JobId == slice.JobId && item.BlockerReason!.Contains("Queued", StringComparison.Ordinal));
+        }
+
+        [Fact]
         public void Execute_requires_cleanup_acknowledgement()
         {
             catalog.Create(Schedule("ack", "AckOutput"));
@@ -145,6 +167,46 @@ namespace KoLite.Local.Sqlite.Tests
             var scheduler = new SqliteLocalScheduler(catalog, state, queue, readModels, clock, new LocalSchedulerOptions(MaxSlicesPerTick: 10), chunkState);
             Assert.Equal(2, scheduler.Tick().Enqueued);
             Assert.Equal([0, 1], queue.List(JobId("chunked-root")).Select(item => item.ChunkId).Order().ToArray());
+        }
+
+        [Fact]
+        public void Rerun_snapshot_preserves_mixed_chunk_state_and_events_before_reset()
+        {
+            catalog.Create(Schedule("chunked-mixed", "ChunkedMixedOutput", maxParallelism: 3, chunks: 3));
+            var slice = new SliceRange(JobId("chunked-mixed"), At(0), At(5));
+            foreach (var child in chunkState.EnsureWindow(slice, 3, "test"))
+            {
+                chunkState.MarkQueued($"queued-{child.ChunkId}", child.Execution, actor: "test");
+                var lease = chunkState.AcquireLease($"lease-{child.ChunkId}", child.Execution, $"worker-{child.ChunkId}", TimeSpan.FromMinutes(5), At(1))!;
+                if (child.ChunkId == 0)
+                {
+                    chunkState.CompleteLease("complete-0", child.Execution, "worker-0", lease.LeaseToken!, At(2));
+                }
+                else if (child.ChunkId == 1)
+                {
+                    chunkState.DeadLetterLease("dead-1", child.Execution, "worker-1", lease.LeaseToken!, At(2), "permanent", "Permanent");
+                }
+                else
+                {
+                    chunkState.FailLease("failed-2", child.Execution, "worker-2", lease.LeaseToken!, At(2), "transient", "Transient");
+                }
+            }
+
+            var plan = Service().CreatePlan(new RerunPlanRequest(slice.JobId, slice.StartUtc, slice.EndUtc, "tester", "archive mixed chunks"));
+            Service().Execute(new RerunExecuteRequest(plan.RerunBatchId, "tester", KustoCleanupAcknowledged: true));
+
+            var snapshot = QueryString(
+                "SELECT snapshot_json FROM rerun_slices WHERE rerun_batch_id=$id AND job_id=$job;",
+                ("$id", plan.RerunBatchId),
+                ("$job", slice.JobId));
+            using var document = System.Text.Json.JsonDocument.Parse(snapshot);
+            var chunkStates = document.RootElement.GetProperty("chunkStates").EnumerateArray().ToArray();
+            Assert.Equal(3, chunkStates.Length);
+            Assert.Equal([0, 1, 2], chunkStates.Select(row => row.GetProperty("chunk_id").GetInt32()).Order().ToArray());
+            var chunkEvents = document.RootElement.GetProperty("chunkEvents").EnumerateArray().ToArray();
+            Assert.Contains(chunkEvents, row => row.GetProperty("chunk_id").GetInt32() == 1 && row.GetProperty("state").GetString() == "DeadLettered");
+            Assert.Contains(chunkEvents, row => row.GetProperty("chunk_id").GetInt32() == 2 && row.GetProperty("state").GetString() == "Failed");
+            Assert.Empty(chunkState.List(slice));
         }
 
         public void Dispose()
