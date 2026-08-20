@@ -68,7 +68,7 @@ else
                         <td><span class="badge @AppFormatting.BadgeCss(chunk.Status.ToString())">@chunk.Status</span></td>
                         <td>@chunk.Attempt</td>
                         <td>@chunk.LeaseOwner</td>
-                        <td>@AppFormatting.Local(chunk.LeaseExpiresAtUtc)</td>
+                        <td>@AppFormatting.Iso(chunk.LeaseExpiresAtUtc)</td>
                         <td>@chunk.LastErrorMessage</td>
                     </tr>
                 }
@@ -95,8 +95,8 @@ else
                             <td>@attempt.Attempt</td>
                             <td><span class="badge @AppFormatting.BadgeCss(attempt.Status)">@attempt.Status</span></td>
                             <td>@attempt.WorkerId</td>
-                            <td>@AppFormatting.Local(attempt.StartedAtUtc)</td>
-                            <td>@AppFormatting.Local(attempt.CompletedAtUtc)</td>
+                            <td>@AppFormatting.Iso(attempt.StartedAtUtc)</td>
+                            <td>@AppFormatting.Iso(attempt.CompletedAtUtc)</td>
                             <td>@attempt.ErrorMessage</td>
                         </tr>
                     }
@@ -109,15 +109,15 @@ else
             <ul class="plain-list">
                 @foreach (var evt in Model.Data.ChunkEvents)
                 {
-                    <li data-chunk-event="@evt.ChunkId"><span class="badge">@evt.Status</span> <strong>Chunk @evt.ChunkId/@evt.TotalChunks</strong> <span class="muted">@AppFormatting.Local(evt.RecordedAtUtc)</span> @evt.Reason</li>
+                    <li data-chunk-event="@evt.ChunkId"><span class="badge">@evt.Status</span> <strong>Chunk @evt.ChunkId/@evt.TotalChunks</strong> <span class="muted">@AppFormatting.Iso(evt.RecordedAtUtc)</span> @evt.Reason</li>
                 }
                 @foreach (var evt in Model.Data.Events)
                 {
-                    <li><span class="badge">@evt.EventType</span> <span class="muted">@AppFormatting.Local(evt.RecordedAtUtc)</span> @evt.Reason</li>
+                    <li><span class="badge">@evt.EventType</span> <span class="muted">@AppFormatting.Iso(evt.RecordedAtUtc)</span> @evt.Reason</li>
                 }
                 @foreach (var log in Model.Data.Logs)
                 {
-                    <li data-chunk-log="@log.ChunkId"><span class="badge">@log.Level</span> @if (log.ChunkId is { } chunkId && log.TotalChunks is { } totalChunks) { <strong>Chunk @chunkId/@totalChunks</strong> } <span class="muted">@AppFormatting.Local(log.RecordedAtUtc)</span> @log.Message</li>
+                    <li data-chunk-log="@log.ChunkId"><span class="badge">@log.Level</span> @if (log.ChunkId is { } chunkId && log.TotalChunks is { } totalChunks) { <strong>Chunk @chunkId/@totalChunks</strong> } <span class="muted">@AppFormatting.Iso(log.RecordedAtUtc)</span> @log.Message</li>
                 }
             </ul>
         </div>
@@ -135,7 +135,7 @@ else
                 <tbody>
                 @foreach (var item in Model.Data.QueueItems)
                 {
-                    <tr><td>@(item.ChunkId is null ? "-" : $"{item.ChunkId}/{item.TotalChunks}")</td><td>@item.QueueItemId</td><td>@item.QueueName</td><td>@item.State</td><td>@AppFormatting.Local(item.AvailableAtUtc)</td><td>@item.LockedBy</td><td>@item.Attempts/@item.MaxAttempts</td></tr>
+                    <tr><td>@(item.ChunkId is null ? "-" : $"{item.ChunkId}/{item.TotalChunks}")</td><td>@item.QueueItemId</td><td>@item.QueueName</td><td>@item.State</td><td>@AppFormatting.Iso(item.AvailableAtUtc)</td><td>@item.LockedBy</td><td>@item.Attempts/@item.MaxAttempts</td></tr>
                 }
                 </tbody>
             </table>

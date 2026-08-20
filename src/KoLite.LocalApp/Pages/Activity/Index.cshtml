@@ -65,8 +65,8 @@
                         <th>Progress</th>
                         <th>Running executions</th>
                         <th>Highest attempt</th>
-                        <th>Started (local)</th>
-                        <th>ETA (local)</th>
+                        <th>Started (UTC)</th>
+                        <th>ETA (UTC)</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -77,7 +77,7 @@
                             <td><a href="/jobs/@Uri.EscapeDataString(slice.JobId)">@slice.ActivityId</a></td>
                             <td>
                                 <a href="/jobs/@Uri.EscapeDataString(slice.JobId)/slices?start=@Uri.EscapeDataString(AppFormatting.Iso(slice.SliceStartUtc))&amp;end=@Uri.EscapeDataString(AppFormatting.Iso(slice.SliceEndUtc))">
-                                    @AppFormatting.Local(slice.SliceStartUtc) &ndash; @AppFormatting.Local(slice.SliceEndUtc)
+                                    @AppFormatting.Iso(slice.SliceStartUtc) &ndash; @AppFormatting.Iso(slice.SliceEndUtc)
                                 </a>
                             </td>
                             <td>
@@ -112,13 +112,13 @@
                             </td>
                             <td>@slice.Attempt</td>
                             <td>
-                                @AppFormatting.LocalNoZone(view.StartedAtUtc)
+                                @AppFormatting.Iso(view.StartedAtUtc)
                                 <span class="muted activity-relative">@AppFormatting.RelativeToNow(view.StartedAtUtc, data.GeneratedAtUtc)</span>
                             </td>
                             <td>
                                 @if (view.EtaUtc is { } eta)
                                 {
-                                    @AppFormatting.LocalNoZone(eta)
+                                    @AppFormatting.Iso(eta)
                                     <span class="muted activity-relative">@AppFormatting.RelativeToNow(eta, data.GeneratedAtUtc)</span>
                                 }
                                 else

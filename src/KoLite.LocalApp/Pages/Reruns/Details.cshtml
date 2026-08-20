@@ -24,7 +24,7 @@ else
         <div class="stat-card"><span class="stat-label">Status</span><strong>@batch.Status</strong></div>
         <div class="stat-card"><span class="stat-label">Affected slices</span><strong>@batch.Slices.Count</strong></div>
         <div class="stat-card"><span class="stat-label">Cleanup acknowledged</span><strong>@(batch.KustoCleanupAcknowledged ? "Yes" : "No")</strong></div>
-        <div class="stat-card"><span class="stat-label">Requested</span><strong>@AppFormatting.Local(batch.RequestedAtUtc)</strong></div>
+        <div class="stat-card"><span class="stat-label">Requested</span><strong>@AppFormatting.Iso(batch.RequestedAtUtc)</strong></div>
     </section>
 
     <section class="card">

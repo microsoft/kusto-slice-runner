@@ -208,7 +208,7 @@ else
                                     <td>@(attempt.ChunkId is null ? "-" : $"{attempt.ChunkId}/{attempt.TotalChunks}")</td>
                                     <td>@attempt.Attempt</td>
                                     <td><span class="badge @AppFormatting.BadgeCss(attempt.Status)">@attempt.Status</span></td>
-                                    <td>@AppFormatting.Local(attempt.CompletedAtUtc)</td>
+                                    <td>@AppFormatting.Iso(attempt.CompletedAtUtc)</td>
                                     <td><span class="text-truncate" title="@attempt.ErrorMessage">@attempt.ErrorMessage</span></td>
                                 </tr>
                             }
@@ -232,11 +232,11 @@ else
                         <ul class="plain-list dense-list">
                             @foreach (var evt in data.RecentEvents)
                             {
-                                <li><span class="badge">@evt.EventType</span> @AppFormatting.Iso(evt.SliceStartUtc) <span class="muted">@AppFormatting.Local(evt.RecordedAtUtc)</span> @evt.Reason</li>
+                                <li><span class="badge">@evt.EventType</span> @AppFormatting.Iso(evt.SliceStartUtc) <span class="muted">@AppFormatting.Iso(evt.RecordedAtUtc)</span> @evt.Reason</li>
                             }
                             @foreach (var log in data.RecentLogs)
                             {
-                                <li><span class="badge">@log.Level</span> @log.Message <span class="muted">@AppFormatting.Local(log.RecordedAtUtc)</span></li>
+                                <li><span class="badge">@log.Level</span> @log.Message <span class="muted">@AppFormatting.Iso(log.RecordedAtUtc)</span></li>
                             }
                         </ul>
                     </div>
@@ -268,7 +268,7 @@ else
                                 <div class="catalog-history-entry-header">
                                     <strong>Catalog version @(history.CatalogVersion)</strong>
                                     <span class="badge">@history.EventType</span>
-                                    <span class="muted">@AppFormatting.Local(history.RecordedAtUtc)</span>
+                                    <span class="muted">@AppFormatting.Iso(history.RecordedAtUtc)</span>
                                     @if (!string.IsNullOrWhiteSpace(history.Actor))
                                     {
                                         <span class="muted">by @history.Actor</span>

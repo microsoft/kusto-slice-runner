@@ -18,7 +18,7 @@ namespace KoLite.LocalApp.Ui
             ? p.ToString("0.0", CultureInfo.InvariantCulture) + "%"
             : "n/a";
 
-        public string BucketLabel => BucketStartUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
+        public string BucketLabel => AppFormatting.Iso(BucketStartUtc);
     }
 
     // The "how bad is it" view: a bucketed time series of the throttled-attempt rate plus a headline

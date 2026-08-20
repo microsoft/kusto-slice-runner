@@ -95,6 +95,17 @@ namespace KoLite.LocalApp.Tests
         }
 
         [Fact]
+        public void Chart_bucket_labels_are_iso_utc()
+        {
+            var point = new SlicesProcessedPoint(
+                new DateTimeOffset(2026, 8, 19, 22, 0, 0, TimeSpan.FromHours(-7)),
+                SucceededCount: 1,
+                FailedCount: 0);
+
+            Assert.Equal("2026-08-20T05:00:00Z", point.BucketLabel);
+        }
+
+        [Fact]
         public void Reports_zeroes_for_an_empty_store()
         {
             catalog.Create(Schedule("activity.empty"));

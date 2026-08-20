@@ -93,7 +93,7 @@ else
                 {
                     <text>&middot; reported ingestion capacity: <span class="strong">@capacity</span></text>
                 }
-                &middot; latest @AppFormatting.Local(advisory.LatestObservedUtc)
+                &middot; latest @AppFormatting.Iso(advisory.LatestObservedUtc)
             </p>
 
             @if (advisory.TerminalFailures.Count > 0)
@@ -119,12 +119,12 @@ else
                                     <td><a href="/jobs/@Uri.EscapeDataString(failure.JobId)">@failure.ActivityId</a></td>
                                     <td>
                                         <a href="/jobs/@Uri.EscapeDataString(failure.JobId)/slices?start=@Uri.EscapeDataString(AppFormatting.Iso(failure.SliceStartUtc))&amp;end=@Uri.EscapeDataString(AppFormatting.Iso(failure.SliceEndUtc))">
-                                            @AppFormatting.Local(failure.SliceStartUtc) &ndash; @AppFormatting.Local(failure.SliceEndUtc)
+                                            @AppFormatting.Iso(failure.SliceStartUtc) &ndash; @AppFormatting.Iso(failure.SliceEndUtc)
                                         </a>
                                     </td>
                                     <td>@failure.ThrottledAttempts</td>
                                     <td><span class="badge @AppFormatting.BadgeCss(failure.CurrentState)">@AppFormatting.StatusLabel(failure.CurrentState)</span></td>
-                                    <td>@AppFormatting.Local(failure.LastObservedUtc)</td>
+                                    <td>@AppFormatting.Iso(failure.LastObservedUtc)</td>
                                 </tr>
                             }
                         </tbody>

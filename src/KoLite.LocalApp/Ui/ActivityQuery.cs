@@ -1,4 +1,3 @@
-using System.Globalization;
 using KoLite.Local.Core.Time;
 using KoLite.Local.Sqlite.Connections;
 using KoLite.Local.Sqlite.Infrastructure;
@@ -22,7 +21,7 @@ namespace KoLite.LocalApp.Ui
     {
         public int TotalCount => SucceededCount + FailedCount;
 
-        public string BucketLabel => BucketStartUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
+        public string BucketLabel => AppFormatting.Iso(BucketStartUtc);
     }
 
     public sealed record SlicesProcessedChart(

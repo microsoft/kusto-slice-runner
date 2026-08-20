@@ -58,6 +58,17 @@ namespace KoLite.LocalApp.Tests
         }
 
         [Fact]
+        public void Chart_bucket_labels_are_iso_utc()
+        {
+            var point = new ThrottleSeverityPoint(
+                new DateTimeOffset(2026, 8, 19, 22, 0, 0, TimeSpan.FromHours(-7)),
+                ThrottledAttempts: 1,
+                TotalAttempts: 2);
+
+            Assert.Equal("2026-08-20T05:00:00Z", point.BucketLabel);
+        }
+
+        [Fact]
         public void Reports_no_data_for_an_empty_range()
         {
             catalog.Create(Schedule("job.sev"));

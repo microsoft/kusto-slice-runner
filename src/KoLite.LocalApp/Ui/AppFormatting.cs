@@ -18,14 +18,9 @@ namespace KoLite.LocalApp.Ui
 
         public static string Iso(DateTimeOffset value) => value.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture);
 
+        public static string Iso(DateTimeOffset? value) => value is null ? "-" : Iso(value.Value);
+
         public static string DateTimeInputUtc(DateTimeOffset value) => value.UtcDateTime.ToString("yyyy-MM-ddTHH:mm", CultureInfo.InvariantCulture);
-
-        public static string Local(DateTimeOffset? value) => value is null ? "-" : value.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss zzz", CultureInfo.InvariantCulture);
-
-        // Local time without the timezone offset suffix. Use where the column header already
-        // states the times are local (e.g. a "Started (local)" header), so the per-row zzz offset
-        // would be redundant.
-        public static string LocalNoZone(DateTimeOffset? value) => value is null ? "-" : value.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
 
         public static string Duration(TimeSpan value) => value.ToString("c", CultureInfo.InvariantCulture);
 

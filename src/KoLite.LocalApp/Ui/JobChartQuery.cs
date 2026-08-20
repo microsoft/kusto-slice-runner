@@ -10,7 +10,7 @@ namespace KoLite.LocalApp.Ui
     {
         public double Percent => Denominator <= 0 ? 0 : Math.Round((double)Numerator * 100 / Denominator, 1);
         public string PercentText => Denominator <= 0 ? "n/a" : $"{Percent:0.0}%";
-        public string BucketLabel => BucketStartUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
+        public string BucketLabel => AppFormatting.Iso(BucketStartUtc);
     }
 
     public sealed record SuccessRateSeries(string JobId, string Name, IReadOnlyList<SuccessRatePoint> Points)
@@ -61,7 +61,7 @@ namespace KoLite.LocalApp.Ui
     public sealed record JobAttemptResultPoint(DateTimeOffset BucketStartUtc, int SuccessCount, int RetryCount, int ErrorCount)
     {
         public int TotalCount => SuccessCount + RetryCount + ErrorCount;
-        public string BucketLabel => BucketStartUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
+        public string BucketLabel => AppFormatting.Iso(BucketStartUtc);
     }
 
     public sealed record JobAttemptResultChart(
@@ -76,7 +76,7 @@ namespace KoLite.LocalApp.Ui
 
     public sealed record JobSuccessfulDurationPoint(DateTimeOffset BucketStartUtc, int Count, int MissingDurationCount, double? AverageDurationMilliseconds)
     {
-        public string BucketLabel => BucketStartUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
+        public string BucketLabel => AppFormatting.Iso(BucketStartUtc);
         public string AverageDurationText => AverageDurationMilliseconds is { } duration
             ? TimeSpan.FromMilliseconds(duration).ToString("c", CultureInfo.InvariantCulture)
             : "n/a";

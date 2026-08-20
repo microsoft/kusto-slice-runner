@@ -228,7 +228,7 @@
                         }
                         @if (Model.ShowUpdatedColumn)
                         {
-                            <td class="updated-cell">@AppFormatting.Local(job.Summary?.LastUpdatedAtUtc ?? job.Record.UpdatedAtUtc)</td>
+                            <td class="updated-cell">@AppFormatting.Iso(job.Summary?.LastUpdatedAtUtc ?? job.Record.UpdatedAtUtc)</td>
                         }
                         <td class="actions">
                             <div class="action-group">
@@ -342,7 +342,7 @@
 
         if (model.ShowUpdatedColumn)
         {
-            parts.Add(AppFormatting.Local(job.Summary?.LastUpdatedAtUtc ?? job.Record.UpdatedAtUtc));
+            parts.Add(AppFormatting.Iso(job.Summary?.LastUpdatedAtUtc ?? job.Record.UpdatedAtUtc));
         }
 
         return string.Join(" ", parts.Where(part => !string.IsNullOrWhiteSpace(part))).ToLowerInvariant();

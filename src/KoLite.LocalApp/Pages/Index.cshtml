@@ -144,7 +144,7 @@
                 <li>
                     <a href="/jobs/@Uri.EscapeDataString(failure.JobId)/slices?start=@Uri.EscapeDataString(AppFormatting.Iso(failure.SliceStartUtc))&end=@Uri.EscapeDataString(AppFormatting.Iso(failure.SliceEndUtc))">@failure.JobId</a>
                     <span class="badge @AppFormatting.BadgeCss(failure.Status)">@failure.Status</span>
-                    <span class="muted">@AppFormatting.Local(failure.UpdatedAtUtc)</span>
+                    <span class="muted">@AppFormatting.Iso(failure.UpdatedAtUtc)</span>
                     <div>@failure.Reason</div>
                 </li>
             }

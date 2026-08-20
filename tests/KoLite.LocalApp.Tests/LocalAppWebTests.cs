@@ -2727,8 +2727,9 @@ namespace KoLite.LocalApp.Tests
             Assert.Contains("<th>Progress</th>", page);
             Assert.Contains("<th>Running executions</th>", page);
             Assert.Contains("<th>Highest attempt</th>", page);
-            Assert.Contains("<th>Started (local)</th>", page);
-            Assert.Contains("<th>ETA (local)</th>", page);
+            Assert.Contains("<th>Started (UTC)</th>", page);
+            Assert.Contains("<th>ETA (UTC)</th>", page);
+            Assert.Contains("2026-01-01T00:20:00Z &ndash; 2026-01-01T00:25:00Z", page);
             // Processed totals: succeeded = 2 completed, failed = 1 Failed + 1 DeadLettered.
             Assert.Contains("Slices processed", page);
             Assert.Contains("Last day", page);

@@ -55,6 +55,16 @@ namespace KoLite.LocalApp.Tests
         }
 
         [Fact]
+        public void Chart_bucket_labels_are_iso_utc()
+        {
+            var bucketStart = new DateTimeOffset(2026, 8, 19, 22, 0, 0, TimeSpan.FromHours(-7));
+
+            Assert.Equal("2026-08-20T05:00:00Z", new SuccessRatePoint(bucketStart, 1, 1).BucketLabel);
+            Assert.Equal("2026-08-20T05:00:00Z", new JobAttemptResultPoint(bucketStart, 1, 0, 0).BucketLabel);
+            Assert.Equal("2026-08-20T05:00:00Z", new JobSuccessfulDurationPoint(bucketStart, 1, 0, 1000).BucketLabel);
+        }
+
+        [Fact]
         public void Dashboard_charts_can_be_limited_to_selected_jobs()
         {
             catalog.Create(Schedule("job.chart.selected"));
