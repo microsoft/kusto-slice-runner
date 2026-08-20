@@ -242,7 +242,7 @@ dashboard's bookmark redirect). Unknown jobs return `404` with `{ "error" }`.
 | `GET …/attempts` | Recent slice attempts (incl. in-flight `Started` rows with no `completedAtUtc`). Optional exact slice via `start`/`end`; `take`. |
 | `GET …/events` | Slice-state event timeline. Optional exact slice via `start`/`end`; `take`. |
 | `GET …/logs` | Operational logs including optional `chunkId`/`totalChunks`. Filters: `level`, `category`, `from`, `to`, `take`. |
-| `GET …/queue` | Work-queue items for the job incl. `lockedBy`/`lockedUntilUtc`. |
+| `GET …/queue` | Work-queue items for the job incl. `lockedBy`/`lockedUntilUtc`; active rows are returned first, followed by the newest terminal rows. `take` defaults to 100 and is capped at 1000. |
 | `GET …/history` | Catalog version history **with a computed JSON diff** per version (e.g. a `maxParallelism` change). |
 | `GET …/throughput` | Succeeded-completion series bucketed over `[from, to)` + a throughput `sample`. Params: `from`, `to`, `bucket`. |
 | `GET …/dependencies` | Declared upstreams (resolved) + a live-evaluated sample of `DependencyBlocked` slices with their missing upstream slices. |

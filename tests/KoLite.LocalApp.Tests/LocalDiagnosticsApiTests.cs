@@ -3,6 +3,7 @@ using System.Net;
 using System.Text.Json;
 using KoLite.Local.Sqlite.Catalog;
 using KoLite.Local.Sqlite.Connections;
+using KoLite.Local.Sqlite.Queue;
 using KoLite.Local.Sqlite.Schema;
 using KoLite.Local.Sqlite.Observability;
 using KoLite.Local.Sqlite.State;
@@ -37,6 +38,10 @@ namespace KoLite.LocalApp.Tests
             var state = new SqliteSliceStateRepository(sqlite);
             state.AcquireLease("op-run", JobId("status.job"), At(0), At(5), "worker-1", TimeSpan.FromMinutes(22), DateTimeOffset.UtcNow);
             state.Append("op-block", JobId("status.job"), At(5), At(10), DurableSliceStatus.DependencyBlocked, expectedVersion: 0, reason: "blocked");
+            var queue = new SqliteWorkQueueRepository(sqlite);
+            queue.Enqueue(JobId("status.job"), At(0), At(5), "status-leased", At(0));
+            Assert.NotNull(queue.Claim("default", "queue-worker", TimeSpan.FromMinutes(5), At(10)));
+            queue.Enqueue(JobId("status.job"), At(5), At(10), "status-queued", At(20));
 
             using var client = factory.CreateClient();
             using var document = JsonDocument.Parse(await client.GetStringAsync($"/api/jobs/{JobId("status.job")}/status"));
@@ -47,6 +52,45 @@ namespace KoLite.LocalApp.Tests
             var counts = root.GetProperty("sliceStates");
             Assert.Equal(1, counts.GetProperty("running").GetInt32());
             Assert.Equal(1, counts.GetProperty("dependencyBlocked").GetInt32());
+            var queueCounts = root.GetProperty("queue");
+            Assert.Equal(1, queueCounts.GetProperty("queued").GetInt32());
+            Assert.Equal(1, queueCounts.GetProperty("leased").GetInt32());
+            Assert.Equal(2, queueCounts.GetProperty("total").GetInt32());
+        }
+
+        [Fact]
+        public async Task Queue_endpoint_honors_take_and_prioritizes_active_work()
+        {
+            var catalog = new SqliteJobCatalogRepository(sqlite);
+            catalog.Create(Schedule("queue.job", "QueueFunction"));
+            var state = new SqliteSliceStateRepository(sqlite);
+            state.Append("queue-active", JobId("queue.job"), At(0), At(5), DurableSliceStatus.Queued, expectedVersion: 0);
+            state.Append("queue-older", JobId("queue.job"), At(5), At(10), DurableSliceStatus.Queued, expectedVersion: 0);
+            state.Append("queue-newer", JobId("queue.job"), At(10), At(15), DurableSliceStatus.Queued, expectedVersion: 0);
+            var queue = new SqliteWorkQueueRepository(sqlite);
+            var active = queue.Enqueue(JobId("queue.job"), At(0), At(5), "active", At(100));
+            queue.Enqueue(JobId("queue.job"), At(5), At(10), "older-terminal", At(0));
+            queue.Enqueue(JobId("queue.job"), At(10), At(15), "newer-terminal", At(0));
+
+            var olderTerminal = queue.Claim("default", "queue-worker", TimeSpan.FromMinutes(5), At(10))!;
+            Assert.True(queue.Complete(olderTerminal.QueueItemId, "queue-worker"));
+            var newerTerminal = queue.Claim("default", "queue-worker", TimeSpan.FromMinutes(5), At(10))!;
+            Assert.True(queue.Complete(newerTerminal.QueueItemId, "queue-worker"));
+            Exec(
+                "UPDATE work_queue SET updated_at_utc=$updated WHERE queue_item_id=$id;",
+                new() { ["$updated"] = Utc(At(10)), ["$id"] = olderTerminal.QueueItemId });
+            Exec(
+                "UPDATE work_queue SET updated_at_utc=$updated WHERE queue_item_id=$id;",
+                new() { ["$updated"] = Utc(At(20)), ["$id"] = newerTerminal.QueueItemId });
+
+            using var client = factory.CreateClient();
+            using var document = JsonDocument.Parse(
+                await client.GetStringAsync($"/api/jobs/{JobId("queue.job")}/queue?take=2"));
+            var rows = document.RootElement.GetProperty("queue").EnumerateArray().ToList();
+
+            Assert.Equal(2, rows.Count);
+            Assert.Equal(active.QueueItemId, rows[0].GetProperty("queueItemId").GetString());
+            Assert.Equal(newerTerminal.QueueItemId, rows[1].GetProperty("queueItemId").GetString());
         }
 
         [Fact]

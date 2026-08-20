@@ -40,9 +40,7 @@ namespace KoLite.LocalApp.Api
                 }
 
                 var summary = readModels.GetJobStatusSummaries().FirstOrDefault(s => s.JobId == record.JobId);
-                var queueItems = queue.List(record.JobId);
-                var queued = queueItems.Count(q => q.State == DurableWorkQueueState.Queued);
-                var leased = queueItems.Count(q => q.State == DurableWorkQueueState.Leased);
+                var queueCounts = queue.CountActiveByState(record.JobId);
                 var definition = record.Definition;
                 return Results.Json(new JobDiagnosticsStatusDto(
                     JobRefDto.From(record),
@@ -61,7 +59,10 @@ namespace KoLite.LocalApp.Api
                         summary?.DeadLetteredCount ?? 0,
                         summary?.DependencyBlockedCount ?? 0,
                         summary?.LastUpdatedAtUtc),
-                    new JobQueueCountsDto(queued, leased, queued + leased)));
+                    new JobQueueCountsDto(
+                        queueCounts.Queued,
+                        queueCounts.Leased,
+                        queueCounts.Queued + queueCounts.Leased)));
             });
 
             api.MapGet("/jobs/{jobId}/slices", (
@@ -204,6 +205,7 @@ namespace KoLite.LocalApp.Api
 
             api.MapGet("/jobs/{jobId}/queue", (
                 string jobId,
+                HttpContext http,
                 SqliteJobCatalogRepository catalog,
                 SqliteWorkQueueRepository queue) =>
             {
@@ -213,7 +215,8 @@ namespace KoLite.LocalApp.Api
                     return NotFound(jobId);
                 }
 
-                return Results.Json(new { jobId = record.JobId, queue = queue.List(record.JobId) });
+                var items = queue.ListForDiagnostics(record.JobId, DiagnosticsQuery.Take(http.Request));
+                return Results.Json(new { jobId = record.JobId, queue = items });
             });
 
             api.MapGet("/jobs/{jobId}/history", (

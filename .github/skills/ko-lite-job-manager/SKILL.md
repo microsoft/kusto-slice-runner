@@ -171,7 +171,7 @@ it accepts the GUID **or** the `activityId`):
 | `Get-Attempts` | `…/attempts` | Recent attempts (incl. in-flight `Started` rows with no completion). |
 | `Get-Events` | `…/events` | Slice-state event timeline. |
 | `Get-JobLogs` | `…/logs` | Operational logs (`-Query @{ level='Warning' }`). |
-| `Get-JobQueue` | `…/queue` | Work-queue items incl. `lockedBy`/`lockedUntilUtc`. |
+| `Get-JobQueue` | `…/queue` | Bounded work-queue items incl. `lockedBy`/`lockedUntilUtc`; active rows first, then newest terminal rows (`-Query @{ take = 100 }`). |
 | `Get-History` | `…/history` | Catalog version history **with a JSON diff** (e.g. a `maxParallelism` change). |
 | `Get-JobThroughput` | `…/throughput` | Per-job completion series + sample (`-Query @{ bucket='30m' }`). |
 | `Get-Dependencies` | `…/dependencies` | Declared upstreams + a sample of `DependencyBlocked` slices with their missing upstream slices. |

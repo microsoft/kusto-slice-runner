@@ -86,6 +86,20 @@ namespace KoLite.Local.Sqlite.Queue
             using var c = connectionFactory.OpenConnection(); using var cmd = SqliteStorage.Command(c, null, "SELECT COUNT(*) FROM work_queue WHERE job_id=$j AND queue_name=$q AND state IN ('Queued','Leased');");
             cmd.Add("$j", jobId); cmd.Add("$q", queueName); return Convert.ToInt32(cmd.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture);
         }
+        public (int Queued, int Leased) CountActiveByState(string jobId)
+        {
+            using var c = connectionFactory.OpenConnection();
+            using var cmd = SqliteStorage.Command(c, null, """
+                SELECT COALESCE(SUM(CASE WHEN state='Queued' THEN 1 ELSE 0 END), 0),
+                       COALESCE(SUM(CASE WHEN state='Leased' THEN 1 ELSE 0 END), 0)
+                FROM work_queue
+                WHERE job_id=$j;
+                """);
+            cmd.Add("$j", jobId);
+            using var r = cmd.ExecuteReader();
+            r.Read();
+            return (r.GetInt32(0), r.GetInt32(1));
+        }
         public int CountClaimable(string queueName, DateTimeOffset nowUtc, bool enforceJobParallelism = false, TimeSpan expiredLeaseGrace = default)
         {
             return CountClaimableCore(queueName, nowUtc, includeExpiredLeases: true, enforceJobParallelism, expiredLeaseGrace);
@@ -137,6 +151,34 @@ namespace KoLite.Local.Sqlite.Queue
         {
             using var c = connectionFactory.OpenConnection(); using var cmd = SqliteStorage.Command(c, null, "SELECT * FROM work_queue WHERE ($j IS NULL OR job_id=$j) AND ($q IS NULL OR queue_name=$q) ORDER BY created_at_utc, queue_item_id;");
             cmd.Add("$j", jobId); cmd.Add("$q", queueName); using var r = cmd.ExecuteReader(); var items = new List<DurableWorkItem>(); while (r.Read()) items.Add(Read(r)); return items;
+        }
+        public IReadOnlyList<DurableWorkItem> ListForDiagnostics(string jobId, int take)
+        {
+            if (take < 1)
+            {
+                throw new ArgumentOutOfRangeException(nameof(take));
+            }
+
+            using var c = connectionFactory.OpenConnection();
+            using var cmd = SqliteStorage.Command(c, null, """
+                SELECT *
+                FROM work_queue
+                WHERE job_id=$j
+                ORDER BY CASE WHEN state IN ('Queued','Leased') THEN 0 ELSE 1 END,
+                         updated_at_utc DESC,
+                         queue_item_id DESC
+                LIMIT $take;
+                """);
+            cmd.Add("$j", jobId);
+            cmd.Add("$take", take);
+            using var r = cmd.ExecuteReader();
+            var items = new List<DurableWorkItem>();
+            while (r.Read())
+            {
+                items.Add(Read(r));
+            }
+
+            return items;
         }
         public bool Abandon(string queueItemId, string workerId, DateTimeOffset availableAtUtc)
         {
