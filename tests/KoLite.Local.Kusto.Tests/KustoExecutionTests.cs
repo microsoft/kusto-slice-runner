@@ -184,6 +184,77 @@ namespace KoLite.Local.Kusto.Tests
             Assert.True(error.IsPermanent);
         }
 
+        [Fact]
+        public void Classifier_retries_outer_permanent_cross_cluster_failure_with_nested_non_permanent_payload()
+        {
+            var exception = PermanentCrossClusterFailure("LowMemoryCondition", isPermanent: false, escapePayload: true);
+
+            Assert.True(exception.IsPermanent);
+
+            var error = KustoErrorClassifier.Classify(exception);
+
+            Assert.True(error.IsRetryable);
+            Assert.False(error.IsPermanent);
+            Assert.Equal(nameof(KustoRequestException), error.Code);
+            Assert.Equal(exception.Message, error.Message);
+            Assert.Equal(exception.FailureCode, error.FailureCode);
+            Assert.Equal(exception.FailureSubCode, error.FailureSubCode);
+        }
+
+        [Theory]
+        [InlineData(false)]
+        [InlineData(true)]
+        public void Classifier_retries_recognized_remote_non_permanent_payload_regardless_of_error_kind(bool escapePayload)
+        {
+            var exception = PermanentCrossClusterFailure("InternalServiceError", isPermanent: false, escapePayload);
+
+            var error = KustoErrorClassifier.Classify(exception);
+
+            Assert.True(error.IsRetryable);
+            Assert.False(error.IsPermanent);
+        }
+
+        [Fact]
+        public void Classifier_does_not_override_permanent_failure_when_non_permanent_text_is_not_a_remote_error_payload()
+        {
+            var exception = new KustoRequestException(
+                "Semantic error in a string literal containing \"@permanent\": false.",
+                new InvalidOperationException("bad request"));
+
+            var error = KustoErrorClassifier.Classify(exception);
+
+            Assert.False(error.IsRetryable);
+            Assert.True(error.IsPermanent);
+        }
+
+        [Fact]
+        public void Classifier_does_not_override_when_remote_payload_is_explicitly_permanent()
+        {
+            var exception = PermanentCrossClusterFailure("SemanticError", isPermanent: true, escapePayload: true);
+
+            var error = KustoErrorClassifier.Classify(exception);
+
+            Assert.False(error.IsRetryable);
+            Assert.True(error.IsPermanent);
+        }
+
+        [Fact]
+        public void Classifier_ignores_non_permanent_text_nested_inside_remote_error_message()
+        {
+            var payload = "{\"error\":{\"code\":\"SemanticError\","
+                + "\"message\":\"A literal says \\\"@permanent\\\": false.\","
+                + "\"@permanent\":true}}";
+            var exception = new KustoRequestException(
+                "Cross-cluster query failure (From remote cluster: cluster('https://remote.invalid/'), database: remote) "
+                + $"=> Request is invalid and cannot be processed: {payload}",
+                new InvalidOperationException("bad request"));
+
+            var error = KustoErrorClassifier.Classify(exception);
+
+            Assert.False(error.IsRetryable);
+            Assert.True(error.IsPermanent);
+        }
+
         // Without a Kusto exception there is no permanence signal, so the slice stays retryable and
         // is bounded by the worker's MaxAttempts rather than dead-lettering on the first attempt.
         [Fact]
@@ -231,6 +302,25 @@ namespace KoLite.Local.Kusto.Tests
             Assert.Equal(request.CommandText, factory.Clients[0].CommandText);
             Assert.Equal(request.ClientRequestId, factory.Clients[0].Properties?.ClientRequestId);
             Assert.Contains("ingestIfNotExists", factory.Clients[0].CommandText, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public async Task Sdk_executor_returns_retryable_result_for_outer_permanent_remote_non_permanent_payload()
+        {
+            var request = new KustoRequestBuilder().Build(Job(), new SliceRange("job_kusto", At(0), At(5)));
+            var exception = PermanentCrossClusterFailure("LowMemoryCondition", isPermanent: false, escapePayload: true);
+            var executor = new KustoSdkExecutor(new ThrowingControlCommandClientFactory(exception));
+
+            var result = await executor.ExecuteAsync(request);
+
+            Assert.False(result.Succeeded);
+            Assert.NotNull(result.Error);
+            Assert.True(result.Error.IsRetryable);
+            Assert.False(result.Error.IsPermanent);
+            Assert.Equal(nameof(KustoRequestException), result.Error.Code);
+            Assert.Equal(exception.Message, result.Error.Message);
+            Assert.Equal(exception.FailureCode, result.Error.FailureCode);
+            Assert.Equal(exception.FailureSubCode, result.Error.FailureSubCode);
         }
 
         [Fact]
@@ -292,6 +382,16 @@ namespace KoLite.Local.Kusto.Tests
         }
 
         private static DateTimeOffset At(int minutes) => new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero).AddMinutes(minutes);
+
+        private static KustoRequestException PermanentCrossClusterFailure(string errorCode, bool isPermanent, bool escapePayload)
+        {
+            var quote = escapePayload ? "\\\"" : "\"";
+            var payload = $"{{{quote}error{quote}:{{{quote}code{quote}:{quote}{errorCode}{quote},{quote}@permanent{quote}:{isPermanent.ToString().ToLowerInvariant()}}}}}";
+            var message = "Request is invalid and cannot be processed: "
+                + "Cross-cluster query failure (From remote cluster: cluster('https://remote.invalid/'), database: remote) "
+                + $"=> Request is invalid and cannot be processed: {payload}";
+            return new KustoRequestException(message, new InvalidOperationException("bad request"));
+        }
 
         private static JobDefinition Job(string settingsJson = "{ \"mode\": \"scalar\", \"limit\": 10 }")
         {

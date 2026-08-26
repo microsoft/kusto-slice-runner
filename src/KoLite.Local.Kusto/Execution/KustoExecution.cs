@@ -279,19 +279,78 @@ namespace KoLite.Local.Kusto.Execution
         }
     }
 
-    // Retryability comes from the Kusto SDK's own permanence flag rather than the error text.
-    // Per the Kusto .NET SDK contract a permanent exception means the caller should not retry
-    // because the request is unlikely to ever succeed (a semantic or syntax error, for example),
-    // while everything else - low memory conditions, internal service errors, transport faults -
-    // is transient and worth a bounded retry. Matching on message text instead silently misses
-    // codes such as LowMemoryCondition and retries others only when a keyword happens to appear
-    // somewhere in the payload.
+    internal static partial class KustoRemoteErrorPermanenceDetector
+    {
+        private const string CrossClusterFailureMarker = "Cross-cluster query failure (From remote cluster:";
+
+        public static bool HasExplicitNonPermanentSignal(Exception exception)
+        {
+            ArgumentNullException.ThrowIfNull(exception);
+
+            for (Exception? current = exception; current is not null; current = current.InnerException)
+            {
+                var markerIndex = current.Message.IndexOf(CrossClusterFailureMarker, StringComparison.OrdinalIgnoreCase);
+                if (markerIndex < 0)
+                {
+                    continue;
+                }
+
+                var errorProperty = RemoteErrorPropertyRegex().Match(current.Message, markerIndex);
+                if (!errorProperty.Success)
+                {
+                    continue;
+                }
+
+                var escapedQuote = errorProperty.Groups["escape"].Value + "\"";
+                var permanenceProperty = escapedQuote + "@permanent" + escapedQuote;
+                var permanenceIndex = current.Message.IndexOf(
+                    permanenceProperty,
+                    errorProperty.Index + errorProperty.Length,
+                    StringComparison.OrdinalIgnoreCase);
+                if (permanenceIndex < 0)
+                {
+                    continue;
+                }
+
+                var permanenceValue = current.Message.AsSpan(permanenceIndex + permanenceProperty.Length).TrimStart();
+                if (!permanenceValue.IsEmpty
+                    && permanenceValue[0] == ':'
+                    && IsExplicitFalse(permanenceValue[1..]))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool IsExplicitFalse(ReadOnlySpan<char> value)
+        {
+            value = value.TrimStart();
+            if (!value.StartsWith("false", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            return value.Length == "false".Length
+                || value["false".Length] is ',' or '}' or '\\'
+                || char.IsWhiteSpace(value["false".Length]);
+        }
+
+        [GeneratedRegex(@"(?<escape>\\*)""error\k<escape>""\s*:", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+        private static partial Regex RemoteErrorPropertyRegex();
+    }
+
+    // Retryability normally comes from the Kusto SDK's permanence flag. Cross-cluster requests
+    // can wrap a remote transient failure in an outer permanent HTTP 400 exception, so a
+    // recognized remote envelope's explicit nested permanence field takes precedence.
     public static class KustoErrorClassifier
     {
         public static KustoExecutionError Classify(KustoException exception)
         {
             ArgumentNullException.ThrowIfNull(exception);
-            var isPermanent = exception.IsPermanent;
+            var isPermanent = exception.IsPermanent
+                && !KustoRemoteErrorPermanenceDetector.HasExplicitNonPermanentSignal(exception);
             return new KustoExecutionError(
                 exception.GetType().Name,
                 exception.Message,

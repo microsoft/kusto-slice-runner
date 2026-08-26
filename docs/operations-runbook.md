@@ -438,7 +438,10 @@ Back up the SQLite database before service upgrades, hard deletes, repair experi
 ## Retry classification and dead-letters
 
 When a slice fails, KO Lite asks the Kusto .NET SDK whether the error was **permanent**
-(`KustoException.IsPermanent`) and uses that answer alone to decide whether to retry:
+(`KustoException.IsPermanent`) and normally uses that answer to decide whether to retry. One
+bounded override handles cross-cluster failures: if a recognized remote Kusto error envelope
+explicitly contains a nested `"@permanent": false`, that remote signal takes precedence over an
+outer permanent HTTP 400 wrapper.
 
 - **Permanent** (semantic errors, syntax errors, bad input — typically HTTP 400) — the request will
   never succeed as written, so the slice dead-letters on the first attempt without consuming its
@@ -446,6 +449,9 @@ When a slice fails, KO Lite asks the Kusto .NET SDK whether the error was **perm
 - **Not permanent** (low memory conditions, internal service errors, transport faults, throttling) —
   the slice is retried up to `MaxAttempts` (3) with exponential backoff (1 min, then 2 min, capped at
   5 min). Retries are safe to repeat because output is idempotent via `ingest-by`.
+- **Remote non-permanent failure wrapped as permanent** (a cross-cluster error whose nested payload
+  explicitly says `"@permanent": false`) — treated as not permanent and given the same bounded
+  retry budget. The original outer exception type, message, and failure codes remain in diagnostics.
 - **No Kusto exception to inspect** (an unclassified fault or timeout) — treated as retryable and
   bounded by the same `MaxAttempts`.
 
@@ -458,9 +464,10 @@ reconstructing the attempt history:
 The attempt's metrics JSON also records `isRetryable`, `isPermanent`, `kustoFailureCode`, and
 `kustoFailureSubCode`.
 
-> Do not infer retryability from the error text. A Kusto low-memory failure
-> (`E_LOW_MEMORY_CONDITION`) reports `"@permanent": false` — meaning *retry* — but its message
-> contains none of the words a keyword-matching classifier would look for.
+> Do not infer retryability from general error keywords. A Kusto low-memory failure
+> (`E_LOW_MEMORY_CONDITION`) may arrive inside a permanent cross-cluster wrapper while its structured
+> remote payload reports `"@permanent": false`. KO Lite recognizes that envelope and explicit field;
+> ordinary messages that merely contain similar text remain permanent.
 
 ### Requeuing slices that already dead-lettered
 
