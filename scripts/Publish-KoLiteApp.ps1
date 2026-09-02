@@ -86,8 +86,20 @@ if ($StopRunning) {
 } else {
     $health = $null
     try {
-        $health = Invoke-RestMethod -Method Get -Uri "$($BaseUrl.TrimEnd('/'))/api/v1/system/status" -TimeoutSec 3
-    } catch {
+        $statusUrl = "$($BaseUrl.TrimEnd('/'))/api/v1/system/status"
+        $response = Invoke-WebRequest -Method Get -Uri $statusUrl -TimeoutSec 3 -SkipHttpErrorCheck
+        if ([int]$response.StatusCode -lt 200 -or [int]$response.StatusCode -ge 300) {
+            throw "A service is responding at $statusUrl but returned HTTP $([int]$response.StatusCode). Use the Publish-KoLiteApp.ps1 version shipped with that app."
+        }
+        $health = $response.Content | ConvertFrom-Json -Depth 20
+        $properties = @($health.PSObject.Properties | ForEach-Object Name)
+        if ($properties -notcontains 'supportedApiVersions') {
+            throw "A service is responding at $statusUrl but did not advertise KO Lite agent API v1. Use the Publish-KoLiteApp.ps1 version shipped with that app."
+        }
+        if (@($health.supportedApiVersions) -notcontains 'v1') {
+            throw "A service is responding at $statusUrl but did not advertise KO Lite agent API v1. Use the Publish-KoLiteApp.ps1 version shipped with that app."
+        }
+    } catch [System.Net.Http.HttpRequestException] {
         $health = $null
     }
 

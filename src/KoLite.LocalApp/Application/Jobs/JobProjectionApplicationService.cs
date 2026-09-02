@@ -79,12 +79,12 @@ namespace KoLite.LocalApp.Application.Jobs
         {
             var job = jobs.Get(jobId);
             var summary = operational.GetJobStatusSummaries().FirstOrDefault(item => item.JobId == jobId);
-            var work = queue.List(jobId);
+            var queueCounts = queue.CountActiveByState(jobId);
             return new JobStatusApplicationModel(
                 job,
                 summary,
-                work.Count(item => item.State == DurableWorkQueueState.Queued),
-                work.Count(item => item.State == DurableWorkQueueState.Leased));
+                queueCounts.Queued,
+                queueCounts.Leased);
         }
 
         public IReadOnlyList<CatalogRevisionApplicationModel> GetCatalogRevisions(string jobId)

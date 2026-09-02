@@ -40,6 +40,53 @@ namespace KoLite.LocalApp.Tests
         }
 
         [Fact]
+        public async Task Write_stops_before_mutation_when_v1_is_not_advertised()
+        {
+            var requests = new List<RecordedRequest>();
+            await using var server = new FakeHttpServer(request =>
+            {
+                requests.Add(request);
+                return Task.FromResult(FakeResponse.Json("""{"supportedApiVersions":["v2"]}"""));
+            });
+
+            var result = await RunHelper(
+                server.BaseUrl,
+                "-Action", "Pause",
+                "-JobId", Guid.NewGuid().ToString("D"));
+
+            Assert.NotEqual(0, result.ExitCode);
+            Assert.Contains("does not advertise agent API v1", result.Error, StringComparison.Ordinal);
+            var request = Assert.Single(requests);
+            Assert.Equal("GET", request.Method);
+            Assert.Equal("/api/v1/system/status", request.Path);
+        }
+
+        [Fact]
+        public async Task Write_against_a_legacy_app_fails_before_mutation()
+        {
+            var requests = new List<RecordedRequest>();
+            await using var server = new FakeHttpServer(request =>
+            {
+                requests.Add(request);
+                return Task.FromResult(FakeResponse.Json(
+                    """{"code":"not-found","detail":"The v1 API is unavailable."}""",
+                    statusCode: 404,
+                    contentType: "application/problem+json"));
+            });
+
+            var result = await RunHelper(
+                server.BaseUrl,
+                "-Action", "Soft-Delete",
+                "-JobId", Guid.NewGuid().ToString("D"));
+
+            Assert.NotEqual(0, result.ExitCode);
+            Assert.Contains("GET /api/v1/system/status returned HTTP 404", result.Error, StringComparison.Ordinal);
+            var request = Assert.Single(requests);
+            Assert.Equal("GET", request.Method);
+            Assert.Equal("/api/v1/system/status", request.Path);
+        }
+
+        [Fact]
         public async Task Problem_details_code_and_detail_are_reported()
         {
             await using var server = new FakeHttpServer(_ => Task.FromResult(
@@ -53,6 +100,31 @@ namespace KoLite.LocalApp.Tests
             Assert.NotEqual(0, result.ExitCode);
             Assert.True(result.Error.Contains("(test-conflict)", StringComparison.Ordinal), result.Error);
             Assert.True(result.Error.Contains("state changed", StringComparison.Ordinal), result.Error);
+        }
+
+        [Fact]
+        public async Task Repair_requires_the_preview_token_before_mutation()
+        {
+            var requests = new List<RecordedRequest>();
+            await using var server = new FakeHttpServer(request =>
+            {
+                requests.Add(request);
+                return Task.FromResult(FakeResponse.Json("""{"supportedApiVersions":["v1"]}"""));
+            });
+
+            var result = await RunHelper(
+                server.BaseUrl,
+                "-Action", "Repair",
+                "-JobId", Guid.NewGuid().ToString("D"),
+                "-From", "2026-01-01T00:00:00Z",
+                "-To", "2026-01-01T00:05:00Z",
+                "-Reason", "test",
+                "-ExpectedSliceCount", "1");
+
+            Assert.NotEqual(0, result.ExitCode);
+            Assert.Contains("Repair requires -PreviewToken from Preview-Repair.", result.Error, StringComparison.Ordinal);
+            Assert.Single(requests);
+            Assert.DoesNotContain(requests, request => request.Method == "POST");
         }
 
         [Fact]

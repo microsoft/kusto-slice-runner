@@ -206,9 +206,7 @@ namespace KoLite.LocalApp.Application.Operations
 
         public (IReadOnlyList<KoLite.Local.Core.Repair.RepairSlice> Slices, IReadOnlyList<RepairChunkExecution> Chunks) GetRepair(string batchId)
         {
-            var slices = repairs.GetRepairSlices(batchId);
-            var chunkRows = repairs.GetRepairChunkExecutions(batchId);
-            if (slices.Count == 0 && chunkRows.Count == 0)
+            if (diagnostics.GetRepairBatch(batchId) is null)
             {
                 throw new ApplicationProblemException(
                     StatusCodes.Status404NotFound,
@@ -217,6 +215,8 @@ namespace KoLite.LocalApp.Application.Operations
                     $"Repair batch '{batchId}' does not exist.");
             }
 
+            var slices = repairs.GetRepairSlices(batchId);
+            var chunkRows = repairs.GetRepairChunkExecutions(batchId);
             return (slices, chunkRows);
         }
 

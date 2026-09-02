@@ -493,7 +493,12 @@ $preview = Invoke-RestMethod -Method Post -Uri "$base/api/v1/jobs/$jobId/repair-
   -ContentType 'application/json' -Body ($range | ConvertTo-Json)
 
 Invoke-RestMethod -Method Post -Uri "$base/api/v1/jobs/$jobId/repairs" -ContentType 'application/json' `
-  -Body (($range + @{ reason = 'Requeue transient failures'; expectedSliceCount = $preview.repairableSliceCount }) | ConvertTo-Json)
+  -Body (($range + @{
+      reason = 'Requeue transient failures'
+      expectedSliceCount = $preview.repairableSliceCount
+      expectedExecutionCount = $preview.repairableExecutionCount
+      previewToken = $preview.previewToken
+  }) | ConvertTo-Json)
 ```
 
 Re-running is safe: output carries an `ingest-by` tag plus `ingestIfNotExists`, so Kusto dedupes a

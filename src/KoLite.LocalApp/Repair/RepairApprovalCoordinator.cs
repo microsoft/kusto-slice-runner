@@ -64,9 +64,18 @@ namespace KoLite.LocalApp.Repair
                     expectedPreviewToken);
             }
 
+            if (!StringComparer.Ordinal.Equals(preview.PreviewToken, expectedPreviewToken))
+            {
+                throw new RepairApprovalConflictException(
+                    "The repairable slice set changed or was not acknowledged. Re-run the preview and retry.",
+                    preview,
+                    expectedSliceCount,
+                    expectedExecutionCount,
+                    expectedPreviewToken);
+            }
+
             if (record.Definition.Chunks is not null
-                && (preview.RepairableExecutions != expectedExecutionCount
-                    || !StringComparer.Ordinal.Equals(preview.PreviewToken, expectedPreviewToken)))
+                && preview.RepairableExecutions != expectedExecutionCount)
             {
                 throw new RepairApprovalConflictException(
                     "The repairable chunk set changed or was not acknowledged. Re-run the preview and retry.",

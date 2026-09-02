@@ -30,7 +30,8 @@ namespace KoLite.LocalApp.Tests
             Assert.Contains("/control/v1/shutdown/drain", script, StringComparison.Ordinal);
             Assert.Contains("ContentType 'application/json'", script, StringComparison.Ordinal);
             Assert.Contains("Invoke-RestMethod -Method Post", script, StringComparison.Ordinal);
-            Assert.Contains("Invoke-RestMethod -Method Get", script, StringComparison.Ordinal);
+            Assert.Contains("Invoke-WebRequest -Method Get", script, StringComparison.Ordinal);
+            Assert.Contains("-SkipHttpErrorCheck", script, StringComparison.Ordinal);
         }
 
         [Fact]
@@ -58,6 +59,35 @@ namespace KoLite.LocalApp.Tests
         }
 
         [Fact]
+        public void Shipped_agent_tools_and_instructions_do_not_call_legacy_routes()
+        {
+            var root = FindRepositoryRoot();
+            var paths = new[]
+            {
+                Path.Combine(root, ".github", "copilot-instructions.md"),
+                Path.Combine(root, ".github", "agents", "ko-lite-maintainer.agent.md"),
+                Path.Combine(root, ".github", "skills", "ko-lite-job-manager", "SKILL.md"),
+                Path.Combine(root, ".github", "skills", "ko-lite-job-manager", "scripts", "Invoke-KoLiteJobApi.ps1"),
+                Path.Combine(root, ".github", "skills", "ko-lite-schedule-json", "SKILL.md"),
+                Path.Combine(root, ".github", "workflows", "release.yml"),
+                Path.Combine(root, "scripts", "Get-KoLiteDatabase.ps1"),
+                Path.Combine(root, "scripts", "Invoke-KoLiteVacuum.ps1"),
+                Path.Combine(root, "scripts", "Publish-KoLiteApp.ps1"),
+                Path.Combine(root, "scripts", "Start-KoLiteUi.ps1"),
+                Path.Combine(root, "scripts", "Stop-KoLiteApp.ps1")
+            };
+
+            foreach (var path in paths)
+            {
+                var content = File.ReadAllText(path);
+                Assert.DoesNotContain("/api/jobs", content, StringComparison.Ordinal);
+                Assert.DoesNotContain("/api/diagnostics", content, StringComparison.Ordinal);
+                Assert.DoesNotContain("/status/health", content, StringComparison.Ordinal);
+                Assert.DoesNotContain("/status/shutdown", content, StringComparison.Ordinal);
+            }
+        }
+
+        [Fact]
         public void Publish_script_publishes_copies_helper_scripts_and_prints_deployed_path()
         {
             var script = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "scripts", "Publish-KoLiteApp.ps1"));
@@ -70,6 +100,49 @@ namespace KoLite.LocalApp.Tests
             Assert.Contains("Stop-KoLiteApp.ps1", script, StringComparison.Ordinal);
             Assert.Contains("Start-KoLiteApp.ps1", script, StringComparison.Ordinal);
             Assert.Contains("Deployed path:", script, StringComparison.Ordinal);
+        }
+
+        [Theory]
+        [InlineData(404, """{"code":"not-found","detail":"The v1 API is unavailable."}""")]
+        [InlineData(200, "{}")]
+        public async Task Operational_scripts_abort_when_an_incompatible_service_responds(int statusCode, string body)
+        {
+            await using var server = new IncompatibleHttpServer(statusCode, body);
+            var root = FindRepositoryRoot();
+            var temporaryOutput = Path.Combine(Path.GetTempPath(), "ko-lite-publish-tests", Guid.NewGuid().ToString("N"));
+            try
+            {
+                var stop = await RunPowerShellAsync(
+                    Path.Combine(root, "scripts", "Stop-KoLiteApp.ps1"),
+                    "-BaseUrl", server.BaseUrl,
+                    "-Confirm:$false");
+                Assert.NotEqual(0, stop.ExitCode);
+                Assert.Contains("version shipped with that app", stop.Error, StringComparison.Ordinal);
+                Assert.Equal(0, server.PostCount);
+
+                var vacuum = await RunPowerShellAsync(
+                    Path.Combine(root, "scripts", "Invoke-KoLiteVacuum.ps1"),
+                    "-BaseUrl", server.BaseUrl,
+                    "-DatabasePath", Path.Combine(temporaryOutput, "missing.db"),
+                    "-DryRun");
+                Assert.NotEqual(0, vacuum.ExitCode);
+                Assert.Contains("version shipped with that app", vacuum.Error, StringComparison.Ordinal);
+
+                var publish = await RunPowerShellAsync(
+                    Path.Combine(root, "scripts", "Publish-KoLiteApp.ps1"),
+                    "-BaseUrl", server.BaseUrl,
+                    "-OutputDirectory", temporaryOutput);
+                Assert.NotEqual(0, publish.ExitCode);
+                Assert.Contains("version shipped with that app", publish.Error, StringComparison.Ordinal);
+                Assert.False(Directory.Exists(temporaryOutput));
+            }
+            finally
+            {
+                if (Directory.Exists(temporaryOutput))
+                {
+                    Directory.Delete(temporaryOutput, recursive: true);
+                }
+            }
         }
 
         [Fact]
@@ -288,6 +361,110 @@ namespace KoLite.LocalApp.Tests
 
             Assert.True(process.ExitCode == 0, $"{Path.GetFileName(scriptPath)} failed with exit code {process.ExitCode}: {standardError}");
             return standardOutput;
+        }
+
+        private static async Task<ProcessResult> RunPowerShellAsync(string scriptPath, params string[] arguments)
+        {
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = "pwsh",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+            startInfo.ArgumentList.Add("-NoProfile");
+            startInfo.ArgumentList.Add("-File");
+            startInfo.ArgumentList.Add(scriptPath);
+            foreach (var argument in arguments)
+            {
+                startInfo.ArgumentList.Add(argument);
+            }
+
+            using var process = Process.Start(startInfo)
+                ?? throw new InvalidOperationException("Could not start pwsh.");
+            var outputTask = process.StandardOutput.ReadToEndAsync();
+            var errorTask = process.StandardError.ReadToEndAsync();
+            await process.WaitForExitAsync();
+            return new ProcessResult(process.ExitCode, await outputTask, await errorTask);
+        }
+
+        private sealed record ProcessResult(int ExitCode, string Output, string Error);
+
+        private sealed class IncompatibleHttpServer : IAsyncDisposable
+        {
+            private readonly System.Net.Sockets.TcpListener listener =
+                new(System.Net.IPAddress.Loopback, 0);
+            private readonly CancellationTokenSource cancellation = new();
+            private readonly Task loop;
+            private readonly int statusCode;
+            private readonly string body;
+            private int postCount;
+
+            public IncompatibleHttpServer(int statusCode, string body)
+            {
+                this.statusCode = statusCode;
+                this.body = body;
+                listener.Start();
+                var endpoint = (System.Net.IPEndPoint)listener.LocalEndpoint;
+                BaseUrl = $"http://127.0.0.1:{endpoint.Port}";
+                loop = AcceptLoop();
+            }
+
+            public string BaseUrl { get; }
+            public int PostCount => Volatile.Read(ref postCount);
+
+            public async ValueTask DisposeAsync()
+            {
+                cancellation.Cancel();
+                listener.Stop();
+                try
+                {
+                    await loop;
+                }
+                catch (Exception ex) when (ex is OperationCanceledException or System.Net.Sockets.SocketException)
+                {
+                }
+
+                cancellation.Dispose();
+            }
+
+            private async Task AcceptLoop()
+            {
+                while (!cancellation.IsCancellationRequested)
+                {
+                    var client = await listener.AcceptTcpClientAsync(cancellation.Token);
+                    _ = Task.Run(() => Respond(client), cancellation.Token);
+                }
+            }
+
+            private async Task Respond(System.Net.Sockets.TcpClient client)
+            {
+                using (client)
+                using (var stream = client.GetStream())
+                using (var reader = new StreamReader(stream, leaveOpen: true))
+                {
+                    var requestLine = await reader.ReadLineAsync();
+                    if (requestLine?.StartsWith("POST ", StringComparison.Ordinal) == true)
+                    {
+                        Interlocked.Increment(ref postCount);
+                    }
+
+                    string? line;
+                    do
+                    {
+                        line = await reader.ReadLineAsync();
+                    }
+                    while (!string.IsNullOrEmpty(line));
+
+                    var bodyBytes = System.Text.Encoding.UTF8.GetBytes(body);
+                    var reason = statusCode == 200 ? "OK" : "Not Found";
+                    var headers = System.Text.Encoding.ASCII.GetBytes(
+                        $"HTTP/1.1 {statusCode} {reason}\r\nContent-Type: application/json\r\nContent-Length: {bodyBytes.Length}\r\nConnection: close\r\n\r\n");
+                    await stream.WriteAsync(headers);
+                    await stream.WriteAsync(bodyBytes);
+                }
+            }
         }
     }
 }

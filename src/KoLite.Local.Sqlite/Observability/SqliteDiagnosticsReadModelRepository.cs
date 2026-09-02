@@ -1065,6 +1065,29 @@ namespace KoLite.Local.Sqlite.Observability
             return results;
         }
 
+        public RepairBatchSummary? GetRepairBatch(string repairBatchId)
+        {
+            using var c = connectionFactory.OpenConnection();
+            using var cmd = SqliteStorage.Command(c, null, """
+                SELECT repair_batch_id, job_id, requested_by, reason, status, requested_at_utc, completed_at_utc
+                FROM repair_batches
+                WHERE repair_batch_id=$id
+                LIMIT 1;
+                """);
+            cmd.Add("$id", repairBatchId);
+            using var r = cmd.ExecuteReader();
+            return r.Read()
+                ? new RepairBatchSummary(
+                    r.GetString(0),
+                    r.IsDBNull(1) ? null : r.GetString(1),
+                    r.IsDBNull(2) ? null : r.GetString(2),
+                    r.GetString(3),
+                    r.GetString(4),
+                    SqliteStorage.ReadUtc(r, "requested_at_utc"),
+                    SqliteStorage.ReadNullableUtc(r, "completed_at_utc"))
+                : null;
+        }
+
         // Persisted failure-summary runs (the AI triage history), newest first. Read-only listing of
         // summary columns; this never invokes the summarizer.
         public IReadOnlyList<FailureSummaryReadout> ListFailureSummaries(string? jobId, int take)

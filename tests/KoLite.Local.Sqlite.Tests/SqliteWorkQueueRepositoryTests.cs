@@ -118,6 +118,25 @@ namespace KoLite.Local.Sqlite.Tests
         }
 
         [Fact]
+        public void CountActiveByState_excludes_terminal_queue_history()
+        {
+            state.Append("state-queued-3", JobId("job.queue"), At(10), At(15), DurableSliceStatus.Queued, expectedVersion: 0);
+            queue.Enqueue(JobId("job.queue"), At(0), At(5), "queued-count", At(20));
+            queue.Enqueue(JobId("job.queue"), At(5), At(10), "leased-count", At(10));
+            queue.Enqueue(JobId("job.queue"), At(10), At(15), "completed-count", At(10));
+
+            var leased = queue.Claim("default", "worker", TimeSpan.FromMinutes(5), At(10));
+            var completed = queue.Claim("default", "worker", TimeSpan.FromMinutes(5), At(10));
+            Assert.True(queue.Complete(completed!.QueueItemId, "worker"));
+
+            var counts = queue.CountActiveByState(JobId("job.queue"));
+
+            Assert.Equal(1, counts.Queued);
+            Assert.Equal(1, counts.Leased);
+            Assert.Equal(DurableWorkQueueState.Leased, queue.Get(leased!.QueueItemId)!.State);
+        }
+
+        [Fact]
         public async Task Concurrent_claims_do_not_double_claim_one_item()
         {
             queue.Enqueue(JobId("job.queue"), At(0), At(5), "only", At(10));

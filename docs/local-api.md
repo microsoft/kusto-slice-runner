@@ -78,8 +78,9 @@ mutation policy. Import remains additive: omitted jobs are never deleted.
 Repair preserves the existing count/token safety:
 
 - `expectedSliceCount` is always required.
-- Chunked jobs also require the preview's `expectedExecutionCount` and
-  `previewToken`.
+- `previewToken` is always required and binds approval to the previewed slice identities and
+  versions.
+- Chunked jobs also require the preview's `expectedExecutionCount`.
 - Raw chunk IDs remain 0-based.
 - Successful siblings and chunks with active automatic retry work are untouched.
 - Paused or soft-deleted jobs are rejected.
@@ -172,3 +173,21 @@ $helper = '.\.github\skills\ko-lite-job-manager\scripts\Invoke-KoLiteJobApi.ps1'
 The helper captures ETags automatically, sends `If-Match`, parses Problem Details,
 normalizes import files into the `schedules` envelope, follows cursors only when
 `-AllPages` is requested, and reports API-version mismatch before writes.
+
+## Compatibility and upgrades
+
+The v1 redesign intentionally removes the former `/api/jobs`, `/api/diagnostics`,
+`/status/health`, `/status/shutdown`, and `/catalog` routes. Upgrade the application,
+root operational scripts, and `.github\skills` directory together from the same
+release or repository commit.
+
+- An old helper or script pointed at a v1 app fails because its legacy route returns
+  `404`; it cannot silently fall through to a different operation.
+- The v1 job-manager helper checks `/api/v1/system/status` before every write and
+  refuses to mutate an older or unsupported app.
+- Copilot sessions can retain already-loaded skill and agent instructions. Start a
+  fresh session after upgrading, or explicitly reload the project skill, before
+  managing jobs.
+- Do not copy a new executable over an old release folder while retaining the old
+  scripts or `.github\skills`. Extract the complete archive into a new or cleaned
+  application folder.

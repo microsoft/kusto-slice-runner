@@ -95,14 +95,33 @@ function Resolve-SqliteAssembly {
 $isRunning = $false
 $health = $null
 try {
-    $health = Invoke-RestMethod -Method Get -Uri "$($BaseUrl.TrimEnd('/'))/api/v1/system/status" -TimeoutSec 5
+    $statusUrl = "$($BaseUrl.TrimEnd('/'))/api/v1/system/status"
+    $response = Invoke-WebRequest -Method Get -Uri $statusUrl -TimeoutSec 5 -SkipHttpErrorCheck
+    if ([int]$response.StatusCode -lt 200 -or [int]$response.StatusCode -ge 300) {
+        throw "A service is responding at $statusUrl but returned HTTP $([int]$response.StatusCode). Use the Invoke-KoLiteVacuum.ps1 version shipped with that app."
+    }
+    $health = $response.Content | ConvertFrom-Json -Depth 20
+    $properties = @($health.PSObject.Properties | ForEach-Object Name)
+    if ($properties -notcontains 'supportedApiVersions') {
+        throw "A service is responding at $statusUrl but did not advertise KO Lite agent API v1. Use the Invoke-KoLiteVacuum.ps1 version shipped with that app."
+    }
+    if (@($health.supportedApiVersions) -notcontains 'v1') {
+        throw "A service is responding at $statusUrl but did not advertise KO Lite agent API v1. Use the Invoke-KoLiteVacuum.ps1 version shipped with that app."
+    }
     $isRunning = $true
-} catch {
+} catch [System.Net.Http.HttpRequestException] {
     $isRunning = $false
 }
 
 if ([string]::IsNullOrWhiteSpace($DatabasePath)) {
-    if ($isRunning -and $null -ne $health -and $null -ne $health.database -and -not [string]::IsNullOrWhiteSpace($health.database.path)) {
+    if ($isRunning) {
+        $properties = @($health.PSObject.Properties | ForEach-Object Name)
+        if ($properties -notcontains 'database' -or $null -eq $health.database) {
+            throw "A service is responding at $statusUrl but did not return the expected KO Lite database path. Use the Invoke-KoLiteVacuum.ps1 version shipped with that app."
+        }
+        if ((@($health.database.PSObject.Properties | ForEach-Object Name) -notcontains 'path') -or ([string]::IsNullOrWhiteSpace($health.database.path))) {
+            throw "A service is responding at $statusUrl but did not return the expected KO Lite database path. Use the Invoke-KoLiteVacuum.ps1 version shipped with that app."
+        }
         $DatabasePath = [string]$health.database.path
     } else {
         $DatabasePath = Join-Path (Join-Path $env:LOCALAPPDATA 'KoLite') 'ko-lite.db'

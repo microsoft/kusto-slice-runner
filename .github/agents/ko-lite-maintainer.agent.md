@@ -109,6 +109,7 @@ The database path is resolved at runtime, so it cannot be read reliably from `ap
 - Use Windows paths and PowerShell examples.
 - Preserve `Set-StrictMode -Version Latest` and `$ErrorActionPreference = 'Stop'` style where present.
 - Keep production-scale/local-run scripts resumable and interruptible. Prefer `-DryRun`, explicit paths, and clear status output for operational actions.
+- When changing HTTP routes or contracts, keep the job-manager skill/helper, schedule-json handoff, repo instructions, this agent, operational scripts, release archive contents, generated OpenAPI tests, and upgrade guidance synchronized. Test old/new helper and app combinations so mismatches fail before writes.
 
 ### Schedule JSON and catalog behavior
 

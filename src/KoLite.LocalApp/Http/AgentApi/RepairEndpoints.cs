@@ -56,6 +56,15 @@ namespace KoLite.LocalApp.Http.AgentApi
                         "'expectedSliceCount' is required and must match the preview.");
                 }
 
+                if (string.IsNullOrWhiteSpace(request.PreviewToken))
+                {
+                    throw new ApplicationProblemException(
+                        StatusCodes.Status400BadRequest,
+                        "preview-token-required",
+                        "The repair approval is incomplete.",
+                        "'previewToken' is required and must match the preview.");
+                }
+
                 if (string.IsNullOrWhiteSpace(request.Reason))
                 {
                     throw new ApplicationProblemException(
@@ -73,7 +82,7 @@ namespace KoLite.LocalApp.Http.AgentApi
                         request.Reason.Trim()),
                     request.ExpectedSliceCount.Value,
                     request.ExpectedExecutionCount,
-                    request.PreviewToken);
+                    request.PreviewToken.Trim());
                 var response = new RepairBatchResponse(
                     result.Result.RepairBatchId,
                     new JobReferenceResponse(result.Job.JobId, result.Job.ActivityId),

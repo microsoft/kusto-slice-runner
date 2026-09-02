@@ -318,13 +318,14 @@ function Get-RepairBody {
         if (-not $expectedSliceCountSupplied) {
             throw 'Repair requires -ExpectedSliceCount from Preview-Repair.'
         }
+        if ([string]::IsNullOrWhiteSpace($PreviewToken)) {
+            throw 'Repair requires -PreviewToken from Preview-Repair.'
+        }
         $payload['expectedSliceCount'] = $ExpectedSliceCount
         if ($expectedExecutionCountSupplied) {
             $payload['expectedExecutionCount'] = $ExpectedExecutionCount
         }
-        if (-not [string]::IsNullOrWhiteSpace($PreviewToken)) {
-            $payload['previewToken'] = $PreviewToken
-        }
+        $payload['previewToken'] = $PreviewToken
     }
 
     return $payload | ConvertTo-Json -Compress
