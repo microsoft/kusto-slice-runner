@@ -818,24 +818,6 @@ namespace KoLite.LocalApp.Tests
         }
 
         [Fact]
-        public void Schedule_form_input_round_trips_distributed_output()
-        {
-            var input = ScheduleFormInput.FromJson(Schedule(
-                "job.distributed.form",
-                "DistributedFunction",
-                isPaused: false,
-                distributed: true));
-
-            Assert.True(input.Distributed);
-            using var enabledDocument = JsonDocument.Parse(input.ToScheduleJson());
-            Assert.True(enabledDocument.RootElement.GetProperty("distributed").GetBoolean());
-
-            input.Distributed = false;
-            using var disabledDocument = JsonDocument.Parse(input.ToScheduleJson());
-            Assert.False(disabledDocument.RootElement.TryGetProperty("distributed", out _));
-        }
-
-        [Fact]
         public async Task Description_editor_details_copy_and_history_preserve_encoded_markdown()
         {
             const string description = "# Purpose\n\n<script>alert('description')</script>\n\n[unsafe](javascript:alert(1))";
@@ -918,7 +900,6 @@ namespace KoLite.LocalApp.Tests
                 "max-parallelism",
                 "chunks",
                 "query-timeout",
-                "distributed",
                 "start-from",
                 "end-on",
                 "folder",
@@ -938,7 +919,6 @@ namespace KoLite.LocalApp.Tests
             Assert.Contains("title=\"Permanent immutable GUID assigned by KO Lite.", html, StringComparison.Ordinal);
             Assert.Contains("title=\"Concurrent execution units for this job: chunks for chunked jobs, otherwise slices.", html, StringComparison.Ordinal);
             Assert.Contains("title=\"Optional, 1-32. Adds chunkId and chunks arguments to every function call.", html, StringComparison.Ordinal);
-            Assert.Contains("title=\"Adds distributed = true to the Kusto set-or-append command", html, StringComparison.Ordinal);
             Assert.DoesNotContain("id=\"schedule-description-help\"", html, StringComparison.Ordinal);
             Assert.DoesNotContain("id=\"schedule-tags-help\"", html, StringComparison.Ordinal);
             Assert.DoesNotContain("id=\"schedule-max-parallelism-help\"", html, StringComparison.Ordinal);
@@ -3293,7 +3273,7 @@ namespace KoLite.LocalApp.Tests
             return new Guid(bytes).ToString("N");
         }
 
-        private static string Schedule(string activityId, string functionName, bool isPaused, string outputTable = "Output", int maxParallelism = 1, string queryWindowSize = "00:05:00", string? folder = null, IReadOnlyList<string>? tags = null, string? endOn = null, string? healthPolicy = null, string? description = null, int? chunks = null, bool distributed = false)
+        private static string Schedule(string activityId, string functionName, bool isPaused, string outputTable = "Output", int maxParallelism = 1, string queryWindowSize = "00:05:00", string? folder = null, IReadOnlyList<string>? tags = null, string? endOn = null, string? healthPolicy = null, string? description = null, int? chunks = null)
         {
             var schedule = $$"""
             {
@@ -3340,11 +3320,6 @@ namespace KoLite.LocalApp.Tests
             if (chunks is not null)
             {
                 metadata.Add($"  \"chunks\": {chunks.Value},");
-            }
-
-            if (distributed)
-            {
-                metadata.Add("  \"distributed\": true,");
             }
 
             return metadata.Count == 0

@@ -61,7 +61,6 @@ namespace KoLite.Local.Core.Tests
                 DelayFromUtcNow = TimeSpan.FromMinutes(30),
                 MaxParallelism = 5,
                 QueryTimeout = TimeSpan.FromMinutes(10),
-                Distributed = true,
                 IsPaused = true,
                 EndOn = Utc("2026-01-02T00:00:00Z"),
                 Folder = "Other/Folder",

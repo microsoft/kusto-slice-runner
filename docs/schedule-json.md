@@ -13,7 +13,6 @@ The schedule contract is intentionally strict. Unknown top-level fields, unknown
   "delayFromUtcNow": "00:10:00",
   "maxParallelism": 2,
   "queryTimeout": "00:05:00",
-  "distributed": false,
   "isPaused": true,
   "healthPolicy": "complete",
   "description": "Builds the hourly data used by the sample dashboard.",
@@ -43,7 +42,6 @@ durable `id`, dependency edges, slice history, or output idempotency.
 | `delayFromUtcNow` | Yes | Non-negative `TimeSpan`; delays scheduling near-real-time windows. |
 | `maxParallelism` | Yes | Minimum `1`, with no upper limit. Hard per-job concurrency bound measured in execution units: chunks for chunked jobs, otherwise logical slices. Enforced at claim time across scheduled work, retries, repairs, and recovery. When a cluster is under sustained ingestion throttling, the [throttling advisor](operations-runbook.md#ingestion-throttling-advisor) may recommend reducing this (never below the job's keep-up floor); reductions are applied only when an operator confirms them. |
 | `queryTimeout` | Yes | Positive `TimeSpan`; used for Kusto server timeout and queue lease sizing. |
-| `distributed` | No | Boolean, default `false`. When `true`, adds `distributed = true` to the Kusto `.set-or-append` ingestion properties so query nodes can produce large output in parallel. It does not change function arguments or ingestion identity. |
 | `chunks` | No | Integer `1..32`. Presence splits every logical window into 0-based chunks and changes the Kusto function signature. Immutable after the job starts. |
 | `isPaused` | No | Defaults to `false`. Paused jobs do not schedule or claim queued retries. |
 | `healthPolicy` | No | `"complete"` (default) or `"recent"`. Controls how the dashboard scores this job's health. `complete` (strict) additionally surfaces unaddressed historical gaps (terminal dead-lettered slices) as a "N gaps" segment on the status pill, even when recent slices are healthy. `recent` colors purely by the recent-slice trend and ignores old gaps. See [Dashboard status](operations-runbook.md#dashboard-status-model). |

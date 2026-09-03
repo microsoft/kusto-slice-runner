@@ -18,7 +18,6 @@ namespace KoLite.LocalApp.Ui
         public string DelayFromUtcNow { get; set; } = "00:10:00";
         public int MaxParallelism { get; set; } = 1;
         public string QueryTimeout { get; set; } = "00:05:00";
-        public bool Distributed { get; set; }
         public int? Chunks { get; set; }
         public bool IsPaused { get; set; }
         public string HealthPolicy { get; set; } = "complete";
@@ -62,7 +61,6 @@ namespace KoLite.LocalApp.Ui
                 DelayFromUtcNow = definition.DelayFromUtcNow.ToString("c", CultureInfo.InvariantCulture),
                 MaxParallelism = definition.MaxParallelism,
                 QueryTimeout = definition.QueryTimeout.ToString("c", CultureInfo.InvariantCulture),
-                Distributed = definition.Distributed,
                 Chunks = definition.Chunks,
                 IsPaused = definition.IsPaused,
                 HealthPolicy = definition.HealthPolicy == JobHealthPolicy.Recent ? "recent" : "complete",
@@ -106,11 +104,6 @@ namespace KoLite.LocalApp.Ui
             if (Chunks.HasValue)
             {
                 root["chunks"] = Chunks.Value;
-            }
-
-            if (Distributed)
-            {
-                root["distributed"] = true;
             }
 
             if (!string.IsNullOrWhiteSpace(Description))
@@ -174,7 +167,6 @@ namespace KoLite.LocalApp.Ui
             DelayFromUtcNow = "00:10:00",
             MaxParallelism = 2,
             QueryTimeout = "00:05:00",
-            Distributed = false,
             Chunks = null,
             IsPaused = false,
             StartFrom = DateTimeOffset.UtcNow.AddHours(-6).ToString("yyyy-MM-ddTHH:00:00Z", CultureInfo.InvariantCulture),

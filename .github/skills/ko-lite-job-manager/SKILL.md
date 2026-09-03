@@ -96,8 +96,6 @@ Never:
 - Single-job reads/mutations return an ETag derived from `catalogVersion`.
 - Update, pause, resume, soft-delete, and restore require `If-Match`.
 - Update and batch import reject soft-deleted targets; restore them explicitly first.
-- Preserve the optional schedule `distributed` boolean on edits. It defaults to
-  `false`; `true` opts only that job into Kusto distributed output.
 
 Soft-delete retains the active-dependent guard. Use `-Force` only after naming
 the dependent jobs and confirming the user accepts the break.

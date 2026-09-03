@@ -6,7 +6,6 @@
   "delayFromUtcNow": "00:15:00",
   "maxParallelism": 1,
   "queryTimeout": "00:05:00",
-  "distributed": false,
   "isPaused": false,
   "startFrom": "2026-01-01T00:00:00Z",
   "description": "Produces the hourly dataset used by the example dashboard.",

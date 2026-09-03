@@ -67,7 +67,7 @@ $DescriptionMaxLength = 65536
 $AllowedTopLevel = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
 @(
     'id','activityId','description','functionName','outputTable','queryWindowSize',
-    'delayFromUtcNow','maxParallelism','queryTimeout','distributed','chunks','isPaused',
+    'delayFromUtcNow','maxParallelism','queryTimeout','chunks','isPaused',
     'startFrom','endOn','folder','tags','dependsOn','jobSettings','target','healthPolicy'
 ) | ForEach-Object { [void]$AllowedTopLevel.Add($_) }
 
@@ -323,14 +323,6 @@ function Test-Definition {
         $kind = $isPausedProp.ValueKind
         if ($kind -ne [System.Text.Json.JsonValueKind]::True -and $kind -ne [System.Text.Json.JsonValueKind]::False) {
             Add-Error $errors 'isPaused' "isPaused must be a boolean (got $kind)."
-        }
-    }
-
-    $distributedProp = Get-Property -Element $Root -Name 'distributed'
-    if ($null -ne $distributedProp) {
-        $kind = $distributedProp.ValueKind
-        if ($kind -ne [System.Text.Json.JsonValueKind]::True -and $kind -ne [System.Text.Json.JsonValueKind]::False) {
-            Add-Error $errors 'distributed' "distributed must be a boolean (got $kind)."
         }
     }
 

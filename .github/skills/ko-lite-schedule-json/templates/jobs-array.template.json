@@ -7,7 +7,6 @@
     "delayFromUtcNow": "00:00:00",
     "maxParallelism": 1,
     "queryTimeout": "00:01:00",
-    "distributed": false,
     "isPaused": true,
     "startFrom": "2026-01-01T00:00:00Z",
     "target": {
@@ -23,7 +22,6 @@
     "delayFromUtcNow": "00:15:00",
     "maxParallelism": 4,
     "queryTimeout": "00:30:00",
-    "distributed": true,
     "isPaused": false,
     "startFrom": "2026-01-01T00:00:00Z",
     "description": "Full example job with dependency and settings metadata.",

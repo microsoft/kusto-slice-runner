@@ -28,7 +28,6 @@ namespace KoLite.Local.Core.Schedules
         public required TimeSpan DelayFromUtcNow { get; init; }
         public required int MaxParallelism { get; init; }
         public required TimeSpan QueryTimeout { get; init; }
-        public bool Distributed { get; init; }
         public int? Chunks { get; init; }
         public required DateTimeOffset StartFrom { get; init; }
         public required JobTarget Target { get; init; }

@@ -58,9 +58,8 @@ namespace KoLite.Local.Kusto.Execution
             var ingestByTag = $"ingest-by:{idempotencyKey}";
             var ingestIfNotExists = KustoString(JsonSerializer.Serialize(new[] { idempotencyKey }));
             var tags = KustoString(JsonSerializer.Serialize(new[] { ingestByTag }));
-            var distributed = job.Distributed ? ", distributed = true" : string.Empty;
             var commandText = string.Create(CultureInfo.InvariantCulture, $$"""
-                .set-or-append {{job.OutputTable}} with (ingestIfNotExists = {{ingestIfNotExists}}, tags = {{tags}}{{distributed}}) <|
+                .set-or-append {{job.OutputTable}} with (ingestIfNotExists = {{ingestIfNotExists}}, tags = {{tags}}) <|
                 {{job.FunctionName}}({{BuildFunctionArguments(job, execution)}})
                 """);
 
