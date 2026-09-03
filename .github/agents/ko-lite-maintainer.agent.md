@@ -117,6 +117,9 @@ The database path is resolved at runtime, so it cannot be read reliably from `ap
 - The job's permanent identity is the opaque GUID `id` (immutable). `activityId` is a mutable, unique display label that can be renamed; `queryWindowSize`, `startFrom`, and optional `chunks` remain read-only after a job has started.
 - Dependencies are stored by upstream GUID; `dependsOn` entries may reference the upstream by `activityId` and/or `id`, resolved to the GUID at create/import.
 - `description` is optional Markdown catalog metadata, limited to 65,536 characters. Preserve it across copy, import/export, catalog history, and the single-job API schedule; keep it out of compact API job summaries and every Kusto request/function argument.
+- `distributed` is an optional schedule boolean that defaults to `false`. When
+  enabled, add only `distributed = true` to `.set-or-append`; do not change
+  producer arguments, ingestion identity, or completed-slice history.
 - When adding or changing a schedule field, update the core parser, standalone PowerShell validator, `ko-lite-schedule-json` and `ko-lite-job-manager` guidance/templates, this agent profile, API docs, and matching tests together.
 - Preserve additive/update-only import behavior unless the user explicitly asks for replacement or deletion semantics.
 

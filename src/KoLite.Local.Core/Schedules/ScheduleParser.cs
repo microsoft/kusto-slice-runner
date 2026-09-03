@@ -10,7 +10,7 @@ namespace KoLite.Local.Core.Schedules
         private static readonly HashSet<string> AllowedTopLevel = new(StringComparer.Ordinal)
         {
             "id", "activityId", "description", "functionName", "outputTable", "queryWindowSize", "delayFromUtcNow",
-            "maxParallelism", "queryTimeout", "chunks", "isPaused", "startFrom", "endOn", "folder",
+            "maxParallelism", "queryTimeout", "distributed", "chunks", "isPaused", "startFrom", "endOn", "folder",
             "tags", "dependsOn", "jobSettings", "target", "healthPolicy"
         };
 
@@ -77,6 +77,7 @@ namespace KoLite.Local.Core.Schedules
                 var tags = ParseTags(doc.RootElement, activityId, errors);
                 var id = ParseId(doc.RootElement, activityId, errors);
                 var healthPolicy = ParseHealthPolicy(doc.RootElement, activityId, errors);
+                var distributed = ParseDistributed(doc.RootElement, activityId, errors);
                 var dependencies = ParseDependencies(doc.RootElement, dto, id, activityId, errors);
                 var startFrom = ParseUtcIso8601(dto.StartFrom, "startFrom", activityId, errors);
                 var endOn = ParseUtcIso8601(dto.EndOn, "endOn", activityId, errors, required: false);
@@ -88,7 +89,7 @@ namespace KoLite.Local.Core.Schedules
                 }
 
                 return errors.Count == 0
-                    ? ScheduleValidationResult.Success(Map(dto, id, tags, dependencies, startFrom!.Value, endOn, healthPolicy))
+                    ? ScheduleValidationResult.Success(Map(dto, id, tags, dependencies, startFrom!.Value, endOn, healthPolicy, distributed))
                     : ScheduleValidationResult.Failed(errors);
             }
         }
@@ -202,6 +203,27 @@ namespace KoLite.Local.Core.Schedules
             {
                 errors.Add(new ScheduleValidationError(activityId, "healthPolicy", $"healthPolicy must be 'complete' or 'recent'; got '{value}'."));
                 return JobHealthPolicy.Complete;
+            }
+        }
+
+        private static bool ParseDistributed(JsonElement root, string? activityId, List<ScheduleValidationError> errors)
+        {
+            if (!root.TryGetProperty("distributed", out var distributed))
+            {
+                return false;
+            }
+
+            return distributed.ValueKind switch
+            {
+                JsonValueKind.True => true,
+                JsonValueKind.False => false,
+                _ => Reject()
+            };
+
+            bool Reject()
+            {
+                errors.Add(new ScheduleValidationError(activityId, "distributed", $"distributed must be a boolean; got {distributed.ValueKind}."));
+                return false;
             }
         }
 
@@ -371,7 +393,7 @@ namespace KoLite.Local.Core.Schedules
             if (Blank(target.Database)) errors.Add(new ScheduleValidationError(activityId, "target.database", "target.database is required and must be a non-empty string."));
         }
 
-        private static JobDefinition Map(ScheduleJsonDto dto, string? id, IReadOnlyList<string> tags, IReadOnlyList<DependentJob> dependencies, DateTimeOffset startFrom, DateTimeOffset? endOn, JobHealthPolicy healthPolicy) => new()
+        private static JobDefinition Map(ScheduleJsonDto dto, string? id, IReadOnlyList<string> tags, IReadOnlyList<DependentJob> dependencies, DateTimeOffset startFrom, DateTimeOffset? endOn, JobHealthPolicy healthPolicy, bool distributed) => new()
         {
             Id = id,
             ActivityId = dto.ActivityId!,
@@ -382,6 +404,7 @@ namespace KoLite.Local.Core.Schedules
             DelayFromUtcNow = dto.DelayFromUtcNow!.Value,
             MaxParallelism = dto.MaxParallelism!.Value,
             QueryTimeout = dto.QueryTimeout!.Value,
+            Distributed = distributed,
             Chunks = dto.Chunks,
             StartFrom = startFrom,
             EndOn = endOn,
@@ -414,6 +437,7 @@ namespace KoLite.Local.Core.Schedules
             public TimeSpan? DelayFromUtcNow { get; set; }
             public int? MaxParallelism { get; set; }
             public TimeSpan? QueryTimeout { get; set; }
+            public bool? Distributed { get; set; }
             public int? Chunks { get; set; }
             public bool? IsPaused { get; set; }
             public string? StartFrom { get; set; }

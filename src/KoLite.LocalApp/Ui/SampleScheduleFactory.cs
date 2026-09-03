@@ -14,6 +14,7 @@ namespace KoLite.LocalApp.Ui
               "delayFromUtcNow": "00:10:00",
               "maxParallelism": 2,
               "queryTimeout": "00:05:00",
+              "distributed": false,
               "isPaused": false,
               "startFrom": "{{DateTimeOffset.UtcNow.AddHours(-6).ToString("yyyy-MM-ddTHH:00:00Z", CultureInfo.InvariantCulture)}}",
               "target": {

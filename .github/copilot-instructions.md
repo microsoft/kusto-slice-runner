@@ -52,6 +52,10 @@ For targeted changes, run the narrow relevant test project first, then decide wh
 - Keep Activity metrics explicit about granularity: running/queued logical counts and processed totals/charts are one per parent time window, while execution counts are per chunk (or per unchunked slice). Keep one running row per logical window, expose every active chunk/worker, and base chunked ETAs on measured whole-window durations rather than multiplying per-chunk durations.
 - Schedule JSON import/export accepts a single schedule object or an array. The parser rejects unknown top-level fields, unknown `target` fields, and unknown `dependsOn` entry fields. A job's permanent identity is an opaque GUID `id` (server-assigned, immutable); `activityId` is a mutable, unique display label. Imports match by `id` when present (enabling rename = same `id`, new `activityId`), else by `activityId`. `dependsOn` entries reference an upstream by `id` and/or `activityId` and are stored by GUID.
 - `description` is optional Markdown catalog metadata, limited to 65,536 characters. It round-trips through copy, import/export, catalog history, and the single-job API schedule; it is omitted from compact API job summaries and must never enter Kusto requests or function arguments. When the schedule contract changes, keep the C# parser, standalone PowerShell validator, both schedule-management skills and templates, the maintainer agent, API docs, and tests synchronized.
+- `distributed` is an optional per-job boolean that defaults to `false` and adds
+  only `distributed = true` to the Kusto `.set-or-append` properties. It is
+  mutable after a job starts and never changes function arguments or ingestion
+  identity.
 - For `.csl` and `.kql`, follow `.github\instructions\kusto.instructions.md`.
 
 ## External Kusto CLI skill

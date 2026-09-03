@@ -39,6 +39,9 @@ KO Lite still binds to `http://127.0.0.1:5057` by default. Do not widen
   conflict fields.
 - Inbound instants require an explicit UTC offset (`Z` or `+/-HH:mm`). KO Lite
   emits UTC `Z` values.
+- Schedule JSON may opt into distributed Kusto output with `"distributed": true`.
+  The field defaults to `false`, is preserved by API create/update/import/export,
+  and does not change producer function arguments.
 - Large operational collections use `limit` plus an opaque `cursor`, returning
   `{ "items": [...], "nextCursor": "..." }`. A cursor is bound to its endpoint and
   filters and is rejected if reused with a different query.

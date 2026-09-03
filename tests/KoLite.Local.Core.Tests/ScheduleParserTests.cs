@@ -321,6 +321,40 @@ namespace KoLite.Local.Core.Tests
             Assert.Contains(result.Errors, e => e.Field == "healthPolicy");
         }
 
+        [Fact]
+        public void Parser_defaults_distributed_to_false_when_absent()
+        {
+            var result = ScheduleParser.Parse(MinimalSample);
+
+            Assert.True(result.IsValid);
+            Assert.False(result.Definition!.Distributed);
+        }
+
+        [Theory]
+        [InlineData(true)]
+        [InlineData(false)]
+        public void Parser_accepts_distributed_boolean(bool distributed)
+        {
+            var result = ScheduleParser.Parse(WithTopLevel(
+                MinimalSample,
+                $"\"distributed\": {distributed.ToString().ToLowerInvariant()}"));
+
+            Assert.True(result.IsValid, string.Join(Environment.NewLine, result.Errors.Select(e => $"{e.Field}: {e.Message}")));
+            Assert.Equal(distributed, result.Definition!.Distributed);
+        }
+
+        [Theory]
+        [InlineData("\"true\"")]
+        [InlineData("null")]
+        [InlineData("1")]
+        public void Parser_rejects_non_boolean_distributed(string distributedJson)
+        {
+            var result = ScheduleParser.Parse(WithTopLevel(MinimalSample, $"\"distributed\": {distributedJson}"));
+
+            Assert.False(result.IsValid);
+            Assert.Contains(result.Errors, e => e.Field == "distributed");
+        }
+
         [Theory]
         [InlineData(1)]
         [InlineData(32)]
@@ -379,6 +413,7 @@ namespace KoLite.Local.Core.Tests
           "delayFromUtcNow": "00:15:00",
           "maxParallelism": 4,
           "queryTimeout": "00:30:00",
+          "distributed": true,
           "isPaused": false,
           "startFrom": "2024-01-01T00:00:00+00:00",
           "endOn": "2024-01-08T00:00:00+00:00",

@@ -10,6 +10,7 @@
     var maxParallelismHelp = "Concurrent execution units for this job: chunks for chunked jobs, otherwise slices. Minimum 1 with no upper limit. Set this to at least the chunk count to allow one window's chunks to run together when global worker capacity is available.";
     var chunksHelp = "Optional, 1-32. Adds chunkId and chunks arguments to every function call. Each chunk consumes one max-parallelism slot. Cannot change after the job starts.";
     var queryTimeoutHelp = "Positive Kusto server timeout for each execution. It also influences the client deadline and queue lease duration.";
+    var distributedHelp = "Adds distributed = true to the Kusto set-or-append command so multiple query nodes can produce large output in parallel. Keep disabled for small outputs.";
     var startFromHelp = "UTC anchor for the first logical slice and all subsequent window boundaries. Cannot change after the job starts.";
     var endOnHelp = "Optional UTC upper bound. KO Lite schedules only whole aligned slices ending at or before this value.";
     var folderHelp = "Optional Kusto-oriented metadata. It does not group jobs in the dashboard; use tags for local organization.";
@@ -85,6 +86,8 @@
                 </select>
             </label>
         </div>
+        <label class="checkbox-row"><input name="Input.Distributed" type="checkbox" value="true" @(Model.Input.Distributed ? "checked" : null) /> Distributed Kusto output <span class="form-field-info" data-field-info="distributed" role="img" tabindex="0" title="@distributedHelp" aria-label="@distributedHelp">ⓘ</span></label>
+        <input type="hidden" name="Input.Distributed" value="false" />
         <label class="checkbox-row"><input name="Input.IsPaused" type="checkbox" value="true" @(Model.Input.IsPaused ? "checked" : null) /> Start paused <span class="form-field-info" data-field-info="is-paused" role="img" tabindex="0" title="@isPausedHelp" aria-label="@isPausedHelp">ⓘ</span></label>
         <input type="hidden" name="Input.IsPaused" value="false" />
         <div class="form-field dependency-picker" data-dependency-picker>

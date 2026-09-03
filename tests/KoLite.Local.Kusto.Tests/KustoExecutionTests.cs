@@ -27,9 +27,20 @@ namespace KoLite.Local.Kusto.Tests
             Assert.Equal("ko-lite:job_kusto|2026-01-01T00:00:00.0000000Z|2026-01-01T00:05:00.0000000Z", request.IdempotencyKey);
             Assert.Contains(".set-or-append OutputTable with (ingestIfNotExists", request.CommandText);
             Assert.Contains("tags = \"[\\\"ingest-by:ko-lite:job_kusto", request.CommandText);
+            Assert.DoesNotContain("distributed =", request.CommandText, StringComparison.Ordinal);
             Assert.Contains("KustoFunction(datetime(2026-01-01T00:00:00.0000000Z), datetime(2026-01-01T00:05:00.0000000Z), dynamic({ \"mode\": \"scalar\", \"limit\": 10 }))", request.CommandText);
             Assert.DoesNotContain("sliceStart", request.CommandText, StringComparison.Ordinal);
             Assert.DoesNotContain("sliceEnd", request.CommandText, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void Request_builder_adds_distributed_ingestion_only_when_enabled()
+        {
+            var request = new KustoRequestBuilder().Build(
+                Job() with { Distributed = true },
+                new SliceRange("job_kusto", At(0), At(5)));
+
+            Assert.Contains(", distributed = true) <|", request.CommandText, StringComparison.Ordinal);
         }
 
         [Fact]

@@ -25,7 +25,7 @@ KO Lite runs as a local ASP.NET Core Razor Pages app with hosted background serv
 2. The catalog stores canonical schedule JSON and lifecycle metadata in SQLite.
 3. The scheduler enumerates due logical slices. For a chunked job it materializes 0-based child executions for the oldest eligible window and inserts queue rows up to the job's remaining `maxParallelism`.
 4. The worker pool claims execution-unit queue rows, enforcing each job's `maxParallelism` across normal slices, chunks, retries, repairs, and recovery. Each chunk consumes one slot. Per-job values have no upper limit; global worker concurrency is unbounded by default, so total in-flight work can reach the sum of each job's `maxParallelism`.
-5. The Kusto executor runs the configured function for the slice window and appends results to the schedule output table.
+5. The Kusto executor runs the configured function for the slice window and appends results to the schedule output table. Jobs may opt into Kusto's distributed ingest-from-query path for large outputs; the default remains non-distributed.
 6. Slice state, queue state, attempts, events, and operational logs are updated in SQLite.
 7. Dashboard read models query SQLite to show job status, history, failures, and worker/scheduler health.
 8. The job dependency graph is a read-only UI projection (`DependencyGraphQuery` in `src\KoLite.LocalApp`): it reuses the dashboard's per-job status projection and the stored `dependsOn` GUID edges, and the pure connected-component computation lives in `src\KoLite.Local.Core` (`Graph\DependencyGraphLayout.cs`). The browser renders the nodes/edges with the bundled Cytoscape.js (dagre layout) for pan/zoom/fit; the server emits no pixel geometry. It adds no persistence.

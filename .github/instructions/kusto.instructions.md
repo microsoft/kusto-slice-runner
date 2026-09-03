@@ -84,6 +84,9 @@ Jobs
 ## KO Lite-specific notes
 
 - KO Lite worker execution calls a configured Kusto function per slice. The function receives slice start and slice end as the first two `datetime` arguments, and receives `jobSettings` as a third `dynamic` argument when settings are configured.
-- Output writes use `.set-or-append` against the schedule's `outputTable`. Preserve table data unless the user explicitly requests cleanup.
+- Output writes use `.set-or-append` against the schedule's `outputTable`. An
+  opted-in schedule may add `distributed = true` for large output; the default
+  remains non-distributed. Preserve table data unless the user explicitly
+  requests cleanup.
 - Prefer idempotent schema commands such as `.create-merge table` and `.create-or-alter function`.
 - Keep rerun cleanup commands reviewable. KO Lite may suggest cleanup commands, but operators execute them deliberately.

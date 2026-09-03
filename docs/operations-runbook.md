@@ -172,6 +172,14 @@ deletes a database file.
 
 Use **Import** to add or update jobs from schedule JSON. Imports accept either one schedule object or an array of schedule objects through paste or file upload. Optional schedule `tags` are preserved as local job organization metadata and can be used to filter the dashboard and catalog.
 
+For a measured large-output job, optional `"distributed": true` adds Kusto's
+`distributed = true` property to `.set-or-append`. The default is `false`. This
+can reduce materialization time when query output exceeds one GB, but it can
+increase concurrent ingestion work and extent fan-out, so test the exact
+producer and target before enabling it. The setting is mutable after a job
+starts and affects only future or otherwise-missing executions; it does not
+replay completed slices.
+
 Imports are additive and update-only: jobs with matching `activityId` values are updated, missing jobs are created, and jobs omitted from the payload are left untouched.
 
 Use **Export all** on the home dashboard to export an import-compatible JSON array for every non-soft-deleted job in the local catalog. Individual job rows and job details pages also include single-job export links. Multi-job exports are sorted in ascending `activityId` (job id) order, so the output is deterministic and diff-stable.
