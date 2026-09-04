@@ -388,7 +388,7 @@ switch ($Action) {
         $scheduleText = Get-ScheduleText
         Test-ScheduleText -ScheduleText $scheduleText
         $parsed = $scheduleText | ConvertFrom-Json -Depth 100
-        $schedules = if ($parsed -is [System.Array]) { @($parsed) } else { @($parsed) }
+        $schedules = [object[]]@($parsed)
         $payload = @{ schedules = $schedules } | ConvertTo-Json -Depth 100 -Compress
         return (Invoke-KoLiteApi -Method 'POST' -RelativeUri "$apiRoot/jobs/import" -Body $payload).Body
     }

@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
+using System.Text.Json;
 
 namespace KoLite.LocalApp.Tests
 {
@@ -100,6 +101,41 @@ namespace KoLite.LocalApp.Tests
             Assert.NotEqual(0, result.ExitCode);
             Assert.True(result.Error.Contains("(test-conflict)", StringComparison.Ordinal), result.Error);
             Assert.True(result.Error.Contains("state changed", StringComparison.Ordinal), result.Error);
+        }
+
+        [Theory]
+        [InlineData("""{"activityId":"single"}""")]
+        [InlineData("""[{"activityId":"single"}]""")]
+        public async Task Import_preserves_a_single_schedule_as_an_array(string scheduleJson)
+        {
+            var requests = new List<RecordedRequest>();
+            await using var server = new FakeHttpServer(request =>
+            {
+                requests.Add(request);
+                return Task.FromResult(request.Path switch
+                {
+                    "/api/v1/system/status" => FakeResponse.Json(
+                        """{"supportedApiVersions":["v1"]}"""),
+                    "/api/v1/jobs/import" => FakeResponse.Json(
+                        """{"created":1,"updated":0,"total":1,"items":[]}"""),
+                    _ => FakeResponse.Json(
+                        """{"code":"unexpected","detail":"unexpected route"}""",
+                        statusCode: 404)
+                });
+            });
+
+            var result = await RunHelper(
+                server.BaseUrl,
+                "-Action", "Import",
+                "-Json", scheduleJson,
+                "-SkipValidation");
+
+            Assert.True(result.ExitCode == 0, result.Error + Environment.NewLine + result.Output);
+            var post = Assert.Single(requests, request => request.Method == "POST");
+            using var body = JsonDocument.Parse(post.Body);
+            var schedules = body.RootElement.GetProperty("schedules");
+            Assert.Equal(JsonValueKind.Array, schedules.ValueKind);
+            Assert.Single(schedules.EnumerateArray());
         }
 
         [Fact]
