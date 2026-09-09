@@ -442,20 +442,30 @@ Back up the SQLite database before service upgrades, hard deletes, repair experi
 ## Retry classification and dead-letters
 
 When a slice fails, KO Lite asks the Kusto .NET SDK whether the error was **permanent**
-(`KustoException.IsPermanent`) and normally uses that answer to decide whether to retry. One
-bounded override handles cross-cluster failures: if a recognized remote Kusto error envelope
-explicitly contains a nested `"@permanent": false`, that remote signal takes precedence over an
-outer permanent HTTP 400 wrapper.
+(`KustoException.IsPermanent`) and normally uses that answer to decide whether to retry. Two
+narrow overrides handle cross-cluster failures: an explicit non-permanent signal in a recognized
+remote error envelope, and a specific remote-schema resolution failure reported as a semantic
+error without that envelope. Both use the existing bounded retry budget.
 
-- **Permanent** (semantic errors, syntax errors, bad input — typically HTTP 400) — the request will
-  never succeed as written, so the slice dead-letters on the first attempt without consuming its
-  retry budget.
+- **Permanent** (local missing-table errors, syntax errors, bad input — typically HTTP 400) — the
+  request will not succeed unchanged, so the slice dead-letters on the first attempt without
+  scheduling a retry.
 - **Not permanent** (low memory conditions, internal service errors, transport faults, throttling) —
-  the slice is retried up to `MaxAttempts` (3) with exponential backoff (1 min, then 2 min, capped at
-  5 min). Retries are safe to repeat because output is idempotent via `ingest-by`.
+  the slice gets up to `MaxAttempts` (3 total attempts, not 3 additional retries) with exponential
+  backoff (1 min, then 2 min, capped at 5 min). Retries are safe to repeat because output is
+  idempotent via `ingest-by`.
 - **Remote non-permanent failure wrapped as permanent** (a cross-cluster error whose nested payload
   explicitly says `"@permanent": false`) — treated as not permanent and given the same bounded
   retry budget. The original outer exception type, message, and failure codes remain in diagnostics.
+- **Remote-schema semantic failure** — a Kusto SDK `SemanticException` reporting
+  `Errors occurred while resolving remote entities`, followed by the failed-name/scopes structure
+  and an explicit HTTPS `$Cluster` scope, gets the same bounded retries. A temporary remote schema
+  lookup outage can produce this error even when the SDK marks it permanent. KO Lite also
+  recognizes the same typed semantic failure inside an exception chain, but does not use this
+  text-only fallback to override a recognized remote error envelope. A genuinely missing remote
+  entity can produce the same message and will consume the normal retry budget before
+  dead-lettering. The original exception type, message, and failure codes remain unchanged;
+  `isPermanent` records KO Lite's effective classification.
 - **No Kusto exception to inspect** (an unclassified fault or timeout) — treated as retryable and
   bounded by the same `MaxAttempts`.
 
@@ -471,7 +481,13 @@ The attempt's metrics JSON also records `isRetryable`, `isPermanent`, `kustoFail
 > Do not infer retryability from general error keywords. A Kusto low-memory failure
 > (`E_LOW_MEMORY_CONDITION`) may arrive inside a permanent cross-cluster wrapper while its structured
 > remote payload reports `"@permanent": false`. KO Lite recognizes that envelope and explicit field;
-> ordinary messages that merely contain similar text remain permanent.
+> ordinary messages that merely contain similar text remain permanent. Likewise, the remote-schema
+> override requires the specific SDK semantic failure and remote-scope structure, not just
+> "could not be resolved" or a cluster URL. It does not make all semantic errors retryable.
+
+These retries do not guarantee recovery from an outage that outlasts the budget. The policy change
+does not increase that budget, clear remote schema caches, or automatically repair historical
+dead letters.
 
 ### Requeuing slices that already dead-lettered
 

@@ -283,9 +283,10 @@ namespace KoLite.Local.Kusto.Execution
     {
         private const string CrossClusterFailureMarker = "Cross-cluster query failure (From remote cluster:";
 
-        public static bool HasExplicitNonPermanentSignal(Exception exception)
+        public static bool HasExplicitNonPermanentSignal(Exception exception, out bool hasRemoteErrorEnvelope)
         {
             ArgumentNullException.ThrowIfNull(exception);
+            hasRemoteErrorEnvelope = false;
 
             for (Exception? current = exception; current is not null; current = current.InnerException)
             {
@@ -301,6 +302,7 @@ namespace KoLite.Local.Kusto.Execution
                     continue;
                 }
 
+                hasRemoteErrorEnvelope = true;
                 var escapedQuote = errorProperty.Groups["escape"].Value + "\"";
                 var permanenceProperty = escapedQuote + "@permanent" + escapedQuote;
                 var permanenceIndex = current.Message.IndexOf(
@@ -341,16 +343,55 @@ namespace KoLite.Local.Kusto.Execution
         private static partial Regex RemoteErrorPropertyRegex();
     }
 
-    // Retryability normally comes from the Kusto SDK's permanence flag. Cross-cluster requests
-    // can wrap a remote transient failure in an outer permanent HTTP 400 exception, so a
-    // recognized remote envelope's explicit nested permanence field takes precedence.
+    internal static partial class KustoRemoteSchemaFailureDetector
+    {
+        private const string RemoteScopePattern = @"\(\$Cluster='(?<cluster>[^'\r\n]+)',\s*Database='[^'\r\n]+'\)";
+
+        public static bool IsRemoteEntityResolutionFailure(Exception exception)
+        {
+            for (Exception? current = exception; current is not null; current = current.InnerException)
+            {
+                if (current is not SemanticException)
+                {
+                    continue;
+                }
+
+                var match = RemoteEntityResolutionRegex().Match(current.Message);
+                if (match.Success && match.Groups["cluster"].Captures.All(
+                    capture => Uri.TryCreate(capture.Value, UriKind.Absolute, out var uri)
+                        && uri.Scheme == Uri.UriSchemeHttps))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        [GeneratedRegex(
+            @"\ASemantic error:\s*Errors occurred while resolving remote entities\.\s*"
+            + @"Failed to resolve name or pattern '[^'\r\n]+' in one or more scopes:\s*"
+            + RemoteScopePattern + @"(?:,\s*" + RemoteScopePattern + @")*\s*\z",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+        private static partial Regex RemoteEntityResolutionRegex();
+    }
+
+    // SDK permanence is normally authoritative. Remote schema lookup can instead report a
+    // temporary outage as a semantic error; only its specific resolution form gets bounded
+    // retries when no recognized remote envelope supplies the classification.
     public static class KustoErrorClassifier
     {
         public static KustoExecutionError Classify(KustoException exception)
         {
             ArgumentNullException.ThrowIfNull(exception);
-            var isPermanent = exception.IsPermanent
-                && !KustoRemoteErrorPermanenceDetector.HasExplicitNonPermanentSignal(exception);
+            var isPermanent = exception.IsPermanent;
+            if (isPermanent)
+            {
+                var remoteNonPermanent = KustoRemoteErrorPermanenceDetector.HasExplicitNonPermanentSignal(exception, out var hasRemoteEnvelope);
+                isPermanent = !remoteNonPermanent
+                    && (hasRemoteEnvelope || !KustoRemoteSchemaFailureDetector.IsRemoteEntityResolutionFailure(exception));
+            }
+
             return new KustoExecutionError(
                 exception.GetType().Name,
                 exception.Message,

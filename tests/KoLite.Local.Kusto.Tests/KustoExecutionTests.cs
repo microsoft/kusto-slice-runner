@@ -11,6 +11,11 @@ namespace KoLite.Local.Kusto.Tests
 {
     public sealed class KustoExecutionTests
     {
+        private const string RemoteSchemaMessage =
+            "Semantic error: Errors occurred while resolving remote entities. "
+            + "Failed to resolve name or pattern 'MycroftContainerSnapshot' in one or more scopes: "
+            + "($Cluster='https://sample-query.westeurope.kusto.windows.net/', Database='AzureCP')";
+
         [Fact]
         public void Request_builder_constructs_safe_command_with_parameters()
         {
@@ -184,6 +189,90 @@ namespace KoLite.Local.Kusto.Tests
             Assert.True(error.IsPermanent);
         }
 
+        [Theory]
+        [InlineData(false)]
+        [InlineData(true)]
+        public void Classifier_retries_remote_schema_semantic_failure_and_preserves_outer_diagnostics(bool wrapped)
+        {
+            var semantic = new SemanticException(RemoteSchemaMessage, null);
+            KustoException exception = wrapped
+                ? new KustoRequestException("The request failed.", semantic)
+                : semantic;
+
+            Assert.True(semantic.IsPermanent);
+            Assert.Null(semantic.InnerException);
+            Assert.Equal(400, semantic.FailureCode);
+            Assert.Equal("General_BadRequest", semantic.FailureSubCode);
+            Assert.True(exception.IsPermanent);
+
+            var error = KustoErrorClassifier.Classify(exception);
+
+            Assert.True(error.IsRetryable);
+            Assert.False(error.IsPermanent);
+            Assert.Equal(exception.GetType().Name, error.Code);
+            Assert.Equal(exception.Message, error.Message);
+            Assert.Equal(exception.FailureCode, error.FailureCode);
+            Assert.Equal(exception.FailureSubCode, error.FailureSubCode);
+        }
+
+        [Theory]
+        [InlineData("Semantic error: Errors occurred while resolving remote entities.\nFailed to resolve name or pattern 'AnotherTable' in one or more scopes: ($Cluster='https://other.invalid/', Database='OtherDb')")]
+        [InlineData(RemoteSchemaMessage + ", ($Cluster='https://another.invalid/', Database='OtherDb')")]
+        [InlineData("semantic error: errors occurred while resolving remote entities. Failed to resolve name or pattern 'AnotherTable' in one or more scopes: ($Cluster='https://other.invalid/', Database='OtherDb')")]
+        public void Classifier_recognizes_remote_schema_failure_without_incident_specific_names(string message)
+        {
+            var error = KustoErrorClassifier.Classify(new SemanticException(message, null));
+
+            Assert.True(error.IsRetryable);
+            Assert.False(error.IsPermanent);
+        }
+
+        [Theory]
+        [InlineData("Semantic error: 'LocalMissingTable' could not be resolved.")]
+        [InlineData("Syntax error: expected an expression.")]
+        [InlineData("Semantic error: Invalid function argument.")]
+        [InlineData("Semantic error: Errors occurred while resolving remote entities.")]
+        [InlineData("Semantic error: Failed to resolve name or pattern 'Table' in one or more scopes: ($Cluster='https://remote.invalid/', Database='Db')")]
+        [InlineData("Semantic error: Errors occurred while resolving remote entities. Failed to resolve name or pattern 'Table' in one or more scopes: (Database='Db')")]
+        [InlineData("Semantic error: Errors occurred while resolving remote entities. Failed to resolve name or pattern 'Table' in one or more scopes: ($Cluster='not-a-uri', Database='Db')")]
+        [InlineData("Semantic error: Errors occurred while resolving remote entities. Failed to resolve name or pattern 'Table' in one or more scopes: ($Cluster='http://remote.invalid/', Database='Db')")]
+        [InlineData("Invalid string literal: \"" + RemoteSchemaMessage + "\"")]
+        [InlineData(RemoteSchemaMessage + " Literal text follows.")]
+        [InlineData(RemoteSchemaMessage + ", ($Cluster='invalid', Database='OtherDb')")]
+        [InlineData(RemoteSchemaMessage + " {\"error\":{\"@permanent\":true}}")]
+        public void Classifier_keeps_other_semantic_failures_permanent(string message)
+        {
+            var error = KustoErrorClassifier.Classify(new SemanticException(message, null));
+
+            Assert.False(error.IsRetryable);
+            Assert.True(error.IsPermanent);
+        }
+
+        [Fact]
+        public void Classifier_does_not_infer_remote_schema_failure_from_untyped_exception_text()
+        {
+            var exception = new KustoRequestException(RemoteSchemaMessage, new InvalidOperationException(RemoteSchemaMessage));
+
+            var error = KustoErrorClassifier.Classify(exception);
+
+            Assert.False(error.IsRetryable);
+            Assert.True(error.IsPermanent);
+        }
+
+        [Theory]
+        [InlineData(false)]
+        [InlineData(true)]
+        public void Classifier_preserves_explicit_remote_envelope_permanence_over_inner_semantic_text(bool isPermanent)
+        {
+            var envelope = PermanentCrossClusterFailure("SemanticError", isPermanent, escapePayload: true);
+            var exception = new KustoRequestException(envelope.Message, new SemanticException(RemoteSchemaMessage, null));
+
+            var error = KustoErrorClassifier.Classify(exception);
+
+            Assert.Equal(!isPermanent, error.IsRetryable);
+            Assert.Equal(isPermanent, error.IsPermanent);
+        }
+
         [Fact]
         public void Classifier_retries_outer_permanent_cross_cluster_failure_with_nested_non_permanent_payload()
         {
@@ -321,6 +410,34 @@ namespace KoLite.Local.Kusto.Tests
             Assert.Equal(exception.Message, result.Error.Message);
             Assert.Equal(exception.FailureCode, result.Error.FailureCode);
             Assert.Equal(exception.FailureSubCode, result.Error.FailureSubCode);
+        }
+
+        [Fact]
+        public async Task Executors_propagate_remote_schema_retryability_and_original_diagnostics()
+        {
+            var request = new KustoRequestBuilder().Build(Job(), new SliceRange("job_kusto", At(0), At(5)));
+            var exception = new SemanticException(RemoteSchemaMessage, null);
+            var sdk = new KustoSdkExecutor(new ThrowingControlCommandClientFactory(exception));
+
+            var sdkResult = await sdk.ExecuteAsync(request);
+            var localResult = await new KustoLocalSliceOutputExecutor(new KustoRequestBuilder(), sdk)
+                .ExecuteAsync(Job(), request.Slice);
+
+            Assert.False(sdkResult.Succeeded);
+            Assert.NotNull(sdkResult.Error);
+            Assert.True(sdkResult.Error.IsRetryable);
+            Assert.False(sdkResult.Error.IsPermanent);
+            Assert.Equal(nameof(SemanticException), sdkResult.Error.Code);
+            Assert.Equal(exception.Message, sdkResult.Error.Message);
+            Assert.Equal(exception.FailureCode, sdkResult.Error.FailureCode);
+            Assert.Equal(exception.FailureSubCode, sdkResult.Error.FailureSubCode);
+            Assert.False(localResult.Succeeded);
+            Assert.True(localResult.IsRetryable);
+            Assert.False(localResult.IsPermanent);
+            Assert.Equal(sdkResult.Error.Code, localResult.ErrorCode);
+            Assert.Equal(sdkResult.Error.Message, localResult.ErrorMessage);
+            Assert.Equal(sdkResult.Error.FailureCode, localResult.FailureCode);
+            Assert.Equal(sdkResult.Error.FailureSubCode, localResult.FailureSubCode);
         }
 
         [Fact]
