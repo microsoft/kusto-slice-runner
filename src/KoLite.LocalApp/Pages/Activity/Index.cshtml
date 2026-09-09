@@ -141,8 +141,8 @@
 <section class="card section-block">
     <div class="card-header">
         <div>
-            <h2>Slices processed</h2>
-            <p class="muted chart-help">Succeeded vs. failed/dead-lettered logical slice outcomes. Chunk executions are aggregated into one outcome per time window.</p>
+            <h2>Executions processed</h2>
+            <p class="muted chart-help">Each execution unit contributes its latest succeeded or failed/dead-lettered outcome once.</p>
         </div>
     </div>
     <div class="summary-grid">
@@ -163,8 +163,8 @@
 <section class="card section-block">
     <div class="card-header">
         <div>
-            <h2>Processed over time</h2>
-            <p class="muted chart-help">Logical slice completions per interval, succeeded vs. failed/dead-lettered.</p>
+            <h2>Executions processed over time</h2>
+            <p class="muted chart-help">Execution units by latest terminal completion, succeeded vs. failed/dead-lettered.</p>
         </div>
         <div class="range-picker">
             @foreach (var range in Model.RangeLinks)
@@ -173,5 +173,5 @@
             }
         </div>
     </div>
-    <partial name="_SlicesProcessedChart" model="data.Chart" />
+    <partial name="_ExecutionsProcessedChart" model="data.Chart" />
 </section>

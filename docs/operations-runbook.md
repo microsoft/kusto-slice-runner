@@ -337,15 +337,19 @@ KO Lite right now and over time?". It distinguishes a logical **slice** (one tim
   durations*. A whole-window sample runs from its earliest attempt start, including automatic retry
   time, until every configured chunk succeeds. Manually repaired windows are excluded because
   operator delay would distort the sample. A job with no usable history shows **No history yet**.
-- **Slices processed.** Succeeded vs. failed/dead-lettered totals for the **last day**, **last 7
-  days**, **last 30 days**, and **all time** remain logical-window metrics: 16 successful chunks
-  contribute one succeeded slice. Trailing totals and the chart group retained `slice_attempts` into
-  one logical outcome per window; the latest terminal execution completion places that outcome in a
-  time window or chart bucket. The **all time** card instead reads each parent slice's current outcome
-  from never-pruned `current_slice_state`, so it remains accurate after old attempts are pruned.
-- **Processed over time.** The chart shows logical slice outcomes per interval, split into succeeded
-  and failed/dead-lettered, over 1 hour / 1 day / 7 days / 30 days. **Refresh** re-reads the read-only
-  snapshot and recalculates relative times and ETAs.
+- **Executions processed.** Succeeded vs. failed/dead-lettered totals for the **last day**, **last 7
+  days**, **last 30 days**, and **all time** count execution units: one chunk for a chunked job, or
+  one unchunked slice. Sixteen successful chunks therefore contribute 16 succeeded executions.
+  Retryable and lease-lost attempts do not add processed executions; retries and repairs resolve to
+  each execution unit's latest terminal outcome. Trailing totals and the chart group retained
+  `slice_attempts` by execution identity, and the latest terminal completion places that outcome in a
+  time window or chart bucket. The **all time** card uses current child rows (or parents with no child
+  rows) to identify execution units and their never-pruned terminal state-event history to retain the
+  prior outcome while a retry or repair is queued/running. Old-attempt retention therefore does not
+  change the total.
+- **Executions processed over time.** The chart shows execution outcomes per interval, split into
+  succeeded and failed/dead-lettered, over 1 hour / 1 day / 7 days / 30 days. **Refresh** re-reads the
+  read-only snapshot and recalculates relative times and ETAs.
 
 ## Ingestion throttling advisor
 

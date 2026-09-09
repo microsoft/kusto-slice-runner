@@ -5,6 +5,10 @@ import { JSDOM } from "jsdom";
 const html = `<!doctype html>
 <html>
 <body>
+  <figure data-chartjs-activity="executions-processed-chart">
+    <canvas id="executions-processed-chart"></canvas>
+    <script type="application/json" id="executions-processed-chart-data">{"rangeStartUtc":"2026-01-01T00:00:00Z","rangeEndUtc":"2026-01-01T01:00:00Z","points":[{"x":1767225600000,"succeeded":3,"failed":1,"total":4,"bucket":"2026-01-01T00:00:00Z","label":"2026-01-01T00:00:00Z"}]}</script>
+  </figure>
   <figure data-dependency-graph
           data-dependency-graph-focal="11111111222233334444555566667777"
           data-kusto-lineage-url="/api/v1/dependency-graphs/kusto-lineage">
@@ -28,6 +32,11 @@ const dom = new JSDOM(html, {
   runScripts: "outside-only"
 });
 const requests = [];
+const charts = [];
+dom.window.Chart = function (canvas, config) {
+  charts.push({ canvas, config });
+  return { data: config.data };
+};
 dom.window.fetch = async (url, options = {}) => {
   requests.push({ url, options });
   if (url === "/api/v1/dependency-graphs/kusto-lineage") {
@@ -55,6 +64,20 @@ const siteScript = await readFile(
   new URL("../src/KoLite.LocalApp/wwwroot/js/site.js", import.meta.url),
   "utf8");
 dom.window.eval(siteScript);
+
+assert.equal(charts.length, 1);
+assert.equal(charts[0].canvas.id, "executions-processed-chart");
+assert.equal(charts[0].config.options.scales.y.title.text, "Executions processed");
+const activityTooltip = charts[0].config.options.plugins.tooltip.callbacks;
+assert.equal(
+  activityTooltip.label({ dataset: { label: "Succeeded" }, raw: { y: 1 } }),
+  "Succeeded: 1 execution");
+assert.equal(
+  activityTooltip.label({ dataset: { label: "Succeeded" }, raw: { y: 3 } }),
+  "Succeeded: 3 executions");
+assert.equal(
+  activityTooltip.footer([{ raw: { total: 4 } }]),
+  "Total executions: 4");
 
 dom.window.document.querySelector("[data-dependency-graph-resolve]").click();
 dom.window.document.querySelector("[data-analyze-failures]").click();

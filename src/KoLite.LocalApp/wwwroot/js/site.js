@@ -373,7 +373,7 @@
     });
   }
 
-  function buildSlicesProcessedChart(canvas, payload) {
+  function buildExecutionsProcessedChart(canvas, payload) {
     if (!window.Chart || !canvas || !payload || !payload.points) return null;
 
     var rangeStart = Date.parse(payload.rangeStartUtc);
@@ -442,11 +442,12 @@
               },
               label: function (context) {
                 var raw = context.raw || {};
-                return context.dataset.label + ": " + (raw.y || 0) + " slice(s)";
+                var count = raw.y || 0;
+                return context.dataset.label + ": " + count + (count === 1 ? " execution" : " executions");
               },
               footer: function (items) {
                 var raw = items.length ? items[0].raw : null;
-                return raw ? "Total: " + (raw.total || 0) : "";
+                return raw ? "Total executions: " + (raw.total || 0) : "";
               }
             }
           }
@@ -467,7 +468,7 @@
             beginAtZero: true,
             grid: { color: "rgba(208, 215, 222, 0.75)" },
             ticks: { color: "#57606a", precision: 0 },
-            title: { display: true, text: "Slices processed", color: "#57606a" }
+            title: { display: true, text: "Executions processed", color: "#57606a" }
           }
         }
       }
@@ -2045,7 +2046,7 @@
     }
   });
   initCharts("data-chartjs-throttle", buildThrottleSeverityChart);
-  initCharts("data-chartjs-activity", buildSlicesProcessedChart);
+  initCharts("data-chartjs-activity", buildExecutionsProcessedChart);
   initCharts("data-chartjs-job", buildJobDetailChart);
   initJobDetailTabs();
   initDashboardJobFilter();

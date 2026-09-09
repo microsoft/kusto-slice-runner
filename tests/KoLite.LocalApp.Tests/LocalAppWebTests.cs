@@ -2747,8 +2747,9 @@ namespace KoLite.LocalApp.Tests
             Assert.Contains("<th>Started (UTC)</th>", page);
             Assert.Contains("<th>ETA (UTC)</th>", page);
             Assert.Contains("2026-01-01T00:20:00Z &ndash; 2026-01-01T00:25:00Z", page);
-            // Processed totals: succeeded = 2 completed, failed = 1 Failed + 1 DeadLettered.
-            Assert.Contains("Slices processed", page);
+            // Processed execution totals: these unchunked slices each contribute one execution.
+            Assert.Contains("Executions processed", page);
+            Assert.Contains("Each execution unit contributes its latest succeeded or failed/dead-lettered outcome once.", page);
             Assert.Contains("Last day", page);
             Assert.Contains("Last 7 days", page);
             Assert.Contains("Last 30 days", page);
@@ -2756,8 +2757,9 @@ namespace KoLite.LocalApp.Tests
             Assert.Contains("2 succeeded", page);
             Assert.Contains("2 failed", page);
             // Throughput chart hook + payload are present once there is data.
-            Assert.Contains("Processed over time", page);
-            Assert.Contains("data-chartjs-activity=\"slices-processed-chart\"", page);
+            Assert.Contains("Executions processed over time", page);
+            Assert.Contains("aria-label=\"Executions processed over time\"", page);
+            Assert.Contains("data-chartjs-activity=\"executions-processed-chart\"", page);
         }
 
         [Fact]

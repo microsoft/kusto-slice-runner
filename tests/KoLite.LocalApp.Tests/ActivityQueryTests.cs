@@ -97,7 +97,7 @@ namespace KoLite.LocalApp.Tests
         [Fact]
         public void Chart_bucket_labels_are_iso_utc()
         {
-            var point = new SlicesProcessedPoint(
+            var point = new ExecutionsProcessedPoint(
                 new DateTimeOffset(2026, 8, 19, 22, 0, 0, TimeSpan.FromHours(-7)),
                 SucceededCount: 1,
                 FailedCount: 0);
@@ -334,37 +334,152 @@ namespace KoLite.LocalApp.Tests
         }
 
         [Fact]
-        public void Sixteen_successful_chunks_count_as_one_processed_logical_slice()
+        public void Sixteen_successful_chunks_count_as_sixteen_processed_executions()
         {
             var job = catalog.Create(Schedule("activity.chunks.processed", chunks: 16, maxParallelism: 16));
             var start = At(0);
             var end = At(5);
-            state.Append("chunked-logical-completed", job.JobId, start, end, DurableSliceStatus.Completed, expectedVersion: 0);
-            for (var chunkId = 0; chunkId < 16; chunkId++)
+            var slice = new SliceRange(job.JobId, start, end);
+            var children = chunkState.EnsureWindow(slice, 16, "test");
+            foreach (var child in children)
             {
-                var completedAt = Now.AddMinutes(-20 + chunkId);
+                CompleteChunk(child, $"processed-{child.ChunkId}");
+                var completedAt = Now.AddMinutes(-20 + child.ChunkId);
                 readModels.RecordAttempt(
-                    $"processed-{chunkId}",
+                    $"processed-attempt-{child.ChunkId}",
                     job.JobId,
                     start,
                     end,
                     1,
                     "Succeeded",
-                    $"worker-{chunkId}",
+                    $"worker-{child.ChunkId}",
                     completedAt.AddMinutes(-1),
                     completedAt,
-                    chunkId: chunkId,
+                    chunkId: child.ChunkId,
                     totalChunks: 16);
             }
 
             var data = new ActivityQuery(factory, new ManualClock(Now), readModels, diagnostics)
                 .GetActivity(TimeSpan.FromDays(1));
 
+            Assert.Equal(16, data.AllTime.Succeeded);
+            Assert.Equal(16, data.LastDay.Succeeded);
+            Assert.Equal(16, data.Last7Days.Succeeded);
+            Assert.Equal(16, data.Last30Days.Succeeded);
+            Assert.Equal(16, data.Chart.Points.Sum(point => point.SucceededCount));
+        }
+
+        [Fact]
+        public void Latest_terminal_outcome_counts_each_execution_once_and_uses_latest_bucket()
+        {
+            var job = catalog.Create(Schedule("activity.chunks.latest", chunks: 2, maxParallelism: 2));
+            var slice = new SliceRange(job.JobId, At(0), At(5));
+            var children = chunkState.EnsureWindow(slice, 2, "test");
+            CompleteChunk(children[0], "latest-success");
+            MakeTerminal(children[1], DurableSliceStatus.DeadLettered, "latest-failure");
+            Assert.True(chunkState.RequeueFailed(
+                "latest-failure-requeue",
+                children[1].Execution,
+                "test",
+                "repair in progress",
+                Now.AddMinutes(2)));
+
+            var earlierFailure = Now.AddMinutes(-30);
+            var repairedSuccess = Now.AddMinutes(-5);
+            readModels.RecordAttempt(
+                "latest-0-dead",
+                job.JobId,
+                slice.StartUtc,
+                slice.EndUtc,
+                1,
+                "DeadLettered",
+                "worker-0",
+                earlierFailure.AddMinutes(-1),
+                earlierFailure,
+                chunkId: 0,
+                totalChunks: 2);
+            readModels.RecordAttempt(
+                "latest-0-success",
+                job.JobId,
+                slice.StartUtc,
+                slice.EndUtc,
+                2,
+                "Succeeded",
+                "worker-0",
+                repairedSuccess.AddMinutes(-1),
+                repairedSuccess,
+                chunkId: 0,
+                totalChunks: 2);
+
+            var retryableFailure = Now.AddMinutes(-20);
+            var terminalFailure = Now.AddMinutes(-10);
+            readModels.RecordAttempt(
+                "latest-1-retry",
+                job.JobId,
+                slice.StartUtc,
+                slice.EndUtc,
+                1,
+                "FailedRetryable",
+                "worker-1",
+                retryableFailure.AddMinutes(-1),
+                retryableFailure,
+                chunkId: 1,
+                totalChunks: 2);
+            readModels.RecordAttempt(
+                "latest-1-dead",
+                job.JobId,
+                slice.StartUtc,
+                slice.EndUtc,
+                2,
+                "DeadLettered",
+                "worker-1",
+                terminalFailure.AddMinutes(-1),
+                terminalFailure,
+                chunkId: 1,
+                totalChunks: 2);
+
+            var data = new ActivityQuery(factory, new ManualClock(Now), readModels, diagnostics)
+                .GetActivity(TimeSpan.FromHours(1));
+
             Assert.Equal(1, data.AllTime.Succeeded);
+            Assert.Equal(1, data.AllTime.Failed);
+            Assert.Equal(2, data.AllTime.Total);
             Assert.Equal(1, data.LastDay.Succeeded);
-            Assert.Equal(1, data.Last7Days.Succeeded);
-            Assert.Equal(1, data.Last30Days.Succeeded);
-            Assert.Equal(1, data.Chart.Points.Sum(point => point.SucceededCount));
+            Assert.Equal(1, data.LastDay.Failed);
+            Assert.Equal(2, data.Chart.Points.Sum(point => point.TotalCount));
+
+            var successBucket = Assert.Single(data.Chart.Points, point => point.SucceededCount == 1);
+            Assert.True(repairedSuccess >= successBucket.BucketStartUtc);
+            Assert.True(repairedSuccess < successBucket.BucketStartUtc + data.Chart.BucketSize);
+        }
+
+        [Fact]
+        public void All_time_retains_the_prior_terminal_outcome_while_an_unchunked_retry_is_running()
+        {
+            var job = catalog.Create(Schedule("activity.unchunked.retry"));
+            var slice = new SliceRange(job.JobId, At(0), At(5));
+            state.Append(
+                "unchunked-failed",
+                job.JobId,
+                slice.StartUtc,
+                slice.EndUtc,
+                DurableSliceStatus.Failed,
+                expectedVersion: 0,
+                reason: "retryable failure");
+            Assert.NotNull(state.AcquireLease(
+                "unchunked-retry-running",
+                job.JobId,
+                slice.StartUtc,
+                slice.EndUtc,
+                "retry-worker",
+                TimeSpan.FromMinutes(30),
+                Now));
+
+            var data = new ActivityQuery(factory, new ManualClock(Now), readModels, diagnostics)
+                .GetActivity(TimeSpan.FromDays(1));
+
+            Assert.Equal(0, data.AllTime.Succeeded);
+            Assert.Equal(1, data.AllTime.Failed);
         }
 
         [Fact]
