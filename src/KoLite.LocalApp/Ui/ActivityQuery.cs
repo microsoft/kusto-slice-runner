@@ -83,6 +83,60 @@ namespace KoLite.LocalApp.Ui
     //    over-time chart, grouped into one latest terminal outcome per execution unit.
     public sealed class ActivityQuery
     {
+        internal const string ProcessedActivityCommandText = """
+            WITH ranked_executions AS MATERIALIZED (
+              SELECT job_id,
+                     slice_start_utc,
+                     slice_end_utc,
+                     COALESCE(chunk_id, -1) AS execution_id,
+                     status,
+                     completed_at_utc,
+                     ROW_NUMBER() OVER (
+                       PARTITION BY job_id,
+                                    slice_start_utc,
+                                    slice_end_utc,
+                                    COALESCE(chunk_id, -1)
+                       ORDER BY completed_at_utc DESC,
+                                attempt DESC,
+                                attempt_id DESC
+                     ) AS outcome_rank
+              FROM slice_attempts
+              WHERE completed_at_utc IS NOT NULL
+                AND completed_at_utc >= $historySince
+                AND completed_at_utc < $asOf
+                AND status IN ('Succeeded','Failed','DeadLettered')
+            ),
+            latest_executions AS MATERIALIZED (
+              SELECT status, completed_at_utc
+              FROM ranked_executions
+              WHERE outcome_rank = 1
+            )
+            SELECT
+              0 AS row_kind,
+              NULL AS bucket_epoch,
+              SUM(CASE WHEN status='Succeeded' AND completed_at_utc >= $d1 THEN 1 ELSE 0 END) AS succeeded_count,
+              SUM(CASE WHEN status IN ('Failed','DeadLettered') AND completed_at_utc >= $d1 THEN 1 ELSE 0 END) AS failed_count,
+              SUM(CASE WHEN status='Succeeded' AND completed_at_utc >= $d7 THEN 1 ELSE 0 END) AS last_7_days_succeeded,
+              SUM(CASE WHEN status IN ('Failed','DeadLettered') AND completed_at_utc >= $d7 THEN 1 ELSE 0 END) AS last_7_days_failed,
+              SUM(CASE WHEN status='Succeeded' AND completed_at_utc >= $d30 THEN 1 ELSE 0 END) AS last_30_days_succeeded,
+              SUM(CASE WHEN status IN ('Failed','DeadLettered') AND completed_at_utc >= $d30 THEN 1 ELSE 0 END) AS last_30_days_failed
+            FROM latest_executions
+            UNION ALL
+            SELECT
+              1 AS row_kind,
+              (CAST(strftime('%s', completed_at_utc) AS INTEGER) / $bucket) * $bucket AS bucket_epoch,
+              SUM(CASE WHEN status='Succeeded' THEN 1 ELSE 0 END) AS succeeded_count,
+              SUM(CASE WHEN status IN ('Failed','DeadLettered') THEN 1 ELSE 0 END) AS failed_count,
+              NULL AS last_7_days_succeeded,
+              NULL AS last_7_days_failed,
+              NULL AS last_30_days_succeeded,
+              NULL AS last_30_days_failed
+            FROM latest_executions
+            WHERE completed_at_utc >= $chartSince
+            GROUP BY bucket_epoch
+            ORDER BY row_kind, bucket_epoch;
+            """;
+
         // Cap on the running-now detail list; the headline count is exact regardless.
         private const int RunningSlicesTake = 100;
 
@@ -90,6 +144,12 @@ namespace KoLite.LocalApp.Ui
         // whole-window durations, sampled over this trailing window and capped per job.
         private static readonly TimeSpan DurationHistoryLookback = TimeSpan.FromDays(30);
         private const int DurationSampleCap = 50;
+
+        private sealed record RecentProcessedActivity(
+            ProcessedTotals LastDay,
+            ProcessedTotals Last7Days,
+            ProcessedTotals Last30Days,
+            ExecutionsProcessedChart Chart);
 
         private readonly IKoLiteSqliteConnectionFactory connectionFactory;
         private readonly IClock clock;
@@ -129,10 +189,17 @@ namespace KoLite.LocalApp.Ui
                 executionCounts.Queued,
                 runningViews);
 
-            var (lastDay, last7Days, last30Days) = ReadWindowedTotals(now);
-            var chart = BuildChart(now, chartRange);
+            var recent = ReadProcessedActivity(now, chartRange);
 
-            return new ActivityPageData(runningNow, allTime, lastDay, last7Days, last30Days, chart, chartRange, now);
+            return new ActivityPageData(
+                runningNow,
+                allTime,
+                recent.LastDay,
+                recent.Last7Days,
+                recent.Last30Days,
+                recent.Chart,
+                chartRange,
+                now);
         }
 
         // Resolves each logical running slice's active executions, progress, earliest active start,
@@ -266,148 +333,47 @@ namespace KoLite.LocalApp.Ui
             return new ProcessedTotals(Count(0), Count(1));
         }
 
-        // Latest terminal execution outcomes for the trailing 1d/7d/30d windows in a single pass.
-        // Candidate execution keys bound the scan to units with activity in the widest (30d) window,
-        // while ranking against their retained history ensures retries and repairs count only once.
-        private (ProcessedTotals LastDay, ProcessedTotals Last7Days, ProcessedTotals Last30Days) ReadWindowedTotals(DateTimeOffset now)
+        // Reads recent totals and the selected chart in one bounded ranking pass. Once an execution
+        // has a terminal outcome inside the reporting window, older terminal outcomes cannot be its
+        // latest outcome, so there is no need to join every candidate back to its full history.
+        private RecentProcessedActivity ReadProcessedActivity(DateTimeOffset now, TimeSpan chartRange)
         {
-            using var c = connectionFactory.OpenConnection();
-            using var cmd = SqliteStorage.Command(c, null, """
-                WITH candidates AS (
-                  SELECT DISTINCT job_id,
-                                  slice_start_utc,
-                                  slice_end_utc,
-                                  COALESCE(chunk_id, -1) AS execution_id
-                  FROM slice_attempts
-                  WHERE completed_at_utc IS NOT NULL
-                    AND completed_at_utc >= $d30
-                    AND completed_at_utc < $until
-                    AND status IN ('Succeeded','Failed','DeadLettered')
-                ),
-                ranked_executions AS (
-                  SELECT sa.job_id,
-                         sa.slice_start_utc,
-                         sa.slice_end_utc,
-                         COALESCE(sa.chunk_id, -1) AS execution_id,
-                         sa.status,
-                         sa.completed_at_utc,
-                         ROW_NUMBER() OVER (
-                           PARTITION BY sa.job_id,
-                                        sa.slice_start_utc,
-                                        sa.slice_end_utc,
-                                        COALESCE(sa.chunk_id, -1)
-                           ORDER BY sa.completed_at_utc DESC,
-                                    sa.attempt DESC,
-                                    sa.attempt_id DESC
-                         ) AS outcome_rank
-                  FROM slice_attempts sa
-                  JOIN candidates candidate
-                    ON candidate.job_id = sa.job_id
-                   AND candidate.slice_start_utc = sa.slice_start_utc
-                   AND candidate.slice_end_utc = sa.slice_end_utc
-                   AND candidate.execution_id = COALESCE(sa.chunk_id, -1)
-                  WHERE sa.completed_at_utc IS NOT NULL
-                    AND sa.completed_at_utc < $until
-                    AND sa.status IN ('Succeeded','Failed','DeadLettered')
-                )
-                SELECT
-                  SUM(CASE WHEN status='Succeeded' AND completed_at_utc >= $d1 THEN 1 ELSE 0 END),
-                  SUM(CASE WHEN status IN ('Failed','DeadLettered') AND completed_at_utc >= $d1 THEN 1 ELSE 0 END),
-                  SUM(CASE WHEN status='Succeeded' AND completed_at_utc >= $d7 THEN 1 ELSE 0 END),
-                  SUM(CASE WHEN status IN ('Failed','DeadLettered') AND completed_at_utc >= $d7 THEN 1 ELSE 0 END),
-                  SUM(CASE WHEN status='Succeeded' THEN 1 ELSE 0 END),
-                  SUM(CASE WHEN status IN ('Failed','DeadLettered') THEN 1 ELSE 0 END)
-                FROM ranked_executions
-                WHERE outcome_rank = 1
-                  AND completed_at_utc >= $d30;
-                """);
-            cmd.Add("$d1", SqliteStorage.Utc(now - TimeSpan.FromDays(1)));
-            cmd.Add("$d7", SqliteStorage.Utc(now - TimeSpan.FromDays(7)));
-            cmd.Add("$d30", SqliteStorage.Utc(now - TimeSpan.FromDays(30)));
-            cmd.Add("$until", SqliteStorage.Utc(now));
-            using var r = cmd.ExecuteReader();
-            r.Read();
-            int Count(int ordinal) => r.IsDBNull(ordinal) ? 0 : r.GetInt32(ordinal);
-            return (
-                new ProcessedTotals(Count(0), Count(1)),
-                new ProcessedTotals(Count(2), Count(3)),
-                new ProcessedTotals(Count(4), Count(5)));
-        }
-
-        // Bucketed throughput over [now - range, now). Aggregation is done in SQL (GROUP BY epoch
-        // bucket) and slotted onto the pre-aligned bucket window so empty buckets render as gaps.
-        private ExecutionsProcessedChart BuildChart(DateTimeOffset now, TimeSpan range)
-        {
-            var window = timeSeries.CreateWindow(now, range);
+            var window = timeSeries.CreateWindow(now, chartRange);
+            var last30DaysStart = now - TimeSpan.FromDays(30);
+            var historyStart = window.Since < last30DaysStart ? window.Since : last30DaysStart;
             var succeeded = new int[window.Count];
             var failed = new int[window.Count];
+            var lastDay = ProcessedTotals.Empty;
+            var last7Days = ProcessedTotals.Empty;
+            var last30Days = ProcessedTotals.Empty;
 
-            const string commandText = """
-                WITH candidates AS (
-                  SELECT DISTINCT job_id,
-                                  slice_start_utc,
-                                  slice_end_utc,
-                                  COALESCE(chunk_id, -1) AS execution_id
-                  FROM slice_attempts
-                  WHERE completed_at_utc IS NOT NULL
-                    AND completed_at_utc >= $since AND completed_at_utc < $until
-                    AND status IN ('Succeeded','Failed','DeadLettered')
-                ),
-                ranked_executions AS (
-                  SELECT sa.job_id,
-                         sa.slice_start_utc,
-                         sa.slice_end_utc,
-                         COALESCE(sa.chunk_id, -1) AS execution_id,
-                         sa.status,
-                         sa.completed_at_utc,
-                         ROW_NUMBER() OVER (
-                           PARTITION BY sa.job_id,
-                                        sa.slice_start_utc,
-                                        sa.slice_end_utc,
-                                        COALESCE(sa.chunk_id, -1)
-                           ORDER BY sa.completed_at_utc DESC,
-                                    sa.attempt DESC,
-                                    sa.attempt_id DESC
-                         ) AS outcome_rank
-                  FROM slice_attempts sa
-                  JOIN candidates candidate
-                    ON candidate.job_id = sa.job_id
-                   AND candidate.slice_start_utc = sa.slice_start_utc
-                   AND candidate.slice_end_utc = sa.slice_end_utc
-                   AND candidate.execution_id = COALESCE(sa.chunk_id, -1)
-                  WHERE sa.completed_at_utc IS NOT NULL
-                    AND sa.completed_at_utc < $until
-                    AND sa.status IN ('Succeeded','Failed','DeadLettered')
-                ),
-                latest_executions AS (
-                  SELECT status, completed_at_utc
-                  FROM ranked_executions
-                  WHERE outcome_rank = 1
-                    AND completed_at_utc >= $since
-                )
-                SELECT (CAST(strftime('%s', completed_at_utc) AS INTEGER) / $bucket) * $bucket AS bucket_epoch,
-                       SUM(CASE WHEN status='Succeeded' THEN 1 ELSE 0 END) AS succeeded_count,
-                       SUM(CASE WHEN status IN ('Failed','DeadLettered') THEN 1 ELSE 0 END) AS failed_count
-                FROM latest_executions
-                GROUP BY bucket_epoch;
-                """;
-
-            var rows = timeSeries.ReadWindow(
-                commandText,
-                window,
-                bind => bind.Add("$bucket", window.BucketSeconds),
-                reader => (
-                    Epoch: reader.GetInt64(0),
-                    Succeeded: reader.IsDBNull(1) ? 0 : reader.GetInt32(1),
-                    Failed: reader.IsDBNull(2) ? 0 : reader.GetInt32(2)));
-
-            foreach (var row in rows)
+            using var c = connectionFactory.OpenConnection();
+            using var cmd = SqliteStorage.Command(c, null, ProcessedActivityCommandText);
+            cmd.Add("$historySince", SqliteStorage.Utc(historyStart));
+            cmd.Add("$asOf", SqliteStorage.Utc(now));
+            cmd.Add("$d1", SqliteStorage.Utc(now - TimeSpan.FromDays(1)));
+            cmd.Add("$d7", SqliteStorage.Utc(now - TimeSpan.FromDays(7)));
+            cmd.Add("$d30", SqliteStorage.Utc(last30DaysStart));
+            cmd.Add("$chartSince", SqliteStorage.Utc(window.Since));
+            cmd.Add("$bucket", window.BucketSeconds);
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read())
             {
-                var index = window.IndexOf(DateTimeOffset.FromUnixTimeSeconds(row.Epoch));
+                int Count(int ordinal) => reader.IsDBNull(ordinal) ? 0 : reader.GetInt32(ordinal);
+                if (reader.GetInt32(0) == 0)
+                {
+                    lastDay = new ProcessedTotals(Count(2), Count(3));
+                    last7Days = new ProcessedTotals(Count(4), Count(5));
+                    last30Days = new ProcessedTotals(Count(6), Count(7));
+                    continue;
+                }
+
+                var bucketStart = DateTimeOffset.FromUnixTimeSeconds(reader.GetInt64(1));
+                var index = window.IndexOf(bucketStart);
                 if (index >= 0)
                 {
-                    succeeded[index] += row.Succeeded;
-                    failed[index] += row.Failed;
+                    succeeded[index] += Count(2);
+                    failed[index] += Count(3);
                 }
             }
 
@@ -417,7 +383,11 @@ namespace KoLite.LocalApp.Ui
                 points.Add(new ExecutionsProcessedPoint(window.Buckets[i], succeeded[i], failed[i]));
             }
 
-            return new ExecutionsProcessedChart(points, window.Since, window.Until, window.BucketSize);
+            return new RecentProcessedActivity(
+                lastDay,
+                last7Days,
+                last30Days,
+                new ExecutionsProcessedChart(points, window.Since, window.Until, window.BucketSize));
         }
     }
 }

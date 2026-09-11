@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using KoLite.Local.Core.Time;
 using KoLite.Local.Core.Scheduling;
 using KoLite.Local.Sqlite.Catalog;
@@ -121,6 +122,36 @@ namespace KoLite.LocalApp.Tests
             Assert.Equal(0, data.Last7Days.Total);
             Assert.Equal(0, data.Last30Days.Total);
             Assert.False(data.Chart.HasData);
+        }
+
+        [Fact]
+        public void Processed_activity_query_scans_attempts_once_without_a_candidate_loop()
+        {
+            using var connection = factory.OpenConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = "EXPLAIN QUERY PLAN " + ActivityQuery.ProcessedActivityCommandText;
+            command.Parameters.AddWithValue("$historySince", "2026-01-01T00:00:00.0000000Z");
+            command.Parameters.AddWithValue("$asOf", "2026-02-01T00:00:00.0000000Z");
+            command.Parameters.AddWithValue("$d1", "2026-01-31T00:00:00.0000000Z");
+            command.Parameters.AddWithValue("$d7", "2026-01-25T00:00:00.0000000Z");
+            command.Parameters.AddWithValue("$d30", "2026-01-02T00:00:00.0000000Z");
+            command.Parameters.AddWithValue("$chartSince", "2026-01-31T00:00:00.0000000Z");
+            command.Parameters.AddWithValue("$bucket", 3600);
+
+            using var reader = command.ExecuteReader();
+            var details = new List<string>();
+            while (reader.Read())
+            {
+                details.Add(reader.GetString(3));
+            }
+
+            var plan = string.Join(" | ", details);
+            Assert.Equal(
+                1,
+                details.Count(detail => detail.Contains("slice_attempts", StringComparison.OrdinalIgnoreCase)));
+            Assert.DoesNotContain("candidate", plan, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("MATERIALIZE ranked_executions", plan, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("MATERIALIZE latest_executions", plan, StringComparison.OrdinalIgnoreCase);
         }
 
         [Fact]
@@ -454,6 +485,79 @@ namespace KoLite.LocalApp.Tests
         }
 
         [Fact]
+        public void Recent_metrics_ignore_older_and_future_terminal_outcomes()
+        {
+            var jobId = catalog.Create(Schedule("activity.as-of")).JobId;
+            var sliceStart = At(0);
+            var sliceEnd = At(5);
+            state.Append("activity-as-of-complete", jobId, sliceStart, sliceEnd, DurableSliceStatus.Completed, expectedVersion: 0);
+
+            readModels.RecordAttempt(
+                "activity-as-of-old",
+                jobId,
+                sliceStart,
+                sliceEnd,
+                1,
+                "DeadLettered",
+                "old-worker",
+                Now.AddDays(-40).AddMinutes(-1),
+                Now.AddDays(-40));
+            readModels.RecordAttempt(
+                "activity-as-of-current",
+                jobId,
+                sliceStart,
+                sliceEnd,
+                2,
+                "Succeeded",
+                "current-worker",
+                Now.AddMinutes(-6),
+                Now.AddMinutes(-5));
+            readModels.RecordAttempt(
+                "activity-as-of-future",
+                jobId,
+                sliceStart,
+                sliceEnd,
+                3,
+                "DeadLettered",
+                "future-worker",
+                Now.AddMinutes(4),
+                Now.AddMinutes(5));
+
+            var data = new ActivityQuery(factory, new ManualClock(Now), readModels, diagnostics)
+                .GetActivity(TimeSpan.FromHours(1));
+
+            Assert.Equal(1, data.AllTime.Succeeded);
+            Assert.Equal(1, data.LastDay.Succeeded);
+            Assert.Equal(0, data.LastDay.Failed);
+            Assert.Equal(1, data.Last30Days.Succeeded);
+            Assert.Equal(0, data.Last30Days.Failed);
+            Assert.Equal(1, data.Chart.Points.Sum(point => point.SucceededCount));
+            Assert.Equal(0, data.Chart.Points.Sum(point => point.FailedCount));
+        }
+
+        [Fact]
+        public void Production_shaped_attempt_history_is_not_quadratic()
+        {
+            const int attemptCount = 24_000;
+            var jobId = catalog.Create(Schedule("activity.production-shape")).JobId;
+            SeedTerminalAttemptHistory(jobId, attemptCount);
+
+            var stopwatch = Stopwatch.StartNew();
+            var data = new ActivityQuery(factory, new ManualClock(Now), readModels, diagnostics)
+                .GetActivity(TimeSpan.FromDays(1));
+            stopwatch.Stop();
+
+            Assert.Equal(attemptCount, data.AllTime.Succeeded);
+            Assert.Equal(1_440, data.LastDay.Succeeded);
+            Assert.Equal(10_080, data.Last7Days.Succeeded);
+            Assert.Equal(attemptCount, data.Last30Days.Succeeded);
+            Assert.Equal(1_440, data.Chart.Points.Sum(point => point.SucceededCount));
+            Assert.True(
+                stopwatch.Elapsed < TimeSpan.FromSeconds(5),
+                $"Activity query over {attemptCount:N0} terminal attempts took {stopwatch.Elapsed.TotalSeconds:0.0}s (candidate self-join regression).");
+        }
+
+        [Fact]
         public void All_time_retains_the_prior_terminal_outcome_while_an_unchunked_retry_is_running()
         {
             var job = catalog.Create(Schedule("activity.unchunked.retry"));
@@ -545,6 +649,74 @@ namespace KoLite.LocalApp.Tests
             Assert.Empty(data.RunningNow.RunningSlices);
         }
 
+        private void SeedTerminalAttemptHistory(string jobId, int count)
+        {
+            using var connection = factory.OpenConnection();
+            using var transaction = connection.BeginTransaction();
+            using var stateCommand = connection.CreateCommand();
+            stateCommand.Transaction = transaction;
+            stateCommand.CommandText = """
+                INSERT INTO current_slice_state (
+                    job_id,
+                    slice_start_utc,
+                    slice_end_utc,
+                    state,
+                    attempt,
+                    updated_at_utc)
+                VALUES ($job, $start, $end, 'Completed', 1, $updated);
+                """;
+            var stateJob = stateCommand.Parameters.Add("$job", Microsoft.Data.Sqlite.SqliteType.Text);
+            var stateStart = stateCommand.Parameters.Add("$start", Microsoft.Data.Sqlite.SqliteType.Text);
+            var stateEnd = stateCommand.Parameters.Add("$end", Microsoft.Data.Sqlite.SqliteType.Text);
+            var stateUpdated = stateCommand.Parameters.Add("$updated", Microsoft.Data.Sqlite.SqliteType.Text);
+            stateJob.Value = jobId;
+
+            using var attemptCommand = connection.CreateCommand();
+            attemptCommand.Transaction = transaction;
+            attemptCommand.CommandText = """
+                INSERT INTO slice_attempts (
+                    attempt_id,
+                    job_id,
+                    slice_start_utc,
+                    slice_end_utc,
+                    attempt,
+                    status,
+                    worker_id,
+                    started_at_utc,
+                    completed_at_utc,
+                    metrics_json)
+                VALUES ($id, $job, $start, $end, 1, 'Succeeded', 'bulk-worker', $started, $completed, '{}');
+                """;
+            var attemptId = attemptCommand.Parameters.Add("$id", Microsoft.Data.Sqlite.SqliteType.Text);
+            var attemptJob = attemptCommand.Parameters.Add("$job", Microsoft.Data.Sqlite.SqliteType.Text);
+            var attemptStart = attemptCommand.Parameters.Add("$start", Microsoft.Data.Sqlite.SqliteType.Text);
+            var attemptEnd = attemptCommand.Parameters.Add("$end", Microsoft.Data.Sqlite.SqliteType.Text);
+            var attemptStarted = attemptCommand.Parameters.Add("$started", Microsoft.Data.Sqlite.SqliteType.Text);
+            var attemptCompleted = attemptCommand.Parameters.Add("$completed", Microsoft.Data.Sqlite.SqliteType.Text);
+            attemptJob.Value = jobId;
+
+            var firstSliceStart = Now.AddDays(-100);
+            for (var i = 0; i < count; i++)
+            {
+                var sliceStart = firstSliceStart.AddMinutes(i * 5L);
+                var sliceEnd = sliceStart.AddMinutes(5);
+                var completedAt = Now.AddMinutes(-(i + 1L));
+                stateStart.Value = SqlUtc(sliceStart);
+                stateEnd.Value = SqlUtc(sliceEnd);
+                stateUpdated.Value = SqlUtc(completedAt);
+                stateCommand.ExecuteNonQuery();
+
+                attemptId.Value = $"bulk-attempt-{i}";
+                attemptStart.Value = SqlUtc(sliceStart);
+                attemptEnd.Value = SqlUtc(sliceEnd);
+                attemptStarted.Value = SqlUtc(completedAt.AddMinutes(-1));
+                attemptCompleted.Value = SqlUtc(completedAt);
+                attemptCommand.ExecuteNonQuery();
+            }
+
+            transaction.Commit();
+        }
+
         private void SeedSlice(string jobId, DateTimeOffset sliceStart, DurableSliceStatus status)
         {
             var sliceEnd = sliceStart.AddMinutes(5);
@@ -593,6 +765,9 @@ namespace KoLite.LocalApp.Tests
         }
 
         private static DateTimeOffset At(int minutes) => new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero).AddMinutes(minutes);
+
+        private static string SqlUtc(DateTimeOffset value) =>
+            value.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ", System.Globalization.CultureInfo.InvariantCulture);
 
         private static string JobId(string activityId)
         {
