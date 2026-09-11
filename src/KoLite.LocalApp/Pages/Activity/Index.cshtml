@@ -164,7 +164,10 @@
     <div class="card-header">
         <div>
             <h2>Executions processed over time</h2>
-            <p class="muted chart-help">Execution units by latest terminal completion, succeeded vs. failed/dead-lettered.</p>
+            <p class="muted chart-help">
+                Execution units by latest terminal completion, succeeded vs. failed/dead-lettered.
+                The chart shows complete UTC-aligned buckets through <span class="mono">@AppFormatting.Iso(data.Chart.RangeEndUtc)</span>; the current incomplete bucket is omitted.
+            </p>
         </div>
         <div class="range-picker">
             @foreach (var range in Model.RangeLinks)

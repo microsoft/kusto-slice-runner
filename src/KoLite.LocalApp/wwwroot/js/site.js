@@ -108,6 +108,23 @@
     return month + "/" + day;
   }
 
+  function formatUtcInstant(value) {
+    var date = new Date(Number(value));
+    if (Number.isNaN(date.getTime())) return "";
+    return date.toISOString().replace(".000Z", "Z");
+  }
+
+  function formatBucketTitle(raw, bucketMs) {
+    if (!raw) return "";
+    var start = Number(raw.x);
+    var width = Number(bucketMs);
+    if (!Number.isFinite(start) || !Number.isFinite(width) || width <= 0) {
+      return raw.bucket || "";
+    }
+
+    return formatUtcInstant(start) + " to " + formatUtcInstant(start + width);
+  }
+
   function formatDurationTick(value) {
     var ms = Number(value);
     if (!Number.isFinite(ms)) return "";
@@ -213,7 +230,7 @@
             callbacks: {
               title: function (items) {
                 var raw = items.length ? items[0].raw : null;
-                return raw ? raw.bucket : "";
+                return formatBucketTitle(raw, payload.bucketMs);
               },
               label: function (context) {
                 var raw = context.raw || {};
@@ -333,7 +350,7 @@
             callbacks: {
               title: function (items) {
                 var raw = items.length ? items[0].raw : null;
-                return raw ? raw.bucket : "";
+                return formatBucketTitle(raw, payload.bucketMs);
               },
               label: function (context) {
                 var raw = context.raw || {};
@@ -438,7 +455,7 @@
             callbacks: {
               title: function (items) {
                 var raw = items.length ? items[0].raw : null;
-                return raw ? raw.bucket : "";
+                return formatBucketTitle(raw, payload.bucketMs);
               },
               label: function (context) {
                 var raw = context.raw || {};
@@ -541,7 +558,7 @@
             callbacks: {
               title: function (items) {
                 var raw = items.length ? items[0].raw : null;
-                return raw ? raw.bucket : "";
+                return formatBucketTitle(raw, payload.bucketMs);
               },
               label: function (context) {
                 var raw = context.raw || {};

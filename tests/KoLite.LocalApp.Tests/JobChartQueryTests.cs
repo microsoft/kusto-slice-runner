@@ -42,16 +42,168 @@ namespace KoLite.LocalApp.Tests
             var query = new JobChartQuery(factory, new ManualClock(At(120)));
 
             var charts = query.GetDashboardCharts(TimeSpan.FromDays(1));
-            var attemptPoint = charts.FirstAttemptSuccess.Series.Single(s => s.JobId == JobId("job.chart")).Points.Single(p => p.Denominator == 2);
+            var attemptPoint = charts.AttemptSuccess.Series.Single(s => s.JobId == JobId("job.chart")).Points.Single(p => p.Denominator == 2);
             var finalPoint = charts.SuccessAfterRetries.Series.Single(s => s.JobId == JobId("job.chart")).Points.Single(p => p.Denominator == 1);
 
             // The series correlates by GUID but is labelled with the friendly activityId.
-            Assert.Equal("job.chart", charts.FirstAttemptSuccess.Series.Single(s => s.JobId == JobId("job.chart")).Name);
+            Assert.Equal("job.chart", charts.AttemptSuccess.Series.Single(s => s.JobId == JobId("job.chart")).Name);
 
             Assert.Equal(1, attemptPoint.Numerator);
             Assert.Equal(50.0, attemptPoint.Percent);
             Assert.Equal(1, finalPoint.Numerator);
             Assert.Equal(100.0, finalPoint.Percent);
+        }
+
+        [Fact]
+        public void Chunked_in_progress_slice_counts_completed_attempts_without_a_false_failure()
+        {
+            catalog.Create(Schedule("job.chunk.running", chunks: 16, maxParallelism: 16));
+            var jobId = JobId("job.chunk.running");
+            var sliceStart = At(60);
+            var sliceEnd = At(90);
+            var lease = state.AcquireLease("chunk-running", jobId, sliceStart, sliceEnd, "worker", TimeSpan.FromHours(1), At(90));
+            Assert.NotNull(lease);
+
+            for (var chunkId = 0; chunkId < 7; chunkId++)
+            {
+                readModels.RecordAttempt(
+                    $"chunk-running-{chunkId}",
+                    jobId,
+                    sliceStart,
+                    sliceEnd,
+                    1,
+                    "Succeeded",
+                    $"worker-{chunkId}",
+                    At(99 + chunkId),
+                    At(100 + chunkId),
+                    chunkId: chunkId,
+                    totalChunks: 16);
+            }
+
+            for (var chunkId = 7; chunkId < 16; chunkId++)
+            {
+                readModels.RecordAttempt(
+                    $"chunk-started-{chunkId}",
+                    jobId,
+                    sliceStart,
+                    sliceEnd,
+                    1,
+                    "Started",
+                    $"worker-{chunkId}",
+                    At(100),
+                    completedAtUtc: null,
+                    chunkId: chunkId,
+                    totalChunks: 16);
+            }
+
+            var charts = new JobChartQuery(factory, new ManualClock(At(126)))
+                .GetDashboardCharts(TimeSpan.FromDays(1));
+            var attemptPoint = charts.AttemptSuccess.Series.Single().Points.Single(point => point.Denominator > 0);
+
+            Assert.Equal(7, attemptPoint.Numerator);
+            Assert.Equal(7, attemptPoint.Denominator);
+            Assert.Equal(100, attemptPoint.Percent);
+            Assert.False(charts.SuccessAfterRetries.HasData);
+        }
+
+        [Fact]
+        public void Chunked_retry_counts_each_execution_attempt_and_one_eventual_slice()
+        {
+            catalog.Create(Schedule("job.chunk.retry", chunks: 16, maxParallelism: 16));
+            var jobId = JobId("job.chunk.retry");
+            var sliceStart = At(60);
+            var sliceEnd = At(90);
+            var lease = state.AcquireLease("chunk-retry-running", jobId, sliceStart, sliceEnd, "worker", TimeSpan.FromHours(1), At(90));
+            Assert.NotNull(lease);
+            Assert.True(state.CompleteLease("chunk-retry-complete", jobId, sliceStart, sliceEnd, "worker", lease.LeaseToken!, At(119)));
+
+            for (var chunkId = 0; chunkId < 16; chunkId++)
+            {
+                if (chunkId == 7)
+                {
+                    readModels.RecordAttempt(
+                        "chunk-retry-failed",
+                        jobId,
+                        sliceStart,
+                        sliceEnd,
+                        1,
+                        "FailedRetryable",
+                        "worker-7",
+                        At(106),
+                        At(107),
+                        chunkId: chunkId,
+                        totalChunks: 16);
+                    readModels.RecordAttempt(
+                        "chunk-retry-succeeded",
+                        jobId,
+                        sliceStart,
+                        sliceEnd,
+                        2,
+                        "Succeeded",
+                        "worker-7",
+                        At(117),
+                        At(118),
+                        chunkId: chunkId,
+                        totalChunks: 16);
+                    continue;
+                }
+
+                readModels.RecordAttempt(
+                    $"chunk-success-{chunkId}",
+                    jobId,
+                    sliceStart,
+                    sliceEnd,
+                    1,
+                    "Succeeded",
+                    $"worker-{chunkId}",
+                    At(99 + chunkId),
+                    At(100 + chunkId),
+                    chunkId: chunkId,
+                    totalChunks: 16);
+            }
+
+            var charts = new JobChartQuery(factory, new ManualClock(At(126)))
+                .GetDashboardCharts(TimeSpan.FromDays(1));
+            var attemptPoint = charts.AttemptSuccess.Series.Single().Points.Single(point => point.Denominator > 0);
+            var finalPoint = charts.SuccessAfterRetries.Series.Single().Points.Single(point => point.Denominator > 0);
+
+            Assert.Equal("Execution Attempt Success Rate by Function", charts.AttemptSuccess.Title);
+            Assert.Equal(16, attemptPoint.Numerator);
+            Assert.Equal(17, attemptPoint.Denominator);
+            Assert.Equal(94.1, attemptPoint.Percent);
+            Assert.Equal(1, finalPoint.Numerator);
+            Assert.Equal(1, finalPoint.Denominator);
+            Assert.Equal(100, finalPoint.Percent);
+        }
+
+        [Fact]
+        public void Charts_omit_the_current_incomplete_bucket()
+        {
+            catalog.Create(Schedule("job.complete-buckets"));
+            var jobId = JobId("job.complete-buckets");
+
+            var priorLease = state.AcquireLease("prior-running", jobId, At(0), At(5), "worker", TimeSpan.FromMinutes(30), At(110));
+            Assert.NotNull(priorLease);
+            Assert.True(state.CompleteLease("prior-complete", jobId, At(0), At(5), "worker", priorLease.LeaseToken!, At(119)));
+            readModels.RecordAttempt("prior-attempt", jobId, At(0), At(5), 1, "Succeeded", "worker", At(118), At(119));
+
+            var currentLease = state.AcquireLease("current-running", jobId, At(5), At(10), "worker", TimeSpan.FromMinutes(30), At(120));
+            Assert.NotNull(currentLease);
+            Assert.True(state.CompleteLease("current-complete", jobId, At(5), At(10), "worker", currentLease.LeaseToken!, At(125)));
+            readModels.RecordAttempt("current-attempt", jobId, At(5), At(10), 1, "Failed", "worker", At(124), At(125));
+
+            var query = new JobChartQuery(factory, new ManualClock(At(126)));
+            var dashboard = query.GetDashboardCharts(TimeSpan.FromDays(1));
+            var details = query.GetJobDetailsCharts(jobId, TimeSpan.FromDays(1));
+
+            Assert.Equal(At(120), dashboard.AttemptSuccess.RangeEndUtc);
+            Assert.Equal(24, dashboard.AttemptSuccess.Series.Single().Points.Count);
+            Assert.Equal(1, dashboard.AttemptSuccess.Series.Single().Points.Sum(point => point.Denominator));
+            Assert.Equal(1, dashboard.AttemptSuccess.Series.Single().Points.Sum(point => point.Numerator));
+            Assert.Equal(1, dashboard.SuccessAfterRetries.Series.Single().Points.Sum(point => point.Denominator));
+            Assert.Equal(1, details.AttemptResults.Points.Sum(point => point.TotalCount));
+            Assert.Equal(1, details.AttemptResults.Points.Sum(point => point.SuccessCount));
+            Assert.Equal(1, details.SuccessfulDurations.SampleCount);
         }
 
         [Fact]
@@ -77,10 +229,10 @@ namespace KoLite.LocalApp.Tests
 
             var charts = query.GetDashboardCharts(TimeSpan.FromDays(1), [JobId("job.chart.selected")]);
 
-            Assert.Equal([JobId("job.chart.selected")], charts.FirstAttemptSuccess.Series.Select(series => series.JobId).ToArray());
+            Assert.Equal([JobId("job.chart.selected")], charts.AttemptSuccess.Series.Select(series => series.JobId).ToArray());
             Assert.Equal([JobId("job.chart.selected")], charts.SuccessAfterRetries.Series.Select(series => series.JobId).ToArray());
-            Assert.Equal(["job.chart.selected"], charts.FirstAttemptSuccess.Series.Select(series => series.Name).ToArray());
-            Assert.True(charts.FirstAttemptSuccess.HasData);
+            Assert.Equal(["job.chart.selected"], charts.AttemptSuccess.Series.Select(series => series.Name).ToArray());
+            Assert.True(charts.AttemptSuccess.HasData);
         }
 
         [Theory]
@@ -203,7 +355,7 @@ namespace KoLite.LocalApp.Tests
             return new Guid(bytes).ToString("N");
         }
 
-        private static string Schedule(string activityId) => $$"""
+        private static string Schedule(string activityId, int? chunks = null, int maxParallelism = 2) => $$"""
         {
           "id": "{{JobId(activityId)}}",
           "activityId": "{{activityId}}",
@@ -211,8 +363,9 @@ namespace KoLite.LocalApp.Tests
           "outputTable": "ChartOutput",
           "queryWindowSize": "00:05:00",
           "delayFromUtcNow": "00:00:00",
-          "maxParallelism": 2,
+          "maxParallelism": {{maxParallelism}},
           "queryTimeout": "00:01:00",
+          {{(chunks is null ? string.Empty : $"\"chunks\": {chunks},")}}
           "isPaused": false,
           "startFrom": "2026-01-01T00:00:00Z",
           "target": { "clusterUri": "https://kolite-example.invalid", "database": "DemoDb" }

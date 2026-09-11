@@ -7,7 +7,7 @@ const html = `<!doctype html>
 <body>
   <figure data-chartjs-activity="executions-processed-chart">
     <canvas id="executions-processed-chart"></canvas>
-    <script type="application/json" id="executions-processed-chart-data">{"rangeStartUtc":"2026-01-01T00:00:00Z","rangeEndUtc":"2026-01-01T01:00:00Z","points":[{"x":1767225600000,"succeeded":3,"failed":1,"total":4,"bucket":"2026-01-01T00:00:00Z","label":"2026-01-01T00:00:00Z"}]}</script>
+    <script type="application/json" id="executions-processed-chart-data">{"rangeStartUtc":"2026-01-01T00:00:00Z","rangeEndUtc":"2026-01-01T01:00:00Z","bucketMs":3600000,"points":[{"x":1767225600000,"succeeded":3,"failed":1,"total":4,"bucket":"2026-01-01T00:00:00Z","label":"2026-01-01T00:00:00Z"}]}</script>
   </figure>
   <figure data-dependency-graph
           data-dependency-graph-focal="11111111222233334444555566667777"
@@ -69,6 +69,9 @@ assert.equal(charts.length, 1);
 assert.equal(charts[0].canvas.id, "executions-processed-chart");
 assert.equal(charts[0].config.options.scales.y.title.text, "Executions processed");
 const activityTooltip = charts[0].config.options.plugins.tooltip.callbacks;
+assert.equal(
+  activityTooltip.title([{ raw: { x: 1767225600000, bucket: "2026-01-01T00:00:00Z" } }]),
+  "2026-01-01T00:00:00Z to 2026-01-01T01:00:00Z");
 assert.equal(
   activityTooltip.label({ dataset: { label: "Succeeded" }, raw: { y: 1 } }),
   "Succeeded: 1 execution");

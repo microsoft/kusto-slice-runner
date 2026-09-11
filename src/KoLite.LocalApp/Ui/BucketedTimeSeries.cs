@@ -40,7 +40,8 @@ namespace KoLite.LocalApp.Ui
             this.connectionFactory = connectionFactory;
         }
 
-        // Aligns a [now - range, now) span to bucket boundaries and enumerates the buckets.
+        // Returns the requested span as complete UTC-aligned buckets ending at the latest closed
+        // boundary. The current open bucket is intentionally omitted.
         public BucketWindow CreateWindow(DateTimeOffset now, TimeSpan range)
         {
             return CreateWindow(now, range, BucketSizeFor(range));
@@ -50,9 +51,19 @@ namespace KoLite.LocalApp.Ui
         // wants finer-than-default resolution over a multi-hour range).
         public BucketWindow CreateWindow(DateTimeOffset now, TimeSpan range, TimeSpan bucketSize)
         {
+            if (range <= TimeSpan.Zero)
+            {
+                throw new ArgumentOutOfRangeException(nameof(range), "The chart range must be positive.");
+            }
+
             var size = bucketSize > TimeSpan.Zero ? bucketSize : BucketSizeFor(range);
-            var until = AlignUp(now, size);
-            var since = AlignDown(now.Subtract(range), size);
+            if (range.Ticks % size.Ticks != 0)
+            {
+                throw new ArgumentException("The chart range must contain a whole number of buckets.", nameof(bucketSize));
+            }
+
+            var until = AlignDown(now, size);
+            var since = until.Subtract(range);
             return new BucketWindow(since, until, size, EnumerateBuckets(since, until, size));
         }
 
@@ -106,10 +117,5 @@ namespace KoLite.LocalApp.Ui
             return new DateTimeOffset(utc.Ticks - utc.Ticks % bucketSize.Ticks, TimeSpan.Zero);
         }
 
-        private static DateTimeOffset AlignUp(DateTimeOffset value, TimeSpan bucketSize)
-        {
-            var down = AlignDown(value, bucketSize);
-            return down == value.ToUniversalTime() ? down : down.Add(bucketSize);
-        }
     }
 }

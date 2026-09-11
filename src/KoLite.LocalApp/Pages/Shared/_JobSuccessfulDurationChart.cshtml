@@ -35,7 +35,7 @@
 @if (!Model.HasData)
 {
     <p class="empty">
-        No successful executions with duration data in the selected period.
+        No successful executions with duration data occurred in the completed chart buckets for the selected period.
         @if (Model.MissingDurationCount > 0)
         {
             <span>@Model.MissingDurationCount successful execution(s) were missing duration data.</span>

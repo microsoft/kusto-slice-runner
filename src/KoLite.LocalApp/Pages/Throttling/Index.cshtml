@@ -53,7 +53,7 @@
     <div class="alert @(Model.StatusIsError ? "danger" : "success")" role="status">@Model.StatusMessage</div>
 }
 
-@if (Model.Severity is { HasData: true } severity)
+@if (Model.Severity is { } severity && (severity.HasData || severity.HeadlineTotalAttempts > 0))
 {
     <div class="card section-block">
         <div class="card-header"><h2>Throttling severity</h2></div>
@@ -62,6 +62,9 @@
             <span class="strong">@severity.HeadlinePercentText</span> of slice attempts failed with throttling
             (@severity.HeadlineThrottledAttempts.ToString("N0", ci) of @severity.HeadlineTotalAttempts.ToString("N0", ci)).
             Advisories below appear while this stays at or above @Model.RateThresholdPercent.ToString("0.#", ci)% and clear after @AppFormatting.ApproxDuration(Model.CleanPeriod) with no throttling.
+        </p>
+        <p class="muted chart-help">
+            The chart shows complete UTC-aligned buckets through <span class="mono">@AppFormatting.Iso(severity.RangeEndUtc)</span>; the current incomplete bucket is omitted while the headline above remains current.
         </p>
         <partial name="_ThrottleSeverityChart" model="severity" />
     </div>

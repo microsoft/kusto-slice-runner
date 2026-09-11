@@ -220,6 +220,19 @@ attempts, durable logs, queue rows, recent failure summaries, and repair history
 
 KO Lite hosts a loopback-only `/api/v1` agent API with generated OpenAPI at `/api/v1/openapi/v1.json`. It provides first-class GUID-keyed job create/replace/pause/resume, ETag concurrency, batch import/export, safe soft-delete/restore, failed-work repair, cursor-paged operational reads, and opt-in read-only Kusto lineage. It never exposes hard delete, whole-slice rerun, Kusto cleanup, or arbitrary Kusto writes. See [local-api.md](local-api.md) for workflows and the generated document for exact schemas.
 
+## Dashboard success statistics
+
+The dashboard success charts use complete UTC-aligned buckets and omit the current open bucket. The
+UI shows the exact **complete through** boundary, so a 1-hour view can lag by less than one minute, a
+1-day view by less than one hour, and a 30-day view by less than one UTC day. Dashboard status pills
+and recent-failure rows remain current; only the historical chart buckets lag.
+
+The first chart counts completed **execution-unit attempts**: each chunk attempt for a chunked job,
+or each slice attempt for an unchunked job. Retryable failures, terminal failures, dead letters, and
+lease loss count as unsuccessful attempts; in-flight attempts are excluded. The second chart counts
+terminal logical slices and shows whether each slice eventually succeeded after retries. A chunked
+slice therefore does not enter the second chart until all of its child work has resolved.
+
 ## Dashboard status model
 
 Every job on the dashboard shows a compact, **color-only status pill** — two colored halves with no text, so it never truncates. It answers, at a glance, the only two questions that usually matter: **is something wrong right now?** and **is this job's history complete?** Hover either half for a plain-language explanation (each half also carries an `aria-label`); everything else lives on the job details page.
@@ -348,7 +361,9 @@ KO Lite right now and over time?". It distinguishes a logical **slice** (one tim
   prior outcome while a retry or repair is queued/running. Old-attempt retention therefore does not
   change the total.
 - **Executions processed over time.** The chart shows execution outcomes per interval, split into
-  succeeded and failed/dead-lettered, over 1 hour / 1 day / 7 days / 30 days. **Refresh** re-reads the
+  succeeded and failed/dead-lettered, over 1 hour / 1 day / 7 days / 30 days. It uses complete
+  UTC-aligned buckets and displays the exact boundary through which chart data is complete; current
+  open-bucket completions still contribute to the live trailing totals. **Refresh** re-reads the
   read-only snapshot and recalculates relative times and ETAs.
 
 ## Ingestion throttling advisor
@@ -356,7 +371,7 @@ KO Lite right now and over time?". It distinguishes a logical **slice** (one tim
 When a slice fails because Kusto throttled its `.set-or-append` against the cluster's **ingestion capacity policy** (HTTP 429, `Origin: 'CapacityPolicy/Ingestion'`, `CommandType: 'TableSetOrAppend'`), KO Lite records the event and surfaces how bad the throttling is — plus advisory `maxParallelism` reductions — on the **Throttling** page (`/throttling`). The dashboard shows a banner linking there while any cluster is throttled or has recently lost a slice to throttling. The advisor is read-only: it only recommends, and nothing changes until an operator clicks **Reduce to N**.
 
 - **Detection.** Every retryable/dead-lettered slice whose error is an ingestion-capacity throttle is recorded as an observation (cluster, slice, attempt, reported capacity, time, and whether it was the slice's terminal dead-letter) in `ingestion_throttle_observations`. Recording is best-effort and isolated, so it never destabilizes a worker, and it is independent of the advisory surface. Other 429s (query/export capacity, or a workload group's request-rate-limit policy) are intentionally **not** treated as ingestion throttles.
-- **Severity.** The page leads with "in the last `WindowMinutes`, **Y%** of slice attempts failed with throttling" (throttled attempts ÷ all attempts) and a time chart of that rate, so you can see how bad it is and whether it is trending up or clearing.
+- **Severity.** The page leads with "in the last `WindowMinutes`, **Y%** of slice attempts failed with throttling" (throttled attempts ÷ all attempts) and a time chart of that rate, so you can see how bad it is and whether it is trending up or clearing. The headline remains a current rolling window, while the chart uses complete UTC-aligned five-minute buckets and shows its exact complete-through boundary.
 - **When it shows / clears.** A cluster is surfaced when, over the last `WindowMinutes` (default 20), the throttled-attempt rate is at least `RateThresholdPercent` (default 5%) **and** there are at least `MinThrottledSlices` (default 3) *distinct* throttled slices and `MinAttemptsForRate` (default 20) total attempts. Once surfaced it stays until the cluster has been clean for a continuous `CleanPeriodMinutes` (default 15) with no new throttle (hysteresis, so it does not flap). The distinct-slice and minimum-attempt floors keep a single self-healing 429 or a noisy tiny sample from tripping it.
 - **Lost slices (always shown).** A slice that dead-lettered after consecutive throttled attempts is the worst outcome — a data gap needing a rerun. Any such still-unresolved slice within `TerminalFailureLookbackMinutes` (default 60) **forces** the page/banner to show regardless of the rate gate, and is listed (job, slice window, throttled attempts, state) so you can rerun it.
 - **Keep-up floor (the safety check).** For each active job the advisor estimates `minParallelism = max(1, ceil((D / W) * KeepUpSafetyFactor))`, where `W` is `queryWindowSize` and `D` is a robust recent **successful** slice duration (the `DurationPercentile`, default p75, over `DurationLookbackHours`). Successful-only sampling keeps retry backoff from inflating the floor. A recommendation never drops a job below this floor — and the apply action re-checks it server-side and refuses when it cannot be verified — so a job can always keep up with real time.

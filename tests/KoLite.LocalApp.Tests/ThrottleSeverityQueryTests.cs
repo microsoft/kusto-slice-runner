@@ -82,6 +82,24 @@ namespace KoLite.LocalApp.Tests
             Assert.All(chart.Points, point => Assert.Equal(0, point.TotalAttempts));
         }
 
+        [Fact]
+        public void Chart_omits_open_bucket_while_headline_remains_current()
+        {
+            var jobId = catalog.Create(Schedule("job.complete-buckets")).JobId;
+            SeedAttempt(jobId, At(100), "Succeeded", At(119), throttled: false);
+            SeedAttempt(jobId, At(105), "FailedRetryable", At(121), throttled: true);
+
+            var chart = new ThrottleSeverityQuery(factory, new ManualClock(At(122)))
+                .GetSeverity(TimeSpan.FromHours(1), TimeSpan.FromMinutes(30), TimeSpan.FromMinutes(5));
+
+            Assert.Equal(At(120), chart.RangeEndUtc);
+            Assert.Equal(1, chart.Points.Sum(point => point.TotalAttempts));
+            Assert.Equal(0, chart.Points.Sum(point => point.ThrottledAttempts));
+            Assert.Equal(2, chart.HeadlineTotalAttempts);
+            Assert.Equal(1, chart.HeadlineThrottledAttempts);
+            Assert.Equal(50, chart.HeadlinePercent);
+        }
+
         private void SeedAttempt(string jobId, DateTimeOffset sliceStart, string status, DateTimeOffset completedAt, bool throttled)
         {
             var sliceEnd = sliceStart.AddMinutes(5);

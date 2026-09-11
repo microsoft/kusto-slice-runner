@@ -126,7 +126,10 @@ else
                     <div class="card-header">
                         <div>
                             <h2>Execution charts</h2>
-                            <p class="muted chart-help">Per-job execution results are grouped by completion time. LeaseLost is shown in the Error bucket because it is an operational failure that should remain visible.</p>
+                            <p class="muted chart-help">
+                                Per-job execution results are grouped by completion time. LeaseLost is shown in the Error bucket because it is an operational failure that should remain visible.
+                                Charts show complete UTC-aligned buckets through <span class="mono">@AppFormatting.Iso(charts.AttemptResults.RangeEndUtc)</span>; the current incomplete bucket is omitted.
+                            </p>
                         </div>
                         <div class="range-picker" aria-label="Chart range">
                             @foreach (var range in Model.RangeLinks)

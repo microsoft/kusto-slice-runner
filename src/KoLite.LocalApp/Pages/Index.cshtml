@@ -108,7 +108,10 @@
     <div class="card-header">
         <div>
             <h2>Success Statistics</h2>
-            <p class="muted chart-help">The first chart counts every execution attempt, including retries. The second chart scores whether each slice eventually succeeded after retries.</p>
+            <p class="muted chart-help">
+                The first chart counts every completed execution-unit attempt, including chunk retries. The second chart scores whether each logical slice eventually succeeded after retries.
+                Charts show complete UTC-aligned buckets through <span class="mono">@AppFormatting.Iso(Model.Data.Charts.AttemptSuccess.RangeEndUtc)</span>; the current incomplete bucket is omitted.
+            </p>
         </div>
         <div class="range-picker">
             @foreach (var range in Model.RangeLinks)
@@ -120,11 +123,11 @@
     </div>
     <div class="chart-grid">
         <div>
-            <h3>Success Rate By Function</h3>
-            <partial name="_SuccessRateChart" model="Model.Data.Charts.FirstAttemptSuccess" />
+            <h3>Execution Attempt Success Rate by Function</h3>
+            <partial name="_SuccessRateChart" model="Model.Data.Charts.AttemptSuccess" />
         </div>
         <div>
-            <h3>Success Rate After Retries by function</h3>
+            <h3>Logical Slice Success Rate After Retries by Function</h3>
             <partial name="_SuccessRateChart" model="Model.Data.Charts.SuccessAfterRetries" />
         </div>
     </div>

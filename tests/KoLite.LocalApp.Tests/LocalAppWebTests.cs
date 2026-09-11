@@ -284,8 +284,10 @@ namespace KoLite.LocalApp.Tests
         public async Task Dashboard_history_and_slice_routes_render_seeded_sqlite_data()
         {
             SeedOperationalData();
-            var detailChartSliceStart = DateTimeOffset.UtcNow.AddMinutes(-10);
-            var detailChartSliceEnd = DateTimeOffset.UtcNow.AddMinutes(-5);
+            var now = DateTimeOffset.UtcNow;
+            var currentHour = new DateTimeOffset(now.Year, now.Month, now.Day, now.Hour, 0, 0, TimeSpan.Zero);
+            var detailChartSliceStart = currentHour.AddMinutes(-10);
+            var detailChartSliceEnd = currentHour.AddMinutes(-5);
             var detailChartState = new SqliteSliceStateRepository(sqlite);
             var detailChartReadModels = new SqliteOperationalReadModelRepository(sqlite);
             detailChartState.Append("detail-chart-slice", JobId("job.web"), detailChartSliceStart, detailChartSliceEnd, DurableSliceStatus.Completed, expectedVersion: 0);
@@ -312,8 +314,9 @@ namespace KoLite.LocalApp.Tests
             Assert.Contains("Eligible now", dashboard);
             Assert.Contains("status-seg status-seg-health status-healthy", dashboard);
             Assert.Contains("aria-label=\"Healthy", dashboard);
-            Assert.Contains("Success Rate By Function", dashboard);
-            Assert.Contains("Success Rate After Retries by function", dashboard);
+            Assert.Contains("Execution Attempt Success Rate by Function", dashboard);
+            Assert.Contains("Logical Slice Success Rate After Retries by Function", dashboard);
+            Assert.Contains("the current incomplete bucket is omitted", dashboard);
             Assert.Contains("src=\"/lib/chartjs/chart.umd.min.js?v=", dashboard);
             Assert.Contains("class=\"ko-table job-table job-table-dashboard\"", dashboard);
             Assert.Contains("data-dashboard-filter-input=\"true\"", dashboard);
@@ -1094,8 +1097,10 @@ namespace KoLite.LocalApp.Tests
             new SqliteJobLifecycleService(sqlite, catalog).SoftDelete(JobId("job.prod.soft"), softDeleted.CatalogVersion, "web-test", "exclude from active charts");
             var state = new SqliteSliceStateRepository(sqlite);
             var readModels = new SqliteOperationalReadModelRepository(sqlite);
-            var chartStart = DateTimeOffset.UtcNow.AddMinutes(-30);
-            var chartEnd = DateTimeOffset.UtcNow.AddMinutes(-25);
+            var now = DateTimeOffset.UtcNow;
+            var currentHour = new DateTimeOffset(now.Year, now.Month, now.Day, now.Hour, 0, 0, TimeSpan.Zero);
+            var chartStart = currentHour.AddMinutes(-30);
+            var chartEnd = currentHour.AddMinutes(-25);
             foreach (var jobId in new[] { "job.prod.daily", "job.prod.weekly", "job.security", "job.prod.soft" })
             {
                 state.Append("chart-" + jobId, JobId(jobId), chartStart, chartEnd, DurableSliceStatus.Completed, expectedVersion: 0);
@@ -2714,16 +2719,17 @@ namespace KoLite.LocalApp.Tests
             catalog.Create(Schedule("activity.web", "ActivityFunction", isPaused: false));
 
             var now = DateTimeOffset.UtcNow;
+            var currentHour = new DateTimeOffset(now.Year, now.Month, now.Day, now.Hour, 0, 0, TimeSpan.Zero);
             state.Append("activity-a", jobId, At(0), At(5), DurableSliceStatus.Completed, expectedVersion: 0);
             state.Append("activity-b", jobId, At(5), At(10), DurableSliceStatus.Completed, expectedVersion: 0);
             state.Append("activity-c", jobId, At(10), At(15), DurableSliceStatus.Failed, expectedVersion: 0, reason: "boom");
             state.Append("activity-d", jobId, At(15), At(20), DurableSliceStatus.DeadLettered, expectedVersion: 0, reason: "dead");
             state.Append("activity-e", jobId, At(20), At(25), DurableSliceStatus.Running, expectedVersion: 0);
             state.Append("activity-f", jobId, At(25), At(30), DurableSliceStatus.Queued, expectedVersion: 0);
-            readModels.RecordAttempt("activity-a-att", jobId, At(0), At(5), 1, "Succeeded", "worker", now.AddMinutes(-6), now.AddMinutes(-5));
-            readModels.RecordAttempt("activity-b-att", jobId, At(5), At(10), 1, "Succeeded", "worker", now.AddMinutes(-11), now.AddMinutes(-10));
-            readModels.RecordAttempt("activity-c-att", jobId, At(10), At(15), 1, "Failed", "worker", now.AddMinutes(-16), now.AddMinutes(-15));
-            readModels.RecordAttempt("activity-d-att", jobId, At(15), At(20), 1, "DeadLettered", "worker", now.AddMinutes(-21), now.AddMinutes(-20));
+            readModels.RecordAttempt("activity-a-att", jobId, At(0), At(5), 1, "Succeeded", "worker", currentHour.AddMinutes(-6), currentHour.AddMinutes(-5));
+            readModels.RecordAttempt("activity-b-att", jobId, At(5), At(10), 1, "Succeeded", "worker", currentHour.AddMinutes(-11), currentHour.AddMinutes(-10));
+            readModels.RecordAttempt("activity-c-att", jobId, At(10), At(15), 1, "Failed", "worker", currentHour.AddMinutes(-16), currentHour.AddMinutes(-15));
+            readModels.RecordAttempt("activity-d-att", jobId, At(15), At(20), 1, "DeadLettered", "worker", currentHour.AddMinutes(-21), currentHour.AddMinutes(-20));
 
             using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
 
