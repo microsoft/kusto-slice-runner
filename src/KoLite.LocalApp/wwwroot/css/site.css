@@ -592,6 +592,83 @@ h3 { font-size: 16px; margin-bottom: 10px; }
   .activity-metrics { grid-template-columns: 1fr; }
 }
 
+.activity-view-nav { margin-bottom: 18px; padding-left: 0; }
+.performance-period { overflow-wrap: anywhere; }
+.performance-filter-form {
+  align-items: end;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.performance-filter-form label { display: grid; gap: 4px; font-size: 12px; }
+.performance-filter-input { min-width: 180px; max-width: 300px; }
+.performance-tag-filters { margin-top: 12px; }
+.performance-tag-filters .tag-list { margin-top: 4px; }
+.performance-collection { border-top: 1px solid var(--border); margin-top: 14px; padding-top: 8px; }
+.performance-collection p { margin: 4px 0; }
+.performance-collection .alert { margin-top: 10px; }
+.performance-collection summary,
+.performance-definitions summary { cursor: pointer; font-size: 12px; padding: 5px 0; }
+.performance-collection + .alert { margin-top: 8px; }
+.performance-definitions { border-top: 1px solid var(--border); margin-top: 12px; padding-top: 4px; }
+.performance-table-wrap:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.performance-table { min-width: 1220px; table-layout: fixed; }
+.performance-job-column { width: 220px; }
+.performance-attempts-column { width: 85px; }
+.performance-success-column { width: 95px; }
+.performance-samples-column { width: 140px; }
+.performance-table .performance-job-cell {
+  background: var(--surface);
+  box-shadow: 1px 0 0 var(--border);
+  left: 0;
+  position: sticky;
+  text-align: left;
+  z-index: 1;
+}
+.performance-table thead .performance-job-cell { background: var(--bg); z-index: 2; }
+.performance-table thead th { text-align: right; vertical-align: middle; }
+.performance-table thead .performance-group-heading { text-align: center; }
+.performance-table .performance-number { font-variant-numeric: tabular-nums; text-align: right; }
+.performance-table .performance-group-start { border-left: 1px solid var(--border); }
+.performance-table tbody th { font-weight: 400; }
+.performance-job-heading { align-items: center; display: flex; gap: 6px; min-width: 0; }
+.performance-job-heading a { min-width: 0; }
+.performance-subline { color: var(--muted); display: block; font-size: 11px; font-weight: 400; margin-top: 3px; }
+.performance-coverage { display: block; font-size: 11px; white-space: nowrap; }
+.performance-table .performance-chunk-row td,
+.performance-table .performance-chunk-row .performance-job-cell { background: var(--bg); }
+.performance-table .performance-chunk-row .performance-job-cell { padding-left: 34px; }
+.performance-disclosure {
+  align-items: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+  display: inline-flex;
+  flex: 0 0 24px;
+  height: 24px;
+  justify-content: center;
+  padding: 0;
+  width: 24px;
+}
+.performance-disclosure::before {
+  border-bottom: 4px solid transparent;
+  border-left: 5px solid var(--muted);
+  border-top: 4px solid transparent;
+  content: "";
+}
+.performance-disclosure[aria-expanded="true"]::before { transform: rotate(90deg); }
+.performance-disclosure:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.performance-scroll-hint { display: none; margin-bottom: 8px; }
+@media (max-width: 1300px) {
+  .performance-scroll-hint { display: block; }
+}
+@media (max-width: 720px) {
+  .performance-job-column { width: 170px; }
+  .performance-filter-form label { flex: 1 0 100%; }
+  .performance-filter-input { max-width: none; min-width: 0; width: 100%; }
+}
+
 .form-card label { display: block; font-weight: 600; margin-bottom: 10px; }
 .form-card input, .form-card textarea {
   width: 100%;

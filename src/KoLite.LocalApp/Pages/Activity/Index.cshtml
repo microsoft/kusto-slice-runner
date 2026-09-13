@@ -4,9 +4,136 @@
 @{
     ViewData["Title"] = "Activity";
     var ci = System.Globalization.CultureInfo.InvariantCulture;
-    var data = Model.Data;
-    var running = data.RunningNow;
+}
 
+<div class="page-heading">
+    <div>
+        <h1>Activity</h1>
+        @if (Model.IsPerformance)
+        {
+            <p class="muted">Compare completed query attempts and successful query resource measurements across jobs and chunks.</p>
+        }
+        else
+        {
+            <p class="muted">How much work is flowing through KO Lite. Logical slices are time windows; execution units are chunks for chunked jobs and slices otherwise.</p>
+        }
+    </div>
+    <div class="button-row">
+        <a class="btn" href="@Model.RefreshHref" data-performance-state-link="@(Model.IsPerformance ? "true" : null)">Refresh</a>
+    </div>
+</div>
+
+<nav class="tab-list activity-view-nav" aria-label="Activity views">
+    <a class="tab-link @(!Model.IsPerformance ? "active" : null)" href="/activity" aria-current="@(!Model.IsPerformance ? "page" : null)">Live</a>
+    <a class="tab-link @(Model.IsPerformance ? "active" : null)" href="/activity?view=performance&amp;range=7d" aria-current="@(Model.IsPerformance ? "page" : null)">Performance</a>
+</nav>
+
+@if (Model.Performance is { } performance)
+{
+    var state = performance.State;
+    <section class="card performance-view" data-performance-root>
+        <div class="card-header">
+            <h2>Performance</h2>
+            <div class="range-picker" aria-label="Performance range">
+                @foreach (var range in Model.RangeLinks)
+                {
+                    <a class="btn small @(range.Key == Model.Range ? "primary" : null)" href="@state.RangeHref(range.Key)" aria-current="@(range.Key == Model.Range ? "true" : null)" data-performance-state-link="true">@range.Label</a>
+                }
+            </div>
+        </div>
+        <p class="muted performance-period">
+            Completed attempts (UTC):
+            <time datetime="@PerformanceFormatting.Timestamp(performance.FromUtc)" title="Inclusive start">@PerformanceFormatting.DisplayTimestamp(performance.FromUtc)</time>
+            to
+            <time datetime="@PerformanceFormatting.Timestamp(performance.ToUtc)" title="Exclusive end">@PerformanceFormatting.DisplayTimestamp(performance.ToUtc)</time>.
+        </p>
+        <form method="get" action="/activity" class="performance-filter-form">
+            <input type="hidden" name="view" value="performance" />
+            <input type="hidden" name="range" value="@state.Range" />
+            <input type="hidden" name="sort" value="@state.Sort.Key" />
+            <input type="hidden" name="dir" value="@state.Sort.Direction" />
+            @if (state.JobId is not null)
+            {
+                <input type="hidden" name="jobId" value="@state.JobId" />
+            }
+            @foreach (var tag in state.Tags)
+            {
+                <input type="hidden" name="tag" value="@tag" />
+            }
+            <label for="performance-job-filter">
+                Job name
+                <input class="dashboard-filter-input performance-filter-input" type="search" id="performance-job-filter" name="q" value="@state.Search" placeholder="Filter jobs" autocomplete="off" data-performance-filter-input />
+            </label>
+            <button class="btn" type="submit">Apply filter</button>
+            <a class="btn" href="@state.ClearFiltersHref" data-performance-clear-filters>Clear filters</a>
+        </form>
+        @if (state.JobId is not null)
+        {
+            <p class="muted">Selected job: <strong>@(performance.SelectedJobLabel ?? state.JobId)</strong>.</p>
+        }
+        @if (performance.AvailableTags.Count > 0)
+        {
+            <div class="performance-tag-filters">
+                <span class="muted">Tags (all selected tags must match)</span>
+                <div class="tag-list" aria-label="Performance tag filters">
+                    @foreach (var tag in performance.AvailableTags)
+                    {
+                        <a class="tag-chip filter-chip @(tag.IsSelected ? "selected" : null)" href="@state.ToggleTagHref(tag.Name)" aria-pressed="@(tag.IsSelected ? "true" : "false")" data-performance-state-link="true">
+                            <span>#@tag.Name</span><span class="tag-count">@tag.JobCount</span>
+                        </a>
+                    }
+                </div>
+            </div>
+        }
+        <details class="performance-collection">
+            <summary>
+                Collection details
+                <span class="muted">(@PerformanceFormatting.Count(performance.Collection.AvailableSamples) observed; @PerformanceFormatting.Count(performance.Collection.PendingSamples) awaiting metrics)</span>
+                @if (!performance.ExecutionEnabled)
+                {
+                    <span class="muted">- this instance reads stored data only</span>
+                }
+            </summary>
+            <p class="muted">
+                History last reconciled: @AppFormatting.Iso(performance.Collection.LastHistorySyncUtc).
+                Resource collection last succeeded: @AppFormatting.Iso(performance.Collection.LastCollectionUtc).
+            </p>
+            <p class="muted">
+                Across retained history, before report filters:
+                @PerformanceFormatting.Count(performance.Collection.AvailableSamples) resource samples available;
+                @PerformanceFormatting.Count(performance.Collection.PendingSamples) awaiting collection.
+            </p>
+            @if (!performance.ExecutionEnabled)
+            {
+                <p class="muted" data-performance-no-execution>This instance has execution disabled and performs no automatic collection or backfill. Stored data remains available; the normal execution-capable instance collects resource measurements.</p>
+            }
+            <p class="muted">Collection retries automatically in the normal execution-capable instance. Review its operational logs if a problem persists.</p>
+        </details>
+        @if (!string.IsNullOrWhiteSpace(performance.Collection.LastError))
+        {
+            <div class="alert warning" role="alert" data-performance-collection-error>
+                Resource collection: @performance.Collection.LastError
+            </div>
+        }
+        @if (performance.FilterError is not null)
+        {
+            <div class="alert danger" role="alert">@performance.FilterError</div>
+        }
+        else if (!performance.Collection.HistoryInitialized)
+        {
+            <div class="alert warning" role="status" data-performance-initializing>
+                Initializing retained attempt history. Totals and percentiles are withheld until local history initialization completes.
+            </div>
+        }
+        else
+        {
+            <partial name="_PerformanceTable" model="performance" />
+        }
+    </section>
+}
+else if (Model.Data is { } data)
+{
+    var running = data.RunningNow;
     var totalsCards = new (string Label, ProcessedTotals Totals)[]
     {
         ("Last day", data.LastDay),
@@ -14,17 +141,6 @@
         ("Last 30 days", data.Last30Days),
         ("All time", data.AllTime),
     };
-}
-
-<div class="page-heading">
-    <div>
-        <h1>Activity</h1>
-        <p class="muted">How much work is flowing through KO Lite. Logical slices are time windows; execution units are chunks for chunked jobs and slices otherwise.</p>
-    </div>
-    <div class="button-row">
-        <a class="btn" href="/activity?range=@Model.Range">Refresh</a>
-    </div>
-</div>
 
 <section class="card section-block">
     <div class="card-header"><h2>Running now</h2></div>
@@ -178,3 +294,4 @@
     </div>
     <partial name="_ExecutionsProcessedChart" model="data.Chart" />
 </section>
+}

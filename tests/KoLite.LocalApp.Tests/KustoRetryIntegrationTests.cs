@@ -78,7 +78,7 @@ namespace KoLite.LocalApp.Tests
             Assert.Equal(DurableSliceStatus.Completed, state.Get(JobId, At(0), At(5)).Status);
             var requests = client.Requests.Where(request => request.ChunkId is null or 0).ToArray();
             Assert.Equal(2, requests.Length);
-            Assert.Equal(requests[0], requests[1]);
+            AssertStableIngestionAcrossAttempts(requests);
             Assert.Equal(2, queue.Get(queued.QueueItemId)!.Attempts);
             Assert.Equal(DurableWorkQueueState.Completed, queue.Get(queued.QueueItemId)!.State);
             Assert.Equal(
@@ -130,7 +130,7 @@ namespace KoLite.LocalApp.Tests
             Assert.Equal(DurableSliceStatus.DeadLettered, state.Get(JobId, At(0), At(5)).Status);
             var failedRequests = client.Requests.Where(request => request.ChunkId is null or 0).ToArray();
             Assert.Equal(maxAttempts, failedRequests.Length);
-            Assert.All(failedRequests, request => Assert.Equal(failedRequests[0], request));
+            AssertStableIngestionAcrossAttempts(failedRequests);
             var attempts = readModels.GetSliceAttempts(JobId).Where(attempt => attempt.ChunkId is null or 0).ToArray();
             Assert.Equal(maxAttempts, attempts.Length);
             Assert.Single(attempts, attempt => attempt.Status == "DeadLettered");
@@ -211,6 +211,18 @@ namespace KoLite.LocalApp.Tests
                 Assert.Equal(DurableSliceStatus.Completed, chunks.Get(
                     SliceExecutionUnit.Chunk(new SliceRange(JobId, At(0), At(5)), 1, 2))!.Status);
             }
+        }
+
+        private static void AssertStableIngestionAcrossAttempts(IReadOnlyList<KustoExecutionRequest> requests)
+        {
+            Assert.NotEmpty(requests);
+            Assert.Equal(requests.Count, requests.Select(request => request.ClientRequestId).Distinct(StringComparer.Ordinal).Count());
+            var ingestionRequest = requests[0] with { ClientRequestIdOverride = null };
+            Assert.All(requests, request =>
+            {
+                Assert.False(string.IsNullOrWhiteSpace(request.ClientRequestIdOverride));
+                Assert.Equal(ingestionRequest, request with { ClientRequestIdOverride = null });
+            });
         }
 
         private void AssertSiblingUnchanged(TestControlCommandClientFactory client, bool chunked)

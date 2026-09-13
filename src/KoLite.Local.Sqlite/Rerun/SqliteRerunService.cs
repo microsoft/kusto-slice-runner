@@ -8,6 +8,7 @@ using KoLite.Local.Core.Time;
 using KoLite.Local.Sqlite.Catalog;
 using KoLite.Local.Sqlite.Connections;
 using KoLite.Local.Sqlite.Infrastructure;
+using KoLite.Local.Sqlite.Performance;
 using Microsoft.Data.Sqlite;
 
 namespace KoLite.Local.Sqlite.Rerun
@@ -113,6 +114,8 @@ namespace KoLite.Local.Sqlite.Rerun
             foreach (var slice in slices)
             {
                 var snapshot = SnapshotSlice(connection, transaction, slice.JobId, slice.Slice.StartUtc, slice.Slice.EndUtc);
+                SqlitePerformanceRepository.PreserveRerunAttempts(
+                    connection, transaction, slice.JobId, slice.Slice.StartUtc, slice.Slice.EndUtc, clock.UtcNow);
                 DeleteSliceRows(connection, transaction, slice.JobId, slice.Slice.StartUtc, slice.Slice.EndUtc);
                 UpdateRerunSliceReset(connection, transaction, request.RerunBatchId, slice, snapshot);
             }

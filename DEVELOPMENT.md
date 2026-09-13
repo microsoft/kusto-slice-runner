@@ -60,7 +60,7 @@ To browse the **live** default database (`%LOCALAPPDATA%\KoLite\ko-lite.db`) whi
 .\scripts\Start-KoLiteUi.ps1            # live DB on port 5099, scheduler + retention disabled
 ```
 
-A second instance on the same database is normally refused by the single-instance guard. `Start-KoLiteUi.ps1` bypasses it with `--KoLite:AllowMultipleInstances=true` while keeping the scheduler, worker, and retention disabled, so the viewer performs no background writes. The manual equivalent is:
+A second instance on the same database is normally refused by the single-instance guard. `Start-KoLiteUi.ps1` bypasses it with `--KoLite:AllowMultipleInstances=true` while keeping the scheduler, worker, performance collection/backfill, and retention disabled, so the viewer performs no background writes. Performance displays already stored statistics without contacting Kusto. The manual equivalent is:
 
 ```powershell
 $db = "$env:LOCALAPPDATA\KoLite\ko-lite.db"
@@ -68,6 +68,12 @@ dotnet run --project .\src\KoLite.LocalApp\KoLite.LocalApp.csproj -- --Connectio
 ```
 
 Startup still applies the current schema to the live database, so when your branch changes the schema use `-UseCopy` (or a sandbox `-DatabasePath`) instead. Mutating UI actions also write to the live database.
+
+Performance collection is mandatory in a normal execution-enabled host. Tests that enable the
+scheduler must replace `IKustoCommandStatisticsReader` (or the collection-pass seam) as well as any
+fake output executor; replacing `ILocalSliceOutputExecutor` alone does not intercept telemetry reads.
+There is no separate performance enable/off configuration. UI-only tests inherit the existing
+`KoLite:Scheduler:Enabled=false` boundary.
 
 ## Run from a deployed copy (avoid the build file lock)
 

@@ -1,5 +1,7 @@
+using KoLite.Local.Core.Performance;
 using KoLite.Local.Sqlite.Connections;
 using KoLite.Local.Sqlite.Infrastructure;
+using KoLite.Local.Sqlite.Performance;
 using Microsoft.Data.Sqlite;
 
 namespace KoLite.Local.Sqlite.Observability
@@ -11,7 +13,8 @@ namespace KoLite.Local.Sqlite.Observability
     public sealed record SliceStatusReadout(string JobId, DateTimeOffset SliceStartUtc, DateTimeOffset SliceEndUtc, string Status, int Attempt, int? SuccessfulAttempt, string? LatestAttemptStatus, DateTimeOffset? LastAttemptUpdatedAtUtc, DateTimeOffset UpdatedAtUtc);
     public sealed record RetentionCleanupResult(string RetentionRunId, int LogsDeleted, int AttemptsDeleted, int ScheduledSlicesDeleted, int QueueRowsDeleted)
     {
-        public int TotalDeleted => LogsDeleted + AttemptsDeleted + ScheduledSlicesDeleted + QueueRowsDeleted;
+        public int PerformanceAttemptsDeleted { get; init; }
+        public int TotalDeleted => LogsDeleted + AttemptsDeleted + ScheduledSlicesDeleted + QueueRowsDeleted + PerformanceAttemptsDeleted;
     }
     public sealed record SliceThroughputSample(int SucceededCount, DateTimeOffset? FirstCompletedUtc, DateTimeOffset? LastCompletedUtc);
     public sealed record SliceAttemptRow(string AttemptId, string JobId, DateTimeOffset SliceStartUtc, DateTimeOffset SliceEndUtc, int Attempt, string Status, string? WorkerId, DateTimeOffset? StartedAtUtc, DateTimeOffset? CompletedAtUtc, string? ErrorCode, string? ErrorMessage, int? ChunkId, int? TotalChunks);
@@ -38,11 +41,14 @@ namespace KoLite.Local.Sqlite.Observability
             cmd.Add("$j", jobId); cmd.Add("$s", SqliteStorage.Utc(sliceStartUtc)); cmd.Add("$e", SqliteStorage.Utc(sliceEndUtc)); cmd.Add("$g", generationId); cmd.Add("$st", status); cmd.Add("$sa", SqliteStorage.Utc(scheduledAtUtc)); cmd.Add("$d", SqliteStorage.Utc(dueAtUtc)); cmd.ExecuteNonQuery();
         }
 
-        public void RecordAttempt(string attemptId, string jobId, DateTimeOffset sliceStartUtc, DateTimeOffset sliceEndUtc, int attempt, string status, string? workerId, DateTimeOffset? startedAtUtc, DateTimeOffset? completedAtUtc, string? errorCode = null, string? errorMessage = null, string metricsJson = "{}", int? chunkId = null, int? totalChunks = null)
+        public void RecordAttempt(string attemptId, string jobId, DateTimeOffset sliceStartUtc, DateTimeOffset sliceEndUtc, int attempt, string status, string? workerId, DateTimeOffset? startedAtUtc, DateTimeOffset? completedAtUtc, string? errorCode = null, string? errorMessage = null, string metricsJson = "{}", int? chunkId = null, int? totalChunks = null, PerformanceAttemptCapture? performanceCapture = null)
         {
             using var c = connectionFactory.OpenConnection();
-            using var cmd = SqliteStorage.Command(c, null, "INSERT INTO slice_attempts (attempt_id,job_id,slice_start_utc,slice_end_utc,attempt,status,worker_id,started_at_utc,completed_at_utc,error_code,error_message,metrics_json,chunk_id,total_chunks) VALUES ($id,$j,$s,$e,$a,$st,$w,$start,$done,$ec,$em,$m,$chunk,$chunks) ON CONFLICT(attempt_id) DO UPDATE SET status=excluded.status,worker_id=excluded.worker_id,started_at_utc=COALESCE(excluded.started_at_utc, slice_attempts.started_at_utc),completed_at_utc=excluded.completed_at_utc,error_code=excluded.error_code,error_message=excluded.error_message,metrics_json=excluded.metrics_json,chunk_id=excluded.chunk_id,total_chunks=excluded.total_chunks;");
+            using var transaction = c.BeginTransaction();
+            using var cmd = SqliteStorage.Command(c, transaction, "INSERT INTO slice_attempts (attempt_id,job_id,slice_start_utc,slice_end_utc,attempt,status,worker_id,started_at_utc,completed_at_utc,error_code,error_message,metrics_json,chunk_id,total_chunks) VALUES ($id,$j,$s,$e,$a,$st,$w,$start,$done,$ec,$em,$m,$chunk,$chunks) ON CONFLICT(attempt_id) DO UPDATE SET status=excluded.status,worker_id=excluded.worker_id,started_at_utc=COALESCE(slice_attempts.started_at_utc, excluded.started_at_utc),completed_at_utc=excluded.completed_at_utc,error_code=excluded.error_code,error_message=excluded.error_message,metrics_json=excluded.metrics_json,chunk_id=excluded.chunk_id,total_chunks=excluded.total_chunks;");
             cmd.Add("$id", attemptId); cmd.Add("$j", jobId); cmd.Add("$s", SqliteStorage.Utc(sliceStartUtc)); cmd.Add("$e", SqliteStorage.Utc(sliceEndUtc)); cmd.Add("$a", attempt); cmd.Add("$st", status); cmd.Add("$w", workerId); cmd.Add("$start", startedAtUtc is null ? null : SqliteStorage.Utc(startedAtUtc.Value)); cmd.Add("$done", completedAtUtc is null ? null : SqliteStorage.Utc(completedAtUtc.Value)); cmd.Add("$ec", errorCode); cmd.Add("$em", errorMessage); cmd.Add("$m", metricsJson); cmd.Add("$chunk", chunkId); cmd.Add("$chunks", totalChunks); cmd.ExecuteNonQuery();
+            SqlitePerformanceRepository.RecordLocalAttempt(c, transaction, attemptId, performanceCapture, completedAtUtc ?? startedAtUtc ?? DateTimeOffset.UtcNow);
+            transaction.Commit();
         }
 
         public IReadOnlyList<JobStatusSummary> GetJobStatusSummaries()
@@ -505,8 +511,8 @@ namespace KoLite.Local.Sqlite.Observability
         // audit/rerun/repair row are never touched, so scheduler idempotency, rerun eligibility,
         // dependency readiness, and the started-job field guard are unaffected. Only terminal
         // work_queue rows (Completed/DeadLettered) are pruned; Queued/Leased rows stay claimable.
-        // Chart-backing slice_attempts use the older protected cutoff so the dashboard's
-        // selectable chart range never thins. Each
+        // Chart-backing slice_attempts and performance_attempts use
+        // the older protected cutoff so the dashboard's selectable chart range never thins. Each
         // table drains in batches with per-batch commits to keep write locks short on the live
         // database; one retention_runs row summarizes the pass.
         public RetentionCleanupResult CleanupOldReadModels(DateTimeOffset cutoffUtc, DateTimeOffset chartProtectedCutoffUtc, int batchSize = 500)
@@ -515,13 +521,14 @@ namespace KoLite.Local.Sqlite.Observability
             var id = Guid.NewGuid().ToString("N"); using var c = connectionFactory.OpenConnection();
             var logs = Drain(c, "operational_logs", "recorded_at_utc < $cutoff", cutoffUtc, batchSize);
             var attempts = Drain(c, "slice_attempts", "COALESCE(completed_at_utc, started_at_utc) < $cutoff AND status <> 'Started'", chartProtectedCutoffUtc, batchSize);
+            var performanceAttempts = SqlitePerformanceRepository.CleanupOldAttempts(c, chartProtectedCutoffUtc, batchSize, DateTimeOffset.UtcNow);
             var scheduled = Drain(c, "scheduled_slices", "scheduled_at_utc < $cutoff", cutoffUtc, batchSize);
             var queueRows = Drain(c, "work_queue", "state IN ('Completed','DeadLettered') AND updated_at_utc < $cutoff", cutoffUtc, batchSize);
-            var deleted = logs + attempts + scheduled + queueRows;
+            var deleted = logs + attempts + performanceAttempts + scheduled + queueRows;
             using (var cmd = SqliteStorage.Command(c, null, "INSERT INTO retention_runs (retention_run_id,policy_name,status,cutoff_utc,rows_scanned,rows_deleted,started_at_utc,completed_at_utc,details_json) VALUES ($id,'read-model-retention','Completed',$cutoff,$scanned,$deleted,$now,$now,$details);"))
-            { cmd.Add("$id", id); cmd.Add("$cutoff", SqliteStorage.Utc(cutoffUtc)); cmd.Add("$scanned", deleted); cmd.Add("$deleted", deleted); cmd.Add("$now", SqliteStorage.Utc(DateTimeOffset.UtcNow)); cmd.Add("$details", $"{{\"logsDeleted\":{logs},\"attemptsDeleted\":{attempts},\"scheduledSlicesDeleted\":{scheduled},\"queueRowsDeleted\":{queueRows}}}"); cmd.ExecuteNonQuery(); }
+            { cmd.Add("$id", id); cmd.Add("$cutoff", SqliteStorage.Utc(cutoffUtc)); cmd.Add("$scanned", deleted); cmd.Add("$deleted", deleted); cmd.Add("$now", SqliteStorage.Utc(DateTimeOffset.UtcNow)); cmd.Add("$details", $"{{\"logsDeleted\":{logs},\"attemptsDeleted\":{attempts},\"performanceAttemptsDeleted\":{performanceAttempts},\"scheduledSlicesDeleted\":{scheduled},\"queueRowsDeleted\":{queueRows}}}"); cmd.ExecuteNonQuery(); }
             using (var checkpoint = SqliteStorage.Command(c, null, "PRAGMA wal_checkpoint(PASSIVE);")) checkpoint.ExecuteNonQuery();
-            return new RetentionCleanupResult(id, logs, attempts, scheduled, queueRows);
+            return new RetentionCleanupResult(id, logs, attempts, scheduled, queueRows) { PerformanceAttemptsDeleted = performanceAttempts };
         }
 
         // Deletes eligible rows in batches, committing each batch so a long backlog never holds a

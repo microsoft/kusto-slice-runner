@@ -109,6 +109,39 @@ namespace KoLite.Local.Sqlite.Tests
             }
         }
 
+        [Fact]
+        public void Retirement_preserves_performance_measurements_and_collection_checkpoint()
+        {
+            using var store = new PerformanceTestStore();
+            var job = store.CreateJob("retirement-performance");
+            store.Capture("performance-attempt", job, PerformanceTestStore.At(10), PerformanceTestStore.At(11));
+            var pending = store.Repository.GetPendingAttempts(PerformanceTestStore.At(20));
+            store.Repository.ApplyStatistics(
+                pending, [PerformanceTestStore.Statistics(Assert.Single(pending), cpu: 12, duration: 3, memory: 4096)],
+                PerformanceTestStore.At(20));
+            store.Repository.BeginHistoryReconciliation(PerformanceTestStore.At(20));
+            store.Repository.RecordPassSuccess(PerformanceTestStore.At(20));
+            store.Execute("""
+                CREATE TABLE ingestion_throttle_observations (
+                    observation_id TEXT NOT NULL PRIMARY KEY, job_id TEXT NOT NULL,
+                    cluster_uri TEXT NOT NULL, slice_start_utc TEXT NOT NULL, slice_end_utc TEXT NOT NULL,
+                    attempt INTEGER NOT NULL DEFAULT 0, reported_capacity INTEGER NULL,
+                    observed_at_utc TEXT NOT NULL, terminal INTEGER NOT NULL DEFAULT 0);
+                INSERT INTO ingestion_throttle_observations
+                    (observation_id,job_id,cluster_uri,slice_start_utc,slice_end_utc,observed_at_utc)
+                    VALUES ('old-hit',$job,'https://example.invalid','2026-01-01','2026-01-02','2026-01-03');
+                """, ("$job", job.JobId));
+            using var connection = store.Factory.OpenConnection();
+            var measurements = SnapshotRows(connection, "performance_attempts");
+            var checkpoint = SnapshotRows(connection, "performance_collection_state");
+
+            new KoLiteSqliteSchema(store.Factory).EnsureSchema();
+
+            AssertRetiredStorageAbsent(connection);
+            Assert.Equal(measurements, SnapshotRows(connection, "performance_attempts"));
+            Assert.Equal(checkpoint, SnapshotRows(connection, "performance_collection_state"));
+        }
+
         public void Dispose() => TestCleanup.DeleteDirectoryWithRetry(testDirectory);
 
         private KoLiteSqliteConnectionFactory CreateFactory()

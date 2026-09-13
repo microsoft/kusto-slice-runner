@@ -1963,6 +1963,52 @@
     });
   }
 
+  function initPerformanceTable() {
+    var root = document.querySelector("[data-performance-root]");
+    if (!root) return;
+
+    var groups = Array.prototype.slice.call(root.querySelectorAll("tbody[data-performance-job-id]"));
+    var input = root.querySelector("[data-performance-filter-input]");
+    var status = root.querySelector("[data-performance-filter-status]");
+    var noMatches = root.querySelector("[data-performance-no-matches]");
+
+    root.querySelectorAll("[data-performance-disclosure]").forEach(function (button) {
+      button.addEventListener("click", function () {
+        var group = button.closest("tbody[data-performance-job-id]");
+        if (!group) return;
+        var expanded = button.getAttribute("aria-expanded") !== "true";
+        group.querySelectorAll("[data-performance-chunk-row]").forEach(function (row) {
+          row.hidden = !expanded;
+        });
+        button.setAttribute("aria-expanded", expanded ? "true" : "false");
+        button.setAttribute("aria-label", (expanded ? "Hide" : "Show") + " chunks for " + (button.getAttribute("data-performance-job-name") || "this job"));
+        button.setAttribute("title", (expanded ? "Hide" : "Show") + " chunk details");
+      });
+    });
+
+    function applyFilter() {
+      var query = input ? input.value.trim() : "";
+      var search = query.toLowerCase();
+      var visible = 0;
+      groups.forEach(function (group) {
+        group.hidden = (group.getAttribute("data-performance-search") || "").toLowerCase().indexOf(search) < 0;
+        if (!group.hidden) visible++;
+      });
+      if (status) status.textContent = "Showing " + visible + " of " + groups.length + " job(s).";
+      if (noMatches) noMatches.hidden = visible > 0;
+
+      document.querySelectorAll("[data-performance-state-link='true']").forEach(function (link) {
+        var url = new URL(link.getAttribute("href"), document.baseURI);
+        if (query) url.searchParams.set("q", query);
+        else url.searchParams.delete("q");
+        link.setAttribute("href", url.pathname + url.search + url.hash);
+      });
+    }
+
+    if (input) input.addEventListener("input", applyFilter);
+    applyFilter();
+  }
+
   window.initFailureAnalysis = initFailureAnalysis;
   window.initJobDescriptions = initJobDescriptions;
   window.renderMarkdown = renderMarkdown;
@@ -1976,6 +2022,7 @@
   initCharts("data-chartjs-activity", buildExecutionsProcessedChart);
   initCharts("data-chartjs-job", buildJobDetailChart);
   initJobDetailTabs();
+  initPerformanceTable();
   initDashboardJobFilter();
   initDashboardColumnResize();
   initDashboardJobToggle();

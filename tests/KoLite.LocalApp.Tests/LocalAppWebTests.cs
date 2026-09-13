@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using KoLite.Local.Core.Orchestration;
+using KoLite.Local.Core.Performance;
 using KoLite.Local.Core.Schedules;
 using KoLite.Local.Core.Scheduling;
 using KoLite.Local.Core.Time;
@@ -3191,6 +3192,8 @@ namespace KoLite.LocalApp.Tests
                 {
                     services.AddLogging(logging => logging.ClearProviders());
                     services.AddTestLocalRequestPolicy();
+                    services.RemoveAll<IKustoCommandStatisticsReader>();
+                    services.AddSingleton<IKustoCommandStatisticsReader>(new EmptyCommandStatisticsReader());
                 });
                 if (configureServices is not null)
                 {
@@ -3256,6 +3259,15 @@ namespace KoLite.LocalApp.Tests
             return metadata.Count == 0
                 ? schedule
                 : schedule.Replace("  \"target\":", string.Join(Environment.NewLine, metadata) + "\n  \"target\":", StringComparison.Ordinal);
+        }
+
+        private sealed class EmptyCommandStatisticsReader : IKustoCommandStatisticsReader
+        {
+            public Task<IReadOnlyList<KustoCommandStatistics>> ReadAsync(KustoCommandStatisticsQuery query, CancellationToken cancellationToken = default)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                return Task.FromResult<IReadOnlyList<KustoCommandStatistics>>(Array.Empty<KustoCommandStatistics>());
+            }
         }
 
         private sealed class TestSliceOutputExecutor : ILocalSliceOutputExecutor

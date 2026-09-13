@@ -14,8 +14,8 @@ It always passes these fixed overrides (a later value in -AppArguments still win
    default this is the live default database %LOCALAPPDATA%\KoLite\ko-lite.db (resolved the same
    way the app resolves it when no connection string is configured).
 2. --KoLite:Scheduler:Enabled=false  disables BOTH the scheduler enqueue loop and the worker
-   dispatcher, so no slices are claimed and no Kusto execution / automated writes happen. The
-   instance is effectively UI-only.
+   dispatcher, plus performance collection and backfill, so no slices are claimed and no automatic
+   Kusto access / execution writes happen. The instance is effectively UI-only.
 3. --KoLite:Retention:Enabled=false  disables the retention pruner so this secondary instance
    never prunes the database the live app already maintains.
 4. --KoLite:AllowMultipleInstances=true  bypasses the single-instance guard so this UI-only
@@ -187,6 +187,7 @@ if ($UseCopy) {
 }
 Write-Host "Url            : $effectiveUrl"
 Write-Host 'Scheduler      : disabled (no slice claims, no Kusto execution)'
+Write-Host 'Performance    : stored observations only (collection and backfill disabled with execution)'
 Write-Host 'Retention      : disabled (does not prune the shared database)'
 Write-Host 'Coexistence    : shared-database guard bypassed (--KoLite:AllowMultipleInstances=true)'
 if ($NoBrowser) {

@@ -107,3 +107,5 @@ assert.match(
   /Analysis complete/);
 
 console.log("site.js rendered-route tests passed.");
+dom.window.close();
+await import("./test-performance-ui.mjs");

@@ -1,5 +1,6 @@
 using KoLite.Local.Core.Orchestration;
 using KoLite.Local.Core.FailureSummaries;
+using KoLite.Local.Core.Performance;
 using KoLite.Local.Core.Time;
 using KoLite.Local.Kusto.Execution;
 using KoLite.Local.Sqlite.Catalog;
@@ -7,6 +8,7 @@ using KoLite.Local.Sqlite.Connections;
 using KoLite.Local.Sqlite.Lifecycle;
 using KoLite.Local.Sqlite.Observability;
 using KoLite.Local.Sqlite.Orchestration;
+using KoLite.Local.Sqlite.Performance;
 using KoLite.Local.Sqlite.Queue;
 using KoLite.Local.Sqlite.Repair;
 using KoLite.Local.Sqlite.Rerun;
@@ -19,6 +21,7 @@ using KoLite.LocalApp.Application.Operations;
 using KoLite.LocalApp.Application.Repair;
 using KoLite.LocalApp.Application.System;
 using KoLite.LocalApp.Http;
+using KoLite.LocalApp.Performance;
 using KoLite.LocalApp.Repair;
 using KoLite.LocalApp.Retention;
 using KoLite.LocalApp.Ui;
@@ -36,6 +39,7 @@ namespace KoLite.LocalApp
             AddReadModels(services);
             AddExecution(services, configuration);
             AddWorkerHost(services);
+            AddPerformance(services);
             AddRetention(services);
             AddUpdates(services);
             AddFailureAnalysis(services, configuration);
@@ -80,6 +84,7 @@ namespace KoLite.LocalApp
             services.AddScoped<JobDetailsPageQuery>();
             services.AddScoped<JobChartQuery>();
             services.AddScoped<ActivityQuery>();
+            services.AddScoped<PerformancePageQuery>();
             services.AddScoped<LifecycleReadModel>();
             services.AddScoped<OperationalDetailsReadModel>();
         }
@@ -125,6 +130,17 @@ namespace KoLite.LocalApp
             services.AddSingleton(sp => new RetentionRuntimeState(
                 RetentionSnapshot.Initial(sp.GetRequiredService<LocalRetentionOptions>().Enabled)));
             services.AddHostedService<LocalRetentionBackgroundService>();
+        }
+
+        private static void AddPerformance(IServiceCollection services)
+        {
+            services.AddScoped<SqlitePerformanceRepository>();
+            services.AddScoped<IPerformanceReportRepository>(sp => sp.GetRequiredService<SqlitePerformanceRepository>());
+            services.AddScoped<IPerformanceCollectionStore>(sp => sp.GetRequiredService<SqlitePerformanceRepository>());
+            services.AddScoped<IKustoCommandStatisticsReader, KustoCommandStatisticsReader>();
+            services.AddScoped<IPerformanceCollectionPass, PerformanceCollectionPass>();
+            services.AddSingleton(new PerformanceCollectionSchedule());
+            services.AddHostedService<PerformanceCollectionBackgroundService>();
         }
 
         private static void AddUpdates(IServiceCollection services)
