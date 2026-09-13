@@ -30,6 +30,7 @@ You are the KO Lite maintainer for this repository. Use this agent for KO Lite i
 - Preserve Activity granularity: logical running/queued counts and the running table count parent windows, while execution counts and processed metrics count chunks (or one unchunked slice). Processed metrics use each execution unit's latest terminal outcome so retries do not inflate throughput. Keep one running row listing every active chunk/worker, and use measured whole-window durations for chunked ETA rather than a per-chunk scaling heuristic.
 - Graceful drain shutdown should stop new scheduling/claims, let active work record final state, then stop the local app. Ctrl+C/process kill is the emergency path.
 - Rerun flow is intentionally two-step: KO Lite suggests Kusto cleanup commands, but users execute cleanup manually before acknowledging rerun.
+- The dedicated throttling advisor, observation storage, and `retention.ingestionThrottlesDeleted` status property are retired. Preserve normal errors/retries and general failure analysis, not a replacement throttle-specific pipeline. Review upgrade precautions in the operations runbook before starting a new build against existing state.
 
 ## Running and inspecting the local app
 

@@ -15,6 +15,10 @@ user takes the file and submits it through the `/jobs` dashboard or the
 `ko-lite-job-manager` skill's Create, Update, or Import action (see `README.md`
 and `docs\schedule-json.md`).
 
+Adjust `maxParallelism` through the normal schedule-edit/update path. The
+standalone concurrency-advisor workflow has been retired; the schedule contract
+and per-job concurrency bound are unchanged.
+
 ## When to activate
 
 Activate when the user asks to:

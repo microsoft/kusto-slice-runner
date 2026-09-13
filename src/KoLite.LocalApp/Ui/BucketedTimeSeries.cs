@@ -44,22 +44,15 @@ namespace KoLite.LocalApp.Ui
         // boundary. The current open bucket is intentionally omitted.
         public BucketWindow CreateWindow(DateTimeOffset now, TimeSpan range)
         {
-            return CreateWindow(now, range, BucketSizeFor(range));
-        }
-
-        // As above, but with an explicit bucket size (e.g. for the throttle-severity chart, which
-        // wants finer-than-default resolution over a multi-hour range).
-        public BucketWindow CreateWindow(DateTimeOffset now, TimeSpan range, TimeSpan bucketSize)
-        {
             if (range <= TimeSpan.Zero)
             {
                 throw new ArgumentOutOfRangeException(nameof(range), "The chart range must be positive.");
             }
 
-            var size = bucketSize > TimeSpan.Zero ? bucketSize : BucketSizeFor(range);
+            var size = BucketSizeFor(range);
             if (range.Ticks % size.Ticks != 0)
             {
-                throw new ArgumentException("The chart range must contain a whole number of buckets.", nameof(bucketSize));
+                throw new ArgumentException("The chart range must contain a whole number of buckets.", nameof(range));
             }
 
             var until = AlignDown(now, size);
@@ -116,6 +109,5 @@ namespace KoLite.LocalApp.Ui
             var utc = value.ToUniversalTime();
             return new DateTimeOffset(utc.Ticks - utc.Ticks % bucketSize.Ticks, TimeSpan.Zero);
         }
-
     }
 }

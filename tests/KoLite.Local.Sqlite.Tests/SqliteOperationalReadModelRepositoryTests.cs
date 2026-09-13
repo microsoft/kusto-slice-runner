@@ -95,6 +95,12 @@ namespace KoLite.Local.Sqlite.Tests
             Assert.Equal(1, Count("work_queue"));
             Assert.Equal(1, Count("job_definition_events"));
             Assert.Equal(1, Count("retention_runs"));
+            Assert.Equal(result.LogsDeleted + result.AttemptsDeleted + result.ScheduledSlicesDeleted + result.QueueRowsDeleted, result.TotalDeleted);
+            using var connection = factory.OpenConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = "SELECT details_json FROM retention_runs;";
+            var details = Assert.IsType<string>(command.ExecuteScalar());
+            Assert.DoesNotContain("throttl", details, StringComparison.OrdinalIgnoreCase);
         }
 
         [Fact]

@@ -1,5 +1,4 @@
 using KoLite.Local.Core.Orchestration;
-using KoLite.Local.Sqlite.Throttling;
 using Microsoft.Extensions.Logging;
 
 namespace KoLite.LocalApp
@@ -7,14 +6,10 @@ namespace KoLite.LocalApp
     internal sealed class LoggingLocalWorkerProgressSink : ILocalWorkerProgressSink
     {
         private readonly ILogger<LoggingLocalWorkerProgressSink> logger;
-        private readonly IngestionThrottleObserver throttleObserver;
 
-        public LoggingLocalWorkerProgressSink(
-            ILogger<LoggingLocalWorkerProgressSink> logger,
-            IngestionThrottleObserver throttleObserver)
+        public LoggingLocalWorkerProgressSink(ILogger<LoggingLocalWorkerProgressSink> logger)
         {
             this.logger = logger;
-            this.throttleObserver = throttleObserver;
         }
 
         public void RecordStarted(LocalWorkerProgressEvent progress)
@@ -45,8 +40,6 @@ namespace KoLite.LocalApp
 
         public void RecordFinished(LocalWorkerProgressEvent progress)
         {
-            TryRecordIngestionThrottle(progress);
-
             using (BeginJobScope(progress))
             {
                 if (progress.Status == LocalWorkerProgressStatus.Succeeded)
@@ -130,25 +123,6 @@ namespace KoLite.LocalApp
                     progress.Status,
                     progress.ErrorCode,
                     progress.ErrorMessage);
-            }
-        }
-
-        // Records an observation when a slice attempt failed specifically because of Kusto
-        // ingestion-capacity throttling (429, CapacityPolicy/Ingestion). Best-effort and isolated:
-        // a recording failure is logged but never propagated, so detection cannot destabilize the
-        // worker. The observer ignores non-throttle outcomes and events without a resolved cluster.
-        private void TryRecordIngestionThrottle(LocalWorkerProgressEvent progress)
-        {
-            try
-            {
-                throttleObserver.Observe(progress);
-            }
-            catch (Exception ex)
-            {
-                using (BeginJobScope(progress))
-                {
-                    logger.LogWarning(ex, "Failed to record ingestion throttle observation for job {JobDisplayName}.", JobLabel(progress));
-                }
             }
         }
 

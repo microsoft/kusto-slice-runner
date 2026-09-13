@@ -85,7 +85,6 @@ namespace KoLite.LocalApp.Http.AgentApi
                     retention.LogsDeleted,
                     retention.AttemptsDeleted,
                     retention.ScheduledSlicesDeleted,
-                    retention.IngestionThrottlesDeleted,
                     retention.QueueRowsDeleted,
                     retention.LastError),
                 new ShutdownStatusResponse(

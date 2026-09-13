@@ -21,9 +21,9 @@ It always passes these fixed overrides (a later value in -AppArguments still win
 4. --KoLite:AllowMultipleInstances=true  bypasses the single-instance guard so this UI-only
    instance can run alongside your live app against the SAME database. The guard normally refuses a
    second instance on one database; with the scheduler, worker, and retention all disabled here the
-   only writes are the brief idempotent startup schema apply, which is safe next to the live writer
-   under WAL. The secondary instance logs a "guard is disabled; use a distinct database" warning;
-   that is expected here and can be ignored (this is the intentional shared-database viewer case).
+   startup schema apply still writes and may retire obsolete tables. Use -UseCopy when this build's
+   schema differs from the live app. The secondary instance logs a "guard is disabled; use a distinct
+   database" warning; only a same-schema viewer is an intentional shared-database case.
 5. --KoLite:Urls=http://127.0.0.1:<Port>  binds a non-default loopback port so this instance can
    coexist with your live app (usually on http://127.0.0.1:5057). The app reads KoLite:Urls in
    UseUrls(...), so --urls / ASPNETCORE_URLS are ignored; this is the supported way to move it.
@@ -36,6 +36,8 @@ Safety notes when running against the live database (the default):
 - Startup applies the current schema to whatever database it opens. Pure UI / read-model / Razor
   changes are a no-op, but if your branch changes the schema it WILL be applied to that database.
   Use -UseCopy (or point -DatabasePath at a throwaway file) when your branch changes the schema.
+  In particular, upgrading after throttling-advisor retirement drops the obsolete observation
+  table even in UI-only mode. Never validate that upgrade against the older app's live database.
 - The scheduler being disabled stops automated execution, but the UI still exposes mutating
   operator actions (enable/disable, soft-delete, pause/resume, edit schedule, rerun ack, repair),
   and they write to whatever database is configured. Navigating/inspecting is safe; clicking those

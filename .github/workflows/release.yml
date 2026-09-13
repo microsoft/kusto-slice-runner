@@ -374,6 +374,15 @@ jobs:
                   if ($systemStatus.scheduler.enabled -ne $false) {
                       throw "$Name smoke test unexpectedly started with scheduling enabled."
                   }
+                  if ($systemStatus.retention.PSObject.Properties.Name -contains 'ingestionThrottlesDeleted') {
+                      throw "$Name still exposes the retired retention statistic."
+                  }
+                  foreach ($retiredPath in @('/throttling', '/throttling/apply')) {
+                      $retiredPage = Invoke-WebRequest -Uri "$BaseUrl$retiredPath" -SkipHttpErrorCheck -TimeoutSec 5
+                      if ([int]$retiredPage.StatusCode -ne 404) {
+                          throw "$Name still exposes retired route '$retiredPath'."
+                      }
+                  }
 
                   $expectedDatabasePath = [System.IO.Path]::GetFullPath($DatabasePath)
                   $reportedDatabasePath = [System.IO.Path]::GetFullPath([string]$systemStatus.database.path)

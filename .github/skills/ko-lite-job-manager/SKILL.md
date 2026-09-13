@@ -41,6 +41,11 @@ Never:
 
 ## Core workflow
 
+The standalone throttling advisor has been retired. Do not call `/throttling`
+or `/throttling/apply`, and do not require
+`retention.ingestionThrottlesDeleted` in system status. Ordinary attempts,
+errors, retries, and failure diagnostics remain available through this API.
+
 1. Confirm the app and API version:
 
    ```powershell

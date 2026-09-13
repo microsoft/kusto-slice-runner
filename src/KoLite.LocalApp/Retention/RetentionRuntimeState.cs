@@ -8,13 +8,12 @@ namespace KoLite.LocalApp.Retention
         int LogsDeleted,
         int AttemptsDeleted,
         int ScheduledSlicesDeleted,
-        int IngestionThrottlesDeleted,
         int QueueRowsDeleted,
         int TotalDeleted,
         string? LastError)
     {
         public static RetentionSnapshot Initial(bool enabled) =>
-            new(enabled, LastRunUtc: null, 0, 0, 0, 0, 0, 0, LastError: null);
+            new(enabled, LastRunUtc: null, 0, 0, 0, 0, 0, LastError: null);
     }
 
     public sealed class RetentionRuntimeState

@@ -15,7 +15,6 @@ using KoLite.Local.Sqlite.Orchestration;
 using KoLite.Local.Sqlite.Queue;
 using KoLite.Local.Sqlite.Repair;
 using KoLite.Local.Sqlite.State;
-using KoLite.Local.Sqlite.Throttling;
 using KoLite.LocalApp.Retention;
 using KoLite.LocalApp.Ui;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -189,9 +188,8 @@ namespace KoLite.LocalApp.Tests
                 LogsDeleted: 5,
                 AttemptsDeleted: 4,
                 ScheduledSlicesDeleted: 3,
-                IngestionThrottlesDeleted: 2,
                 QueueRowsDeleted: 1,
-                TotalDeleted: 15,
+                TotalDeleted: 13,
                 LastError: null);
             using var runFactory = CreateFactory(enableScheduler: false, configureServices: services =>
             {
@@ -206,7 +204,8 @@ namespace KoLite.LocalApp.Tests
 
             Assert.True(retention.GetProperty("enabled").GetBoolean());
             Assert.Equal(30, retention.GetProperty("windowDays").GetDouble());
-            Assert.Equal(15, retention.GetProperty("lastRunDeleted").GetInt32());
+            Assert.Equal(13, retention.GetProperty("lastRunDeleted").GetInt32());
+            Assert.False(retention.TryGetProperty("ingestionThrottlesDeleted", out _));
             Assert.Equal(1, retention.GetProperty("queueRowsDeleted").GetInt32());
             Assert.Equal(DateTimeOffset.Parse("2026-06-20T00:00:00Z"), retention.GetProperty("lastRunUtc").GetDateTimeOffset());
         }
@@ -2845,124 +2844,48 @@ namespace KoLite.LocalApp.Tests
         }
 
         [Fact]
-        public async Task Throttling_advisor_surfaces_ranks_and_applies_a_recommendation()
+        public async Task Retired_throttling_routes_cannot_change_job_parallelism()
         {
-            var jobId = SeedThrottledJob("job.throttled", maxParallelism: 8, durationMinutes: 12);
-            using var client = factory.CreateClient();
-
-            var page = await client.GetStringAsync("/throttling");
-            Assert.Contains("job.throttled", page);
-            Assert.Contains("Reduce to 4", page); // keep-up floor = ceil(12/5 * 1.5) = 4
-            Assert.Contains("failed because of throttling", page); // a slice dead-lettered on throttling
-
-            var dashboard = await client.GetStringAsync("/");
-            Assert.Contains("ingestion throttling", dashboard);
-
-            // Guardrail: a reduction below the keep-up floor (4) is rejected and the job is unchanged.
-            var rejectToken = await ReadFormToken(client, "/throttling");
-            using var rejected = await PostFormValues(client, "/throttling/apply", rejectToken, new[]
-            {
-                new KeyValuePair<string, string>("jobId", jobId),
-                new KeyValuePair<string, string>("expectedVersion", "1"),
-                new KeyValuePair<string, string>("newMaxParallelism", "2")
-            });
-            rejected.EnsureSuccessStatusCode();
-            Assert.Equal(8, new SqliteJobCatalogRepository(sqlite).Get(jobId)!.Definition.MaxParallelism);
-
-            // Applying the recommended floor succeeds and reduces maxParallelism.
-            var applyToken = await ReadFormToken(client, "/throttling");
-            using var applied = await PostFormValues(client, "/throttling/apply", applyToken, new[]
-            {
-                new KeyValuePair<string, string>("jobId", jobId),
-                new KeyValuePair<string, string>("expectedVersion", "1"),
-                new KeyValuePair<string, string>("newMaxParallelism", "4")
-            });
-            applied.EnsureSuccessStatusCode();
-            Assert.Equal(4, new SqliteJobCatalogRepository(sqlite).Get(jobId)!.Definition.MaxParallelism);
-        }
-
-        [Fact]
-        public async Task Throttling_advisor_redirects_stale_recommendations_with_guidance()
-        {
-            var jobId = SeedThrottledJob("job.throttled.stale", maxParallelism: 8, durationMinutes: 12);
             var catalog = new SqliteJobCatalogRepository(sqlite);
-            var rendered = catalog.Get(jobId)!;
+            var job = catalog.Create(Schedule("job.retired-advisor", "ExampleFunction", isPaused: false, maxParallelism: 8));
             using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
-            var token = await ReadFormToken(client, "/throttling");
-            var current = catalog.Update(jobId, rendered.ScheduleJson, rendered.CatalogVersion, actor: "concurrent-test");
+            var token = await ReadFormToken(client, $"/jobs/{job.JobId}/edit");
+
+            Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync("/throttling")).StatusCode);
+            Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync("/throttling/apply")).StatusCode);
 
             using var response = await PostFormValues(client, "/throttling/apply", token, new[]
             {
-                new KeyValuePair<string, string>("jobId", jobId),
-                new KeyValuePair<string, string>("expectedVersion", rendered.CatalogVersion.ToString()),
+                new KeyValuePair<string, string>("jobId", job.JobId),
+                new KeyValuePair<string, string>("expectedVersion", job.CatalogVersion.ToString()),
                 new KeyValuePair<string, string>("newMaxParallelism", "4")
             });
 
-            Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
-            Assert.Equal("/throttling", response.Headers.Location?.OriginalString);
-            Assert.Equal(8, catalog.Get(jobId)!.Definition.MaxParallelism);
-            Assert.Equal(current.CatalogVersion, catalog.Get(jobId)!.CatalogVersion);
-
-            var page = await client.GetStringAsync(response.Headers.Location!.OriginalString);
-            Assert.Contains("This job changed after the page loaded", page);
-            Assert.Contains("your request was not applied", page);
+            Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+            Assert.Equal(8, catalog.Get(job.JobId)!.Definition.MaxParallelism);
+            Assert.Equal(job.CatalogVersion, catalog.Get(job.JobId)!.CatalogVersion);
         }
 
-        private string SeedThrottledJob(string activityId, int maxParallelism, int durationMinutes)
+        [Fact]
+        public async Task Ingestion_failures_remain_in_general_diagnostics_without_an_advisor()
         {
-            const string cluster = "https://kolite-example.invalid";
             var catalog = new SqliteJobCatalogRepository(sqlite);
+            var job = catalog.Create(Schedule("job.ingestion-failure", "ExampleFunction", isPaused: false));
             var state = new SqliteSliceStateRepository(sqlite);
             var readModels = new SqliteOperationalReadModelRepository(sqlite);
-            var throttle = new SqliteIngestionThrottleRepository(sqlite);
+            const string error = "Origin: 'CapacityPolicy/Ingestion'";
+            state.Append("ingestion-failed", job.JobId, At(0), At(5), DurableSliceStatus.DeadLettered, expectedVersion: 0, reason: error);
+            readModels.RecordAttempt("ingestion-attempt", job.JobId, At(0), At(5), 3, "DeadLettered", "worker", At(10), At(11), "KustoRequestThrottledException", error);
 
-            var now = DateTimeOffset.UtcNow;
-            // A recent startFrom keeps the job at its real-time frontier (not backfilling), so the
-            // keep-up floor governs the recommendation rather than a catch-up floor.
-            var jobId = catalog.Create(ThrottleSchedule(activityId, cluster, maxParallelism, startFrom: now.AddMinutes(-10))).JobId;
-
-            // Six successful slice durations within the last hour give a stable p75 duration estimate
-            // (deliberately outside the recent rate window).
-            for (var i = 0; i < 6; i++)
-            {
-                var sliceStart = new DateTimeOffset(2026, 6, 23, 0, 0, 0, TimeSpan.Zero).AddMinutes(i * 5);
-                var sliceEnd = sliceStart.AddMinutes(5);
-                state.Append($"{jobId}-st-{i}", jobId, sliceStart, sliceEnd, DurableSliceStatus.Completed, expectedVersion: 0);
-                var startedAt = now.AddMinutes(-40 + i);
-                readModels.RecordAttempt($"{jobId}-att-{i}", jobId, sliceStart, sliceEnd, 1, "Succeeded", "worker", startedAt, startedAt.AddMinutes(durationMinutes));
-            }
-
-            // Three distinct throttled slices within the window; the last dead-lettered on throttling,
-            // which forces the advisory to surface and lists the lost slice.
-            foreach (var minute in new[] { 1, 2, 3 })
-            {
-                var sliceStart = new DateTimeOffset(2026, 6, 23, 6, 0, 0, TimeSpan.Zero).AddMinutes(minute * 5);
-                var sliceEnd = sliceStart.AddMinutes(5);
-                var observedAt = now.AddMinutes(-minute);
-                var terminal = minute == 3;
-                state.Append($"{jobId}-thr-st-{minute}", jobId, sliceStart, sliceEnd, terminal ? DurableSliceStatus.DeadLettered : DurableSliceStatus.Running, expectedVersion: 0, reason: terminal ? "throttled out" : null);
-                readModels.RecordAttempt($"{jobId}-thr-att-{minute}", jobId, sliceStart, sliceEnd, 2, terminal ? "DeadLettered" : "FailedRetryable", "worker", observedAt.AddMinutes(-1), observedAt, "KustoRequestThrottledException", "Origin: 'CapacityPolicy/Ingestion'");
-                throttle.Record(new IngestionThrottleObservation(jobId, cluster, sliceStart, sliceEnd, Attempt: 2, ReportedCapacity: 18, observedAt, Terminal: terminal));
-            }
-
-            return jobId;
+            using var client = factory.CreateClient();
+            var dashboard = await client.GetStringAsync("/");
+            Assert.DoesNotContain("href=\"/throttling", dashboard, StringComparison.Ordinal);
+            Assert.DoesNotContain("ingestion throttling", dashboard, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("data-chartjs-throttle", dashboard, StringComparison.Ordinal);
+            var attempts = await client.GetStringAsync($"/api/v1/operations/attempts?jobId={job.JobId}");
+            Assert.Contains("KustoRequestThrottledException", attempts, StringComparison.Ordinal);
+            Assert.Contains("CapacityPolicy/Ingestion", attempts, StringComparison.Ordinal);
         }
-
-        private static string ThrottleSchedule(string activityId, string cluster, int maxParallelism, DateTimeOffset startFrom) => $$"""
-            {
-              "id": "{{JobId(activityId)}}",
-              "activityId": "{{activityId}}",
-              "functionName": "ThrottleFn",
-              "outputTable": "Output",
-              "queryWindowSize": "00:05:00",
-              "delayFromUtcNow": "00:00:00",
-              "maxParallelism": {{maxParallelism}},
-              "queryTimeout": "00:01:00",
-              "isPaused": false,
-              "startFrom": "{{startFrom.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ssZ")}}",
-              "target": { "clusterUri": "{{cluster}}", "database": "DemoDb" }
-            }
-            """;
 
         private async Task<FormToken> ReadFormToken(HttpClient client, string path)
         {

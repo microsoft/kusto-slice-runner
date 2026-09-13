@@ -176,6 +176,16 @@ normalizes import files into the `schedules` envelope, follows cursors only when
 
 ## Compatibility and upgrades
 
+The retired throttling advisor has no replacement route or agent operation.
+Browser requests to `/throttling` and `/throttling/apply` return `404`, including
+old apply forms. `/api/v1/system/status` and its generated OpenAPI no longer
+include `retention.ingestionThrottlesDeleted`. This is an intentional
+response-contract removal: external callers requiring the property must adapt.
+The v1 job/repair operations and helper API-version checks are unchanged.
+Ordinary attempt/error diagnostics remain available. See the
+[upgrade precautions](operations-runbook.md#upgrading-after-throttling-advisor-retirement)
+before opening an existing database with the upgraded app.
+
 The v1 redesign intentionally removes the former `/api/jobs`, `/api/diagnostics`,
 `/status/health`, `/status/shutdown`, and `/catalog` routes. Upgrade the application,
 root operational scripts, and `.github\skills` directory together from the same

@@ -1,7 +1,5 @@
-using System.Globalization;
 using KoLite.Local.Core.Orchestration;
 using KoLite.Local.Core.FailureSummaries;
-using KoLite.Local.Core.Throttling;
 using KoLite.Local.Core.Time;
 using KoLite.Local.Kusto.Execution;
 using KoLite.Local.Sqlite.Catalog;
@@ -14,7 +12,6 @@ using KoLite.Local.Sqlite.Repair;
 using KoLite.Local.Sqlite.Rerun;
 using KoLite.Local.Sqlite.Schema;
 using KoLite.Local.Sqlite.State;
-using KoLite.Local.Sqlite.Throttling;
 using KoLite.LocalApp.FailureAnalysis;
 using KoLite.LocalApp.Application.Jobs;
 using KoLite.LocalApp.Application.Lineage;
@@ -70,10 +67,6 @@ namespace KoLite.LocalApp
             services.AddScoped<SqliteSliceStateRepository>();
             services.AddScoped<SqliteChunkStateRepository>();
             services.AddScoped<SqliteJobLifecycleService>();
-            services.AddSingleton<SqliteIngestionThrottleRepository>();
-            services.AddSingleton<IngestionThrottleObserver>();
-            services.AddSingleton(_ => ResolveThrottleAdvisorOptions(configuration));
-            services.AddScoped<SqliteThrottleAdvisorReadModel>();
             services.AddScoped<SqliteRerunService>();
             services.AddScoped<SqliteRepairService>();
             services.AddScoped<RepairApprovalCoordinator>();
@@ -86,7 +79,6 @@ namespace KoLite.LocalApp
             services.AddScoped<DependencyGraphKustoEnricher>();
             services.AddScoped<JobDetailsPageQuery>();
             services.AddScoped<JobChartQuery>();
-            services.AddScoped<ThrottleSeverityQuery>();
             services.AddScoped<ActivityQuery>();
             services.AddScoped<LifecycleReadModel>();
             services.AddScoped<OperationalDetailsReadModel>();
@@ -183,33 +175,5 @@ namespace KoLite.LocalApp
                 ManagedIdentityClientId = configuration["KoLite:Kusto:ManagedIdentityClientId"]
             };
         }
-
-        // Binds KoLite:Throttling:* to the advisory options. Every value is optional and falls back to
-        // the safe defaults; invalid or non-positive numbers are ignored rather than rejected.
-        static ThrottleAdvisorOptions ResolveThrottleAdvisorOptions(IConfiguration configuration)
-        {
-            var defaults = ThrottleAdvisorOptions.Default;
-            return new ThrottleAdvisorOptions
-            {
-                Enabled = bool.TryParse(configuration["KoLite:Throttling:Enabled"], out var enabled) ? enabled : defaults.Enabled,
-                Window = TimeSpan.FromMinutes(ReadPositiveDouble(configuration, "KoLite:Throttling:WindowMinutes", defaults.Window.TotalMinutes)),
-                MinThrottledSlices = ReadPositiveInt(configuration, "KoLite:Throttling:MinThrottledSlices", defaults.MinThrottledSlices),
-                RateThresholdPercent = ReadPositiveDouble(configuration, "KoLite:Throttling:RateThresholdPercent", defaults.RateThresholdPercent),
-                MinAttemptsForRate = ReadPositiveInt(configuration, "KoLite:Throttling:MinAttemptsForRate", defaults.MinAttemptsForRate),
-                CleanPeriod = TimeSpan.FromMinutes(ReadPositiveDouble(configuration, "KoLite:Throttling:CleanPeriodMinutes", defaults.CleanPeriod.TotalMinutes)),
-                TerminalFailureLookback = TimeSpan.FromMinutes(ReadPositiveDouble(configuration, "KoLite:Throttling:TerminalFailureLookbackMinutes", defaults.TerminalFailureLookback.TotalMinutes)),
-                CatchUpTargetDuration = TimeSpan.FromHours(ReadPositiveDouble(configuration, "KoLite:Throttling:CatchUpTargetHours", defaults.CatchUpTargetDuration.TotalHours)),
-                DurationLookback = TimeSpan.FromHours(ReadPositiveDouble(configuration, "KoLite:Throttling:DurationLookbackHours", defaults.DurationLookback.TotalHours)),
-                MinDurationSamples = ReadPositiveInt(configuration, "KoLite:Throttling:MinDurationSamples", defaults.MinDurationSamples),
-                DurationPercentile = Math.Clamp(ReadPositiveDouble(configuration, "KoLite:Throttling:DurationPercentile", defaults.DurationPercentile), 0.01, 1.0),
-                KeepUpSafetyFactor = ReadPositiveDouble(configuration, "KoLite:Throttling:KeepUpSafetyFactor", defaults.KeepUpSafetyFactor)
-            };
-        }
-
-        private static int ReadPositiveInt(IConfiguration configuration, string key, int defaultValue) =>
-            int.TryParse(configuration[key], NumberStyles.Integer, CultureInfo.InvariantCulture, out var value) && value >= 1 ? value : defaultValue;
-
-        private static double ReadPositiveDouble(IConfiguration configuration, string key, double defaultValue) =>
-            double.TryParse(configuration[key], NumberStyles.Float, CultureInfo.InvariantCulture, out var value) && value > 0 ? value : defaultValue;
     }
 }

@@ -426,6 +426,47 @@ namespace KoLite.Local.Sqlite.Tests
                 });
         }
 
+        [Theory]
+        [InlineData(null, false)]
+        [InlineData(1, false)]
+        [InlineData(null, true)]
+        [InlineData(1, true)]
+        public async Task Ingestion_errors_keep_normal_retry_and_diagnostic_behavior(int? chunks, bool exhaustRetries)
+        {
+            const string activityId = "job.ingestion-retry";
+            const string code = "KustoRequestThrottledException";
+            const string error = "CommandType: 'TableSetOrAppend', Origin: 'CapacityPolicy/Ingestion'";
+            catalog.Create(Schedule(activityId, maxParallelism: 1, chunks: chunks));
+            Scheduler(maxSlicesPerTick: 1).Tick();
+            var failure = LocalSliceOutputResult.Failure(code, error, isRetryable: true, isPermanent: false, failureCode: 429);
+            var executor = new RecordingExecutor(failure, exhaustRetries ? failure : LocalSliceOutputResult.Success());
+            var progress = new RecordingProgressSink();
+            var worker = Worker(executor, new LocalWorkerOptions(MaxAttempts: 2, InitialRetryDelay: TimeSpan.FromMinutes(1)), progress);
+
+            var first = await worker.RunOnceAsync();
+            Assert.True(first.Executed);
+            Assert.False(first.DeadLettered);
+            Assert.False((await worker.RunOnceAsync()).ClaimedWork);
+            clock.Advance(TimeSpan.FromMinutes(1));
+            var second = await worker.RunOnceAsync();
+
+            Assert.Equal(!exhaustRetries, second.Succeeded);
+            Assert.Equal(exhaustRetries, second.DeadLettered);
+            Assert.Equal(exhaustRetries ? DurableSliceStatus.DeadLettered : DurableSliceStatus.Completed,
+                state.Get(JobId(activityId), At(0), At(5)).Status);
+            Assert.Equal(2, executor.Executions.Count);
+            Assert.Equal(code, progress.Finished[0].ErrorCode);
+            Assert.Equal(error, progress.Finished[0].ErrorMessage);
+            Assert.Equal(chunks is null ? (int?)null : 0, progress.Finished[0].ChunkId);
+
+            using var connection = factory.OpenConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = "SELECT COUNT(*) FROM slice_attempts WHERE error_code=$code AND error_message=$error;";
+            command.Parameters.AddWithValue("$code", code);
+            command.Parameters.AddWithValue("$error", error);
+            Assert.Equal(exhaustRetries ? 2L : 1L, command.ExecuteScalar());
+        }
+
         // A permanent Kusto failure (a semantic error, for example) will never succeed on a retry,
         // so it dead-letters on the first attempt instead of burning the retry budget. This is the
         // behaviour that must survive the switch to the SDK's permanence flag.

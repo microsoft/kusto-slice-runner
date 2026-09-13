@@ -17,6 +17,8 @@ This script reports the path that is actually in use:
    the *.db-wal / *.db-shm sidecars themselves.
 
 The script is read-only and never modifies, deletes, or moves any database file.
+Only database.path is needed from system status; optional or retired telemetry
+fields do not affect database discovery.
 
 .PARAMETER BaseUrl
 Loopback base URL of the running local app. Default: http://127.0.0.1:5057

@@ -38,7 +38,6 @@ namespace KoLite.LocalApp.Http.AgentApi
         int LogsDeleted,
         int AttemptsDeleted,
         int ScheduledSlicesDeleted,
-        int IngestionThrottlesDeleted,
         int QueueRowsDeleted,
         string? Error);
 

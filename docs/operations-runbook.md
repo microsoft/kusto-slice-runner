@@ -53,18 +53,6 @@ dotnet run --project .\src\KoLite.LocalApp\KoLite.LocalApp.csproj -- --Connectio
 | `KoLite:WorkerPool:MaxDispatchStartsPerCycle` | `100` | Maximum execution units started in one dispatcher cycle. This controls start rate, not total in-flight concurrency; the default can launch all 32 chunks of one window in a cycle. |
 | `KoLite:Kusto:AuthMode` | `AzureCli` | Supported values: `AzureCli`, `ManagedIdentity`. |
 | `KoLite:Kusto:ManagedIdentityClientId` | Empty | Optional user-assigned managed identity client ID. |
-| `KoLite:Throttling:Enabled` | `true` | Surfaces the ingestion-throttling advisory page and dashboard banner. Detection/recording is always on; this only gates the advisory surface. |
-| `KoLite:Throttling:WindowMinutes` | `20` | Rolling window over which the throttled-attempt rate and distinct-slice count are measured. |
-| `KoLite:Throttling:MinThrottledSlices` | `3` | Distinct throttled slices on a cluster within the window required before the rate-based advisory shows (a volume floor). |
-| `KoLite:Throttling:RateThresholdPercent` | `5` | Throttled-attempt rate (throttled ÷ all attempts) over the window required to surface a cluster. |
-| `KoLite:Throttling:MinAttemptsForRate` | `20` | Minimum total attempts in the window before the rate gate can trip (avoids a noisy percentage from a tiny denominator). |
-| `KoLite:Throttling:CleanPeriodMinutes` | `15` | A surfaced cluster clears after this long with no new ingestion-throttle observation (hysteresis). |
-| `KoLite:Throttling:TerminalFailureLookbackMinutes` | `60` | How far back a still-unresolved slice that dead-lettered on throttling forces the advisory/banner to show. |
-| `KoLite:Throttling:CatchUpTargetHours` | `24` | Target time within which a backfilling job should clear its backlog; sizes its catch-up floor. |
-| `KoLite:Throttling:DurationLookbackHours` | `6` | How far back successful slice durations are sampled for the keep-up floor. |
-| `KoLite:Throttling:MinDurationSamples` | `5` | Minimum successful samples before a keep-up floor is estimated. |
-| `KoLite:Throttling:DurationPercentile` | `0.75` | Percentile of successful slice durations used as the robust duration estimate. |
-| `KoLite:Throttling:KeepUpSafetyFactor` | `1.5` | Margin above the bare keep-up parallelism (`1.0` = exactly keep up). |
 | `KoLite:UpdateCheck:Enabled` | `true` | Periodically checks GitHub for a newer published KO Lite release. Set `false` to disable. |
 | `KoLite:UpdateCheck:Interval` | `01:00:00` | How often to poll GitHub. Must be greater than zero. |
 | `KoLite:UpdateCheck:Repository` | `microsoft/kusto-slice-runner` | `owner/repo` whose latest published release is compared to the running build. |
@@ -123,7 +111,6 @@ KO Lite deletes **non-authoritative operational telemetry** older than `KoLite:R
   never pruned, so claimable and in-flight work is untouched.
 - `slice_attempts` — per-attempt detail for finished slices (in-progress `Started` attempts are kept).
 - `scheduled_slices` — the scheduling ledger.
-- `ingestion_throttle_observations` — throttle samples.
 
 It **never** touches the authoritative window-history or catalog state: `current_slice_state`,
 `slice_state_events`, `job_definitions`, lifecycle/audit rows, and `rerun_*`/`repair_*` records are
@@ -144,8 +131,8 @@ functional capability:
 
 What you lose for data older than the window is **historical operational detail**: old log lines,
 per-attempt rows on the slice-detail page, and chart depth. To keep the dashboard charts whole
-(their maximum range is 30 days), the chart- and advisor-backing tables (`slice_attempts`,
-`ingestion_throttle_observations`) are never pruned more aggressively than 30 days, even if a shorter
+(their maximum range is 30 days), the chart-backing `slice_attempts` table is
+never pruned more aggressively than 30 days, even if a shorter
 `WindowDays` is configured.
 
 The latest retention outcome (enabled, window, interval, last-run time, and rows deleted) is exposed
@@ -366,19 +353,31 @@ KO Lite right now and over time?". It distinguishes a logical **slice** (one tim
   open-bucket completions still contribute to the live trailing totals. **Refresh** re-reads the
   read-only snapshot and recalculates relative times and ETAs.
 
-## Ingestion throttling advisor
+## Upgrading after throttling-advisor retirement
 
-When a slice fails because Kusto throttled its `.set-or-append` against the cluster's **ingestion capacity policy** (HTTP 429, `Origin: 'CapacityPolicy/Ingestion'`, `CommandType: 'TableSetOrAppend'`), KO Lite records the event and surfaces how bad the throttling is — plus advisory `maxParallelism` reductions — on the **Throttling** page (`/throttling`). The dashboard shows a banner linking there while any cluster is throttled or has recently lost a slice to throttling. The advisor is read-only: it only recommends, and nothing changes until an operator clicks **Reduce to N**.
+The standalone advisor, recommendations/apply workflow, banner, chart, dedicated
+detection, and observation statistics have been removed. `/throttling` and
+`/throttling/apply` return 404. Remove unused `KoLite:Throttling:*` configuration;
+those settings no longer have any effect.
 
-- **Detection.** Every retryable/dead-lettered slice whose error is an ingestion-capacity throttle is recorded as an observation (cluster, slice, attempt, reported capacity, time, and whether it was the slice's terminal dead-letter) in `ingestion_throttle_observations`. Recording is best-effort and isolated, so it never destabilizes a worker, and it is independent of the advisory surface. Other 429s (query/export capacity, or a workload group's request-rate-limit policy) are intentionally **not** treated as ingestion throttles.
-- **Severity.** The page leads with "in the last `WindowMinutes`, **Y%** of slice attempts failed with throttling" (throttled attempts ÷ all attempts) and a time chart of that rate, so you can see how bad it is and whether it is trending up or clearing. The headline remains a current rolling window, while the chart uses complete UTC-aligned five-minute buckets and shows its exact complete-through boundary.
-- **When it shows / clears.** A cluster is surfaced when, over the last `WindowMinutes` (default 20), the throttled-attempt rate is at least `RateThresholdPercent` (default 5%) **and** there are at least `MinThrottledSlices` (default 3) *distinct* throttled slices and `MinAttemptsForRate` (default 20) total attempts. Once surfaced it stays until the cluster has been clean for a continuous `CleanPeriodMinutes` (default 15) with no new throttle (hysteresis, so it does not flap). The distinct-slice and minimum-attempt floors keep a single self-healing 429 or a noisy tiny sample from tripping it.
-- **Lost slices (always shown).** A slice that dead-lettered after consecutive throttled attempts is the worst outcome — a data gap needing a rerun. Any such still-unresolved slice within `TerminalFailureLookbackMinutes` (default 60) **forces** the page/banner to show regardless of the rate gate, and is listed (job, slice window, throttled attempts, state) so you can rerun it.
-- **Keep-up floor (the safety check).** For each active job the advisor estimates `minParallelism = max(1, ceil((D / W) * KeepUpSafetyFactor))`, where `W` is `queryWindowSize` and `D` is a robust recent **successful** slice duration (the `DurationPercentile`, default p75, over `DurationLookbackHours`). Successful-only sampling keeps retry backoff from inflating the floor. A recommendation never drops a job below this floor — and the apply action re-checks it server-side and refuses when it cannot be verified — so a job can always keep up with real time.
-- **Backfill-aware catch-up floor.** A job that is **behind real time** (a real eligible backlog) is intentionally running fast to catch up, so it is *not* trimmed down to the keep-up floor. Instead the advisor sizes a **catch-up floor** = `ceil((D / W) * (1 + B / T) * KeepUpSafetyFactor)`, where `B` is the backlog data-time and `T` is `CatchUpTargetHours` (default 24), and only trims excess above that. The recommendation shows the rough **catch-up ETA trade-off** (current → suggested), holding single-slice execution time constant, so you can see how much a reduction would lengthen the backfill.
-- **Ranking and targeting.** The advisor lists the enabled jobs that are active on the throttled cluster (currently in-flight, themselves throttled in the window, or with a lost slice) and ranks them by **headroom** = current `maxParallelism` − the governing floor, most over-provisioned first. The throttled slice's own job is *not* assumed to be the culprit; jobs already at/below their floor are shown but not offered a reduction, and jobs without enough samples show **Insufficient data**.
-- **Applying.** **Reduce to N** updates only that job's `maxParallelism` through the normal validated catalog update path (audited as `throttle-advisor`, recorded as a definition change). Because it is a definition change, it resets the job's catch-up throughput window briefly. Concurrent edits are detected via optimistic concurrency and reported so you can re-read.
-- **Shared-cluster caveat.** Ingestion capacity is **cluster-wide** and shared across every KO Lite job *and every other tool/user* on that cluster. KO Lite cannot see non-KO-Lite load, so trimming KO Lite may not clear throttling if external load dominates. When throttling persists, also consider the cluster's ingestion **capacity policy** (`.show cluster policy capacity` / `.alter-merge cluster policy capacity`) or scaling the cluster out/up — see the throttling note on the page.
+The first upgraded startup drops `ingestion_throttle_observations` and its
+indexes. Back up the database using the normal safe backup process before
+upgrading, and stop the older app before the new build opens that database.
+Do not start a new UI-only build against an older app's live database: startup
+applies schema changes even with scheduling and retention disabled. Use a
+separate copy for review. Do not copy only the main database file while WAL
+writes are active; use a SQLite-consistent backup or copy the stopped database
+and its sidecars together.
+
+Only dedicated observation data is discarded. Ordinary attempts, errors, logs,
+slice/chunk state, repair/rerun history, and existing audit/retention JSON remain
+intact. Generic Kusto retry/backoff and general failure analysis are unchanged.
+An older binary may recreate an empty observation table but cannot restore the
+discarded data.
+
+`/api/v1/system/status` no longer returns
+`retention.ingestionThrottlesDeleted`; callers must not require that field.
+There is no replacement counter or zero-valued compatibility property.
 
 ## Diagnostics
 

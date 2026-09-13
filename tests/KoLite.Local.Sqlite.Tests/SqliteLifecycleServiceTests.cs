@@ -73,6 +73,8 @@ namespace KoLite.Local.Sqlite.Tests
             Assert.Empty(ReadScalarTexts($"SELECT attempt_id FROM slice_attempts WHERE job_id='{JobId("job.purge")}';"));
             Assert.Contains(ReadScalarTexts($"SELECT action FROM system_audit WHERE subject_id='{JobId("job.purge")}';"), a => a == "HardDeleted");
             Assert.Contains(ReadScalarTexts("SELECT status FROM purge_runs;"), s => s == "Completed");
+            Assert.All(ReadScalarTexts("SELECT payload_json FROM system_audit WHERE action='HardDeleted';"),
+                payload => Assert.DoesNotContain("throttleObservationRows", payload, StringComparison.OrdinalIgnoreCase));
 
             var recreated = catalog.Create(Schedule("job.purge"));
             Assert.Equal(1, recreated.CatalogVersion);
@@ -153,6 +155,8 @@ namespace KoLite.Local.Sqlite.Tests
             Assert.Null(catalog.Get(first.JobId));
             Assert.Null(catalog.Get(second.JobId));
             Assert.Equal(2, ReadScalarTexts("SELECT action FROM system_audit WHERE action='HardDeleted';").Count);
+            Assert.All(ReadScalarTexts("SELECT payload_json FROM system_audit WHERE action='HardDeleted';"),
+                payload => Assert.DoesNotContain("throttleObservationRows", payload, StringComparison.OrdinalIgnoreCase));
             var purgeDetails = Assert.Single(ReadScalarTexts("SELECT details_json FROM purge_runs;"));
             Assert.Contains("\"bulk\":true", purgeDetails);
             Assert.Contains(first.JobId, purgeDetails);

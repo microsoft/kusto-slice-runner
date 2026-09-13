@@ -96,7 +96,6 @@ namespace KoLite.Local.Core.Orchestration
         string? ErrorMessage = null,
         bool IsRetryable = false,
         bool DeadLettered = false,
-        string? ClusterUri = null,
         // Human-facing job label (the job's ActivityId) resolved when the event is raised.
         // Used for readable log rendering; the opaque JobId stays the durable diagnostic key.
         string? DisplayName = null,

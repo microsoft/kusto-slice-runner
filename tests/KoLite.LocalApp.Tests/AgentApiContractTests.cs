@@ -105,6 +105,8 @@ namespace KoLite.LocalApp.Tests
             Assert.True(schemas.TryGetProperty("JobDetailResponse", out _));
             Assert.True(schemas.TryGetProperty("RepairPreviewResponse", out _));
             Assert.True(schemas.TryGetProperty("SystemStatusResponse", out _));
+            var retentionProperties = schemas.GetProperty("RetentionStatusResponse").GetProperty("properties");
+            Assert.False(retentionProperties.TryGetProperty("ingestionThrottlesDeleted", out _));
         }
 
         [Fact]

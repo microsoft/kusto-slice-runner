@@ -301,95 +301,6 @@
     });
   }
 
-  function buildThrottleSeverityChart(canvas, payload) {
-    if (!window.Chart || !canvas || !payload || !payload.points) return null;
-
-    var rangeStart = Date.parse(payload.rangeStartUtc);
-    var rangeEnd = Date.parse(payload.rangeEndUtc);
-    var rangeMs = Math.max(0, rangeEnd - rangeStart);
-    var dataset = {
-      label: "Throttled attempts",
-      data: payload.points.map(function (point) {
-        return {
-          x: point.x,
-          y: point.y,
-          throttled: point.throttled,
-          total: point.total,
-          bucket: point.bucket,
-          label: point.label,
-          percentText: point.percentText
-        };
-      }),
-      borderColor: "#cf222e",
-      backgroundColor: "rgba(207, 34, 46, 0.12)",
-      borderWidth: 2.25,
-      fill: true,
-      pointBorderColor: "#fff",
-      pointBorderWidth: 1.25,
-      pointHitRadius: 10,
-      pointHoverRadius: 10,
-      pointRadius: function (context) {
-        return context.raw && context.raw.y !== null && typeof context.raw.y !== "undefined" ? 4.5 : 0;
-      },
-      tension: 0.22,
-      spanGaps: false
-    };
-
-    return new Chart(canvas, {
-      type: "line",
-      data: { datasets: [dataset] },
-      options: {
-        animation: false,
-        maintainAspectRatio: false,
-        normalized: true,
-        parsing: false,
-        interaction: { intersect: false, mode: "nearest" },
-        plugins: {
-          legend: { display: false },
-          tooltip: {
-            callbacks: {
-              title: function (items) {
-                var raw = items.length ? items[0].raw : null;
-                return formatBucketTitle(raw, payload.bucketMs);
-              },
-              label: function (context) {
-                var raw = context.raw || {};
-                var value = raw.y === null || typeof raw.y === "undefined" ? "n/a" : raw.percentText;
-                var count = typeof raw.throttled === "number" && typeof raw.total === "number"
-                  ? " (" + raw.throttled + "/" + raw.total + ")"
-                  : "";
-                return "Throttled: " + value + count;
-              }
-            }
-          }
-        },
-        scales: {
-          x: {
-            type: "linear",
-            min: rangeStart,
-            max: rangeEnd,
-            grid: { color: "rgba(208, 215, 222, 0.55)" },
-            ticks: {
-              color: "#57606a",
-              maxRotation: 0,
-              callback: function (value) { return formatUtcTick(value, rangeMs); }
-            }
-          },
-          y: {
-            min: 0,
-            suggestedMax: 100,
-            grid: { color: "rgba(208, 215, 222, 0.75)" },
-            ticks: {
-              color: "#57606a",
-              callback: function (value) { return value + "%"; }
-            },
-            title: { display: true, text: "Throttled attempts", color: "#57606a" }
-          }
-        }
-      }
-    });
-  }
-
   function buildExecutionsProcessedChart(canvas, payload) {
     if (!window.Chart || !canvas || !payload || !payload.points) return null;
 
@@ -2062,7 +1973,6 @@
       successRateChartEntries.push({ chart: chart, datasets: chart.data.datasets.slice() });
     }
   });
-  initCharts("data-chartjs-throttle", buildThrottleSeverityChart);
   initCharts("data-chartjs-activity", buildExecutionsProcessedChart);
   initCharts("data-chartjs-job", buildJobDetailChart);
   initJobDetailTabs();

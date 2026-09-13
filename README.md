@@ -33,7 +33,6 @@ If you're familiar with [scheduled Kusto jobs](https://learn.microsoft.com/kusto
 - Visualizes job dependencies as a graph (colored by current job status) from a job's details page or by multi-selecting jobs on the dashboard and choosing "Dependencies". On demand, the graph can also resolve each job's Kusto lineage — the downstream functions/materialized views that consume its output, the upstream tables/functions it reads (including cross-cluster sources), and **implicit** (undeclared) dependencies where a job reads another KO job's output without declaring it.
 - Shows an **Activity** page (`/activity`) with separate logical-slice and execution-unit counts. Chunked windows stay one table row while showing completed/total progress and every running chunk/worker; ETAs use recent whole-window durations, and processed totals/charts count each chunk or unchunked slice as one execution.
 - Bounds local database growth: a retention service prunes old operational telemetry (logs, terminal queue rows, old attempts) on a schedule while preserving the full slice window-history, so reruns and scheduling stay intact.
-- Detects Kusto ingestion-capacity throttling (429), shows how bad it is (the % of attempts throttled, with a trend chart), highlights slices lost to throttling, and recommends per-job `maxParallelism` reductions that never starve a job below the parallelism it needs to keep up (and only trim a backfilling job to what still clears its backlog in time); operators apply them explicitly.
 - Plans historical reruns and local state repair while leaving destructive Kusto cleanup to the operator.
 - Exposes a versioned localhost-only JSON API under `/api/v1` with generated OpenAPI, first-class job create/update/pause/resume, ETag concurrency, safe soft-delete/restore and failed-work repair, plus cursor-paged operational diagnostics. Hard delete, whole-slice rerun, and Kusto cleanup remain browser/operator-only.
 - Ships **Copilot skills** in `.github/skills`: `ko-lite-job-manager` drives that API (import/upsert, pause/resume, soft-delete/restore, diagnostics), `ko-lite-schedule-json` authors and validates schedule JSON locally, and `ko-lite-release-highlights` writes AI highlights for an existing release draft to a local Markdown file.
@@ -54,6 +53,8 @@ az login
 ```
 
 Open `http://127.0.0.1:5057` and check `http://127.0.0.1:5057/healthz`. Detailed local status is at `http://127.0.0.1:5057/api/v1/system/status`. Review the configured jobs and Kusto targets before restarting without the scheduler override. The local catalog and execution history remain in `%LOCALAPPDATA%\KoLite\ko-lite.db`, outside the extracted application folder, so replacing the application folder does not replace your runtime state.
+
+Before upgrading an existing database, review the [throttling-advisor retirement precautions](docs/operations-runbook.md#upgrading-after-throttling-advisor-retirement): startup removes obsolete observation storage while preserving ordinary execution history.
 
 GitHub CLI is optional for basic execution but is required for the update badge; run `gh auth login` once to enable update checks. Copilot-powered failure analysis separately requires [GitHub Copilot CLI](https://docs.github.com/copilot/how-tos/use-copilot-agents/use-copilot-cli); install the `copilot` command and run `copilot login` once.
 

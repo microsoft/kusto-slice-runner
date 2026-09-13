@@ -8,6 +8,18 @@ namespace KoLite.LocalApp.Tests
 {
     public sealed class JobManagerScriptTests
     {
+        [Theory]
+        [InlineData("""{"supportedApiVersions":["v1"],"retention":{"ingestionThrottlesDeleted":2}}""")]
+        [InlineData("""{"supportedApiVersions":["v1"],"retention":{"queueRowsDeleted":1}}""")]
+        public async Task Status_supports_both_pre_and_post_retirement_responses(string body)
+        {
+            await using var server = new FakeHttpServer(_ => Task.FromResult(FakeResponse.Json(body)));
+
+            var result = await RunHelper(server.BaseUrl, "-Action", "System-Status");
+
+            Assert.True(result.ExitCode == 0, result.Error);
+        }
+
         [Fact]
         public async Task Pause_captures_etag_and_sends_if_match()
         {

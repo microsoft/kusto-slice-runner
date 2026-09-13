@@ -5,6 +5,10 @@ import { JSDOM } from "jsdom";
 const html = `<!doctype html>
 <html>
 <body>
+  <figure data-chartjs-throttle="retired-throttle-chart">
+    <canvas id="retired-throttle-chart"></canvas>
+    <script type="application/json" id="retired-throttle-chart-data">{"points":[]}</script>
+  </figure>
   <figure data-chartjs-activity="executions-processed-chart">
     <canvas id="executions-processed-chart"></canvas>
     <script type="application/json" id="executions-processed-chart-data">{"rangeStartUtc":"2026-01-01T00:00:00Z","rangeEndUtc":"2026-01-01T01:00:00Z","bucketMs":3600000,"points":[{"x":1767225600000,"succeeded":3,"failed":1,"total":4,"bucket":"2026-01-01T00:00:00Z","label":"2026-01-01T00:00:00Z"}]}</script>

@@ -45,19 +45,6 @@ namespace KoLite.LocalApp.Tests
         }
 
         [Fact]
-        public void Explicit_bucket_size_uses_the_latest_closed_boundary()
-        {
-            var range = TimeSpan.FromHours(6);
-            var bucketSize = TimeSpan.FromMinutes(5);
-
-            var window = timeSeries.CreateWindow(Now, range, bucketSize);
-
-            Assert.Equal(new DateTimeOffset(2026, 9, 11, 16, 5, 0, TimeSpan.Zero), window.Until);
-            Assert.Equal(window.Until - range, window.Since);
-            Assert.Equal(72, window.Count);
-        }
-
-        [Fact]
         public void Exact_boundary_is_not_rolled_back_one_bucket()
         {
             var now = new DateTimeOffset(2026, 9, 11, 16, 0, 0, TimeSpan.Zero);

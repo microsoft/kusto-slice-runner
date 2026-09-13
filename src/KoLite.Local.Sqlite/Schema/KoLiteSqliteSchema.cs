@@ -3,9 +3,7 @@ using Microsoft.Data.Sqlite;
 
 namespace KoLite.Local.Sqlite.Schema
 {
-    // Provisions the KO Lite SQLite database to the current schema. The schema is a single,
-    // idempotent definition (every statement is CREATE ... IF NOT EXISTS), so EnsureSchema runs on
-    // every startup and is a no-op once the database is already provisioned.
+    // Provisions the current schema and applies narrow, idempotent upgrades on startup.
     public sealed class KoLiteSqliteSchema
     {
         private readonly IKoLiteSqliteConnectionFactory connectionFactory;
@@ -37,9 +35,8 @@ namespace KoLite.Local.Sqlite.Schema
             EnsureColumn(connection, "slice_attempts", "total_chunks", "INTEGER NULL");
             EnsureColumn(connection, "operational_logs", "chunk_id", "INTEGER NULL");
             EnsureColumn(connection, "operational_logs", "total_chunks", "INTEGER NULL");
-            EnsureColumn(connection, "ingestion_throttle_observations", "chunk_id", "INTEGER NULL");
-            EnsureColumn(connection, "ingestion_throttle_observations", "total_chunks", "INTEGER NULL");
             ExecuteNonQuery(connection, AdditiveIndexSql);
+            ExecuteNonQuery(connection, "DROP TABLE IF EXISTS ingestion_throttle_observations;");
         }
 
         private static void ExecuteNonQuery(SqliteConnection connection, string sql)
@@ -414,24 +411,6 @@ namespace KoLite.Local.Sqlite.Schema
             CREATE INDEX IF NOT EXISTS ix_rerun_batches_root_requested ON rerun_batches(root_job_id, requested_at_utc);
             CREATE INDEX IF NOT EXISTS ix_rerun_slices_batch_status ON rerun_slices(rerun_batch_id, status);
             CREATE INDEX IF NOT EXISTS ix_rerun_slices_job_slice ON rerun_slices(job_id, slice_start_utc, slice_end_utc);
-
-            CREATE TABLE IF NOT EXISTS ingestion_throttle_observations (
-                observation_id TEXT NOT NULL PRIMARY KEY,
-                job_id TEXT NOT NULL,
-                cluster_uri TEXT NOT NULL,
-                slice_start_utc TEXT NOT NULL,
-                slice_end_utc TEXT NOT NULL,
-                attempt INTEGER NOT NULL DEFAULT 0,
-                reported_capacity INTEGER NULL,
-                chunk_id INTEGER NULL,
-                total_chunks INTEGER NULL,
-                observed_at_utc TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-                terminal INTEGER NOT NULL DEFAULT 0
-            );
-
-            CREATE INDEX IF NOT EXISTS ix_ingestion_throttle_cluster_observed ON ingestion_throttle_observations(cluster_uri, observed_at_utc);
-            CREATE INDEX IF NOT EXISTS ix_ingestion_throttle_job ON ingestion_throttle_observations(job_id);
-            CREATE INDEX IF NOT EXISTS ix_ingestion_throttle_terminal ON ingestion_throttle_observations(terminal, observed_at_utc);
 
             CREATE INDEX IF NOT EXISTS ix_current_slice_state_last_event ON current_slice_state(last_event_id);
             CREATE INDEX IF NOT EXISTS ix_repair_slices_enqueued_queue_item ON repair_slices(enqueued_queue_item_id);

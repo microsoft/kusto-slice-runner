@@ -96,7 +96,6 @@ namespace KoLite.LocalApp.Retention
                     result.LogsDeleted,
                     result.AttemptsDeleted,
                     result.ScheduledSlicesDeleted,
-                    result.IngestionThrottlesDeleted,
                     result.QueueRowsDeleted,
                     result.TotalDeleted,
                     LastError: null));
@@ -104,13 +103,12 @@ namespace KoLite.LocalApp.Retention
                 if (result.TotalDeleted > 0)
                 {
                     logger.LogInformation(
-                        "Database retention pruned {Total} telemetry rows older than {Cutoff:O} (logs {Logs}, attempts {Attempts}, scheduled {Scheduled}, throttles {Throttles}, queue {Queue}).",
+                        "Database retention pruned {Total} telemetry rows older than {Cutoff:O} (logs {Logs}, attempts {Attempts}, scheduled {Scheduled}, queue {Queue}).",
                         result.TotalDeleted,
                         cutoffUtc,
                         result.LogsDeleted,
                         result.AttemptsDeleted,
                         result.ScheduledSlicesDeleted,
-                        result.IngestionThrottlesDeleted,
                         result.QueueRowsDeleted);
                 }
                 else

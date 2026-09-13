@@ -141,6 +141,29 @@ namespace KoLite.LocalApp.Tests
                 && HasValue(entry, "TotalChunks", 4));
         }
 
+        [Fact]
+        public void Ingestion_errors_use_the_normal_worker_warning()
+        {
+            var provider = new RecordingLoggerProvider();
+            using var factory = CreateFactory(provider);
+            using var scope = factory.Services.CreateScope();
+            var sink = scope.ServiceProvider.GetRequiredService<ILocalWorkerProgressSink>();
+
+            sink.RecordFinished(new LocalWorkerProgressEvent(
+                "job", "queue", At(0), At(5), 1, "worker",
+                LocalWorkerProgressStatus.FailedRetryable, At(10), CompletedAtUtc: At(11),
+                ErrorCode: "KustoRequestThrottledException",
+                ErrorMessage: "CapacityPolicy/Ingestion", IsRetryable: true));
+
+            Assert.Contains(provider.Entries, entry =>
+                entry.Level == LogLevel.Warning
+                && HasValue(entry, "CompletionStatus", LocalWorkerProgressStatus.FailedRetryable)
+                && HasValue(entry, "ErrorCode", "KustoRequestThrottledException")
+                && HasValue(entry, "ErrorMessage", "CapacityPolicy/Ingestion"));
+            Assert.DoesNotContain(provider.Entries, entry =>
+                entry.Message.Contains("Failed to record ingestion throttle", StringComparison.Ordinal));
+        }
+
         public void Dispose()
         {
             TestCleanup.DeleteDirectoryBestEffort(testDirectory);

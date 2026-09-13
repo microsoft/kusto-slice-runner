@@ -7,6 +7,8 @@ Reads and safely manages KO Lite jobs through the versioned localhost agent API.
 Drives /api/v1 with named request contracts, Problem Details errors, ETag/If-Match
 catalog concurrency, repair preview approval, and optional cursor continuation.
 It never exposes hard delete, whole-slice rerun, Kusto cleanup, or arbitrary Kusto writes.
+System-Status returns the server's JSON unchanged across v1 versions; no action
+requires the retired retention.ingestionThrottlesDeleted statistic.
 
 .PARAMETER Action
 Health, System-Status, Get-Jobs, Get-Job, Create, Update, Export, Import, Pause,

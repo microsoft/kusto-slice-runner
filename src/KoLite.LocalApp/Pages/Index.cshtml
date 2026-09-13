@@ -23,14 +23,6 @@
     </div>
 </div>
 
-@if (Model.ThrottledClusterCount > 0)
-{
-    <div class="alert warning" role="alert">
-        @Model.ThrottledClusterCount cluster(s) under ingestion throttling or with slices recently lost to throttling.
-        <a href="/throttling">View throttling severity and recommendations</a>.
-    </div>
-}
-
 @if (!string.IsNullOrEmpty(Model.BulkOperationSummary))
 {
     <div class="bulk-summary-banner" role="status">@Model.BulkOperationSummary</div>

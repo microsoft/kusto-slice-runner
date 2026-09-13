@@ -162,6 +162,45 @@ namespace KoLite.LocalApp.Tests
             Assert.Contains("& dotnet", script, StringComparison.Ordinal);
         }
 
+        [Theory]
+        [InlineData(false)]
+        [InlineData(true)]
+        public async Task Database_discovery_accepts_status_before_and_after_counter_retirement(bool includeRetiredCounter)
+        {
+            var packageDirectory = CreatePackageDirectory();
+            try
+            {
+                var databasePath = Path.Combine(packageDirectory, "compat.db");
+                File.WriteAllText(databasePath, string.Empty);
+                var retention = new Dictionary<string, int> { ["queueRowsDeleted"] = 1 };
+                if (includeRetiredCounter)
+                {
+                    retention["ingestionThrottlesDeleted"] = 2;
+                }
+                var body = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    supportedApiVersions = new[] { "v1" },
+                    database = new { path = databasePath },
+                    retention
+                });
+                await using var server = new IncompatibleHttpServer(200, body);
+
+                var result = await RunPowerShellAsync(
+                    Path.Combine(FindRepositoryRoot(), "scripts", "Get-KoLiteDatabase.ps1"),
+                    "-BaseUrl", server.BaseUrl,
+                    "-DatabaseRoot", packageDirectory);
+
+                Assert.True(result.ExitCode == 0, result.Error);
+                Assert.Contains("compat.db", result.Output, StringComparison.Ordinal);
+                Assert.Equal(0, server.PostCount);
+                Assert.Equal(string.Empty, File.ReadAllText(databasePath));
+            }
+            finally
+            {
+                Directory.Delete(packageDirectory, recursive: true);
+            }
+        }
+
         [Fact]
         public void Start_script_dry_run_prefers_self_contained_executable()
         {

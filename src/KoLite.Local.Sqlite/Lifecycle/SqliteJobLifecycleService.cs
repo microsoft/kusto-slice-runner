@@ -144,7 +144,6 @@ namespace KoLite.Local.Sqlite.Lifecycle
                 counts.LogRows,
                 counts.StateRows,
                 counts.StateEventRows,
-                counts.ThrottleObservationRows,
                 counts.RepairSliceRows,
                 counts.RepairBatchRows,
                 counts.SummaryRows,
@@ -217,7 +216,6 @@ namespace KoLite.Local.Sqlite.Lifecycle
                     counts.LogRows,
                     counts.StateRows,
                     counts.StateEventRows,
-                    counts.ThrottleObservationRows,
                     counts.RepairSliceRows,
                     counts.RepairBatchRows,
                     counts.SummaryRows,
@@ -374,7 +372,6 @@ namespace KoLite.Local.Sqlite.Lifecycle
             var logRows = Delete(c, tx, "operational_logs", "job_id=$job", jobId);
             var stateEventRows = Delete(c, tx, "slice_state_events", "job_id=$job", jobId);
             var stateRows = Delete(c, tx, "current_slice_state", "job_id=$job", jobId);
-            var throttleObservationRows = Delete(c, tx, "ingestion_throttle_observations", "job_id=$job", jobId);
             var repairSliceRows = Delete(c, tx, "repair_slices", "job_id=$job", jobId);
             var repairBatchRows = DeleteRepairBatches(c, tx, repairBatchIds);
             var summaryRows = Delete(c, tx, "failure_summary_runs", "job_id=$job", jobId);
@@ -389,7 +386,6 @@ namespace KoLite.Local.Sqlite.Lifecycle
                 logRows,
                 stateRows,
                 stateEventRows,
-                throttleObservationRows,
                 repairSliceRows,
                 repairBatchRows,
                 summaryRows,
@@ -519,14 +515,13 @@ namespace KoLite.Local.Sqlite.Lifecycle
             int LogRows,
             int StateRows,
             int StateEventRows,
-            int ThrottleObservationRows,
             int RepairSliceRows,
             int RepairBatchRows,
             int SummaryRows,
             int LifecycleRows,
             int EventRows)
         {
-            public static HardDeleteCounts Empty { get; } = new(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+            public static HardDeleteCounts Empty { get; } = new(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
 
             public static HardDeleteCounts operator +(HardDeleteCounts left, HardDeleteCounts right) => new(
                 left.JobRows + right.JobRows,
@@ -536,7 +531,6 @@ namespace KoLite.Local.Sqlite.Lifecycle
                 left.LogRows + right.LogRows,
                 left.StateRows + right.StateRows,
                 left.StateEventRows + right.StateEventRows,
-                left.ThrottleObservationRows + right.ThrottleObservationRows,
                 left.RepairSliceRows + right.RepairSliceRows,
                 left.RepairBatchRows + right.RepairBatchRows,
                 left.SummaryRows + right.SummaryRows,

@@ -13,8 +13,8 @@ namespace KoLite.LocalApp.Retention
         public static TimeSpan DefaultInitialDelay { get; } = TimeSpan.FromMinutes(2);
         public const int DefaultBatchSize = 2000;
 
-        // Chart- and advisor-backing tables (slice_attempts, ingestion_throttle_observations) are
-        // never pruned more aggressively than the dashboard's maximum selectable chart range, so the
+        // Chart-backing slice_attempts are never pruned more aggressively than the dashboard's
+        // maximum selectable chart range, so the
         // 30-day charts always stay whole even when a shorter retention window is configured.
         public static TimeSpan MinProtectedWindow { get; } = TimeSpan.FromDays(30);
 

@@ -40,7 +40,7 @@ durable `id`, dependency edges, slice history, or output idempotency.
 | `outputTable` | Yes | Kusto table appended by `.set-or-append`. Must be a safe Kusto identifier when executed. |
 | `queryWindowSize` | Yes | Positive `TimeSpan`; each slice covers this window size. |
 | `delayFromUtcNow` | Yes | Non-negative `TimeSpan`; delays scheduling near-real-time windows. |
-| `maxParallelism` | Yes | Minimum `1`, with no upper limit. Hard per-job concurrency bound measured in execution units: chunks for chunked jobs, otherwise logical slices. Enforced at claim time across scheduled work, retries, repairs, and recovery. When a cluster is under sustained ingestion throttling, the [throttling advisor](operations-runbook.md#ingestion-throttling-advisor) may recommend reducing this (never below the job's keep-up floor); reductions are applied only when an operator confirms them. |
+| `maxParallelism` | Yes | Minimum `1`, with no upper limit. Hard per-job concurrency bound measured in execution units: chunks for chunked jobs, otherwise logical slices. Enforced at claim time across scheduled work, retries, repairs, and recovery. |
 | `queryTimeout` | Yes | Positive `TimeSpan`; used for Kusto server timeout and queue lease sizing. |
 | `chunks` | No | Integer `1..32`. Presence splits every logical window into 0-based chunks and changes the Kusto function signature. Immutable after the job starts. |
 | `isPaused` | No | Defaults to `false`. Paused jobs do not schedule or claim queued retries. |
