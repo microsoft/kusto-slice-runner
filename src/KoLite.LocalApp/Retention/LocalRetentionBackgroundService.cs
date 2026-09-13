@@ -90,25 +90,17 @@ namespace KoLite.LocalApp.Retention
                 var observability = scope.ServiceProvider.GetRequiredService<SqliteOperationalReadModelRepository>();
                 var result = observability.CleanupOldReadModels(cutoffUtc, protectedCutoffUtc, options.BatchSize);
 
-                runtimeState.Update(new RetentionSnapshot(
-                    Enabled: true,
-                    LastRunUtc: nowUtc,
-                    result.LogsDeleted,
-                    result.AttemptsDeleted,
-                    result.ScheduledSlicesDeleted,
-                    result.IngestionThrottlesDeleted,
-                    result.QueueRowsDeleted,
-                    result.TotalDeleted,
-                    LastError: null));
+                runtimeState.Update(RetentionSnapshot.Completed(nowUtc, result));
 
                 if (result.TotalDeleted > 0)
                 {
                     logger.LogInformation(
-                        "Database retention pruned {Total} telemetry rows older than {Cutoff:O} (logs {Logs}, attempts {Attempts}, scheduled {Scheduled}, throttles {Throttles}, queue {Queue}).",
+                        "Database retention pruned {Total} telemetry rows older than {Cutoff:O} (logs {Logs}, attempt details {Attempts}, performance facts {PerformanceAttempts}, scheduled {Scheduled}, throttles {Throttles}, queue {Queue}).",
                         result.TotalDeleted,
                         cutoffUtc,
                         result.LogsDeleted,
                         result.AttemptsDeleted,
+                        result.PerformanceAttemptsDeleted,
                         result.ScheduledSlicesDeleted,
                         result.IngestionThrottlesDeleted,
                         result.QueueRowsDeleted);

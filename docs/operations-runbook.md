@@ -122,6 +122,7 @@ KO Lite deletes **non-authoritative operational telemetry** older than `KoLite:R
 - `work_queue` — only **terminal** rows (`Completed`/`DeadLettered`); `Queued`/`Leased` rows are
   never pruned, so claimable and in-flight work is untouched.
 - `slice_attempts` — per-attempt detail for finished slices (in-progress `Started` attempts are kept).
+- `performance_attempts` — bounded attempt-performance facts and resource measurements, using the protected chart-retention window rather than deleting them when a slice is rerun.
 - `scheduled_slices` — the scheduling ledger.
 - `ingestion_throttle_observations` — throttle samples.
 
@@ -145,11 +146,13 @@ functional capability:
 What you lose for data older than the window is **historical operational detail**: old log lines,
 per-attempt rows on the slice-detail page, and chart depth. To keep the dashboard charts whole
 (their maximum range is 30 days), the chart- and advisor-backing tables (`slice_attempts`,
-`ingestion_throttle_observations`) are never pruned more aggressively than 30 days, even if a shorter
+`performance_attempts`, `ingestion_throttle_observations`) are never pruned more aggressively than 30 days, even if a shorter
 `WindowDays` is configured.
 
 The latest retention outcome (enabled, window, interval, last-run time, and rows deleted) is exposed
 under `retention` in `/api/v1/system/status`.
+Its existing `attemptsDeleted` subtotal covers both attempt-detail and performance-fact rows.
+Retention logs and the durable cleanup details distinguish the two counts; the status shape is unchanged.
 
 ### Reclaiming file space (manual VACUUM)
 
@@ -334,6 +337,8 @@ The **Job details** page (`/jobs/{jobId}`) shows a catch-up estimate card above 
 The **Activity** page (`/activity`, linked in the top nav) answers "how much work is flowing through
 KO Lite right now and over time?". It distinguishes a logical **slice** (one time window) from an
 **execution unit** (one chunk for a chunked job, or the slice itself for an unchunked job).
+The **Live** subview retains these operational counts and charts; **Performance** compares
+historical resource use and attempt reliability.
 
 - **Running now counts.** **Logical slices running/queued** count parent time windows, so four running
   chunks in one window contribute one running logical slice. **Executions running** counts active
@@ -365,6 +370,54 @@ KO Lite right now and over time?". It distinguishes a logical **slice** (one tim
   UTC-aligned buckets and displays the exact boundary through which chart data is complete; current
   open-bucket completions still contribute to the live trailing totals. **Refresh** re-reads the
   read-only snapshot and recalculates relative times and ETAs.
+
+### Performance comparison
+
+Open **Activity -> Performance** (`/activity?view=performance`). Select the last **1 hour**,
+**24 hours**, **7 days** (default), or **30 days**. The selected interval is an exact trailing
+UTC completion-time interval, including recent completions in a chart's still-open bucket.
+Existing Live/dashboard chart defaults and bucket boundaries are unchanged.
+
+Each job row pools its successful query attempts. Expand a chunked job to see raw 0-based chunk IDs
+with the same metrics; IDs are not interpreted as regions. Successful chunks contribute even if
+their parent window is incomplete. Paused and completed jobs with history remain useful comparison
+subjects. Sorting/filtering keeps each job and its children together.
+
+| Columns | Meaning |
+| --- | --- |
+| Completed attempts | All known completed attempt outcomes in the period, including retryable failures, dead letters, and lease loss. Running and unknown outcomes are not reported. |
+| Attempt success | Successful attempts divided by completed attempts, not eventual logical-window success. Sixteen successful chunks plus one failed retry means 17 attempts and approximately 94.1%. |
+| CPU P50/P90/P95 | Kusto command `TotalCpu` in seconds. CPU time can exceed elapsed time. |
+| Duration P50/P90/P95 | Server-side `.set-or-append` duration in seconds, never worker elapsed time, scheduling wait, or whole-window latency. |
+| Memory peak P50/P90/P95 | Kusto-reported `MemoryPeak` in GiB (`bytes / 1024^3`), not inferred concurrent job memory. |
+| Metric samples | Valid successful-attempt measurements contributing to each resource family. Different family counts are shown separately. |
+
+Percentiles use exact nearest rank over the underlying samples. Job totals are not averages of
+chunk percentiles or percentages. Missing measurements show `n/a`, not zero; one sample legitimately
+has identical P50/P90/P95. Known idempotent duplicate-suppression successes do not create artificial
+zero-cost samples. Resource gaps do not remove known attempts from the reliability denominator.
+
+**Automatic collection.** In a normal execution-enabled instance, a built-in background service
+reads bounded `.show commands-and-queries` metadata from the recorded job targets and stores the
+selected statistics in SQLite. There is no feature opt-in or off switch. It runs independently of
+worker slots, including while jobs are paused or workers are idle. Page loads, refreshes, sorting,
+filtering, and chunk disclosure never request Kusto statistics directly.
+
+The collector processes small batches sequentially, limits request duration, backs off on delayed
+visibility/authentication/throttling errors, and stops new work during drain. Failures are visible
+through collection status and logs and cannot cause a job retry or change a slice outcome.
+
+**Upgrade and coverage.** Recent current attempts and retained rerun snapshots are reconciled
+automatically. Initial local-history indexing and subsequent resource backfill are shown separately
+from complete measurements. Kusto history is available for 30 days and is scoped by the configured
+identity's permissions. Older reused client request IDs require unambiguous target/timing evidence;
+inaccessible, expired, or ambiguous history stays unavailable rather than being guessed. Whole-slice
+rerun does not erase earlier attempts from Performance; hard deletion of the job does.
+
+**UI-only mode.** `KoLite:Scheduler:Enabled=false` suppresses collection and backfill as well as
+scheduling/worker dispatch. The Performance view still displays already stored statistics. An
+alternate port/database, Development environment, `AllowMultipleInstances`, or disabling retention
+alone is not a no-execution mode. `Start-KoLiteUi.ps1` supplies the required scheduler override.
 
 ## Ingestion throttling advisor
 

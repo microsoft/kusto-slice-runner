@@ -26,8 +26,20 @@ namespace KoLite.Local.Kusto.Execution
         string CommandText,
         TimeSpan Timeout)
     {
-        public string ClientRequestId => $"KoLite.Local.Output;{OperationId}";
+        public string? ClientRequestIdOverride { get; init; }
+        public string ClientRequestId => ClientRequestIdOverride ?? $"KoLite.Local.Output;{OperationId}";
         public string OutputReference => $"ko-lite:{ExecutionKey}";
+
+        internal KustoExecutionRequest WithAttempt(LocalSliceAttemptContext attempt)
+        {
+            ArgumentNullException.ThrowIfNull(attempt);
+            if (string.IsNullOrWhiteSpace(attempt.AttemptId) || string.IsNullOrWhiteSpace(attempt.ClientRequestId))
+            {
+                throw new InvalidOperationException("Kusto output requires an attempt identity and client request ID.");
+            }
+
+            return this with { ClientRequestIdOverride = attempt.ClientRequestId };
+        }
     }
 
     public sealed record KustoExecutionResult(bool Succeeded, string? OutputReference, IReadOnlyDictionary<string, string> Metadata, KustoExecutionError? Error = null);
@@ -36,6 +48,8 @@ namespace KoLite.Local.Kusto.Execution
     {
         KustoExecutionRequest Build(JobDefinition job, SliceRange slice);
         KustoExecutionRequest Build(JobDefinition job, SliceExecutionUnit execution);
+        KustoExecutionRequest Build(JobDefinition job, SliceExecutionUnit execution, LocalSliceAttemptContext attempt) =>
+            Build(job, execution).WithAttempt(attempt);
     }
     public interface IKustoExecutor { Task<KustoExecutionResult> ExecuteAsync(KustoExecutionRequest request, CancellationToken cancellationToken = default); }
 
@@ -43,6 +57,9 @@ namespace KoLite.Local.Kusto.Execution
     {
         public KustoExecutionRequest Build(JobDefinition job, SliceRange slice) =>
             Build(job, SliceExecutionUnit.Unchunked(slice));
+
+        public KustoExecutionRequest Build(JobDefinition job, SliceExecutionUnit execution, LocalSliceAttemptContext attempt) =>
+            Build(job, execution).WithAttempt(attempt);
 
         public KustoExecutionRequest Build(JobDefinition job, SliceExecutionUnit execution)
         {
@@ -150,16 +167,30 @@ namespace KoLite.Local.Kusto.Execution
         public async Task<LocalSliceOutputResult> ExecuteAsync(JobDefinition job, SliceRange slice, CancellationToken cancellationToken = default)
             => await ExecuteAsync(job, SliceExecutionUnit.Unchunked(slice), cancellationToken).ConfigureAwait(false);
 
-        public async Task<LocalSliceOutputResult> ExecuteAsync(JobDefinition job, SliceExecutionUnit execution, CancellationToken cancellationToken = default)
+        public Task<LocalSliceOutputResult> ExecuteAsync(JobDefinition job, SliceExecutionUnit execution, CancellationToken cancellationToken = default) =>
+            ExecuteCoreAsync(job, execution, null, cancellationToken);
+
+        public Task<LocalSliceOutputResult> ExecuteAsync(JobDefinition job, SliceExecutionUnit execution, LocalSliceAttemptContext attempt, CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(attempt);
+            return ExecuteCoreAsync(job, execution, attempt, cancellationToken);
+        }
+
+        private async Task<LocalSliceOutputResult> ExecuteCoreAsync(JobDefinition job, SliceExecutionUnit execution, LocalSliceAttemptContext? attempt, CancellationToken cancellationToken)
         {
             KustoExecutionRequest request;
             try
             {
-                request = requestBuilder.Build(job, execution);
+                request = attempt is null
+                    ? requestBuilder.Build(job, execution)
+                    : requestBuilder.Build(job, execution, attempt);
             }
             catch (InvalidOperationException ex)
             {
-                return LocalSliceOutputResult.Failure("KustoRequestInvalid", ex.Message, isRetryable: false);
+                return LocalSliceOutputResult.Failure("KustoRequestInvalid", ex.Message, isRetryable: false) with
+                {
+                    ClientRequestId = attempt?.ClientRequestId
+                };
             }
 
             KustoExecutionResult result;
@@ -169,16 +200,37 @@ namespace KoLite.Local.Kusto.Execution
             }
             catch (InvalidOperationException ex)
             {
-                return LocalSliceOutputResult.Failure("LiveKustoExecutionUnavailable", ex.Message, isRetryable: false);
+                return LocalSliceOutputResult.Failure("LiveKustoExecutionUnavailable", ex.Message, isRetryable: false) with
+                {
+                    ClientRequestId = request.ClientRequestId
+                };
             }
             catch (NotSupportedException ex)
             {
-                return LocalSliceOutputResult.Failure("LiveKustoExecutionUnavailable", ex.Message, isRetryable: false);
+                return LocalSliceOutputResult.Failure("LiveKustoExecutionUnavailable", ex.Message, isRetryable: false) with
+                {
+                    ClientRequestId = request.ClientRequestId
+                };
             }
 
-            if (result.Succeeded) return LocalSliceOutputResult.Success(result.OutputReference);
-            var error = result.Error ?? KustoErrorClassifier.Classify("KustoExecutionFailed", "Kusto execution failed without a detailed error.");
-            return LocalSliceOutputResult.Failure(error.Code, error.Message, error.IsRetryable, error.IsPermanent, error.FailureCode, error.FailureSubCode);
+            LocalSliceOutputResult localResult;
+            if (result.Succeeded)
+            {
+                localResult = LocalSliceOutputResult.Success(result.OutputReference);
+            }
+            else
+            {
+                var error = result.Error ?? KustoErrorClassifier.Classify("KustoExecutionFailed", "Kusto execution failed without a detailed error.");
+                localResult = LocalSliceOutputResult.Failure(error.Code, error.Message, error.IsRetryable, error.IsPermanent, error.FailureCode, error.FailureSubCode);
+            }
+
+            return localResult with
+            {
+                ClientRequestId = request.ClientRequestId,
+                DuplicateSuppressed = result.Metadata.TryGetValue("duplicateSuppressed", out var value) && bool.TryParse(value, out var suppressed)
+                    ? suppressed
+                    : null
+            };
         }
     }
 
@@ -221,11 +273,11 @@ namespace KoLite.Local.Kusto.Execution
             }
             catch (KustoRequestException ex)
             {
-                return Failure(ex);
+                return Failure(request, ex);
             }
             catch (KustoServiceException ex)
             {
-                return Failure(ex);
+                return Failure(request, ex);
             }
         }
 
@@ -237,10 +289,14 @@ namespace KoLite.Local.Kusto.Execution
                 ["duplicateSuppressed"] = duplicateSuppressed ? "true" : "false"
             });
 
-        private static KustoExecutionResult Failure(KustoException exception)
+        private static KustoExecutionResult Failure(KustoExecutionRequest request, KustoException exception)
         {
             var error = KustoErrorClassifier.Classify(exception);
-            return new KustoExecutionResult(false, null, new Dictionary<string, string>(), error);
+            return new KustoExecutionResult(false, null, new Dictionary<string, string>
+            {
+                ["clientRequestId"] = request.ClientRequestId,
+                ["idempotencyKey"] = request.IdempotencyKey
+            }, error);
         }
 
         private static void ValidateRequest(KustoExecutionRequest request)
@@ -248,6 +304,7 @@ namespace KoLite.Local.Kusto.Execution
             if (string.IsNullOrWhiteSpace(request.OutputTable)) throw new ArgumentException("OutputTable is required before executing Kusto output.", nameof(request));
             if (string.IsNullOrWhiteSpace(request.SliceKey)) throw new ArgumentException("SliceKey is required before executing Kusto output.", nameof(request));
             if (string.IsNullOrWhiteSpace(request.OperationId)) throw new ArgumentException("OperationId is required before executing Kusto output.", nameof(request));
+            if (string.IsNullOrWhiteSpace(request.ClientRequestId)) throw new ArgumentException("ClientRequestId is required before executing Kusto output.", nameof(request));
             if (string.IsNullOrWhiteSpace(request.IdempotencyKey)) throw new ArgumentException("IdempotencyKey is required before executing Kusto output.", nameof(request));
             if (string.IsNullOrWhiteSpace(request.IngestByTag)) throw new ArgumentException("IngestByTag is required before executing Kusto output.", nameof(request));
         }

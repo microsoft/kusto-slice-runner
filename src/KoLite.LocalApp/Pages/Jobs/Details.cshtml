@@ -31,6 +31,10 @@ else
         <partial name="_PausedIndicator" model="data" />
         <div class="button-row">
             <a class="btn" href="/">Back to jobs</a>
+            @if (data.Lifecycle?.IsSoftDeleted != true)
+            {
+                <a class="btn" href="/activity?view=performance&amp;range=7d&amp;jobId=@Uri.EscapeDataString(data.Job.JobId)">Performance</a>
+            }
             <a class="btn" href="/jobs/@Uri.EscapeDataString(data.Job.JobId)/export">Export</a>
             <a class="btn" href="/jobs/@Uri.EscapeDataString(data.Job.JobId)/copy">Copy</a>
             @if (data.Lifecycle?.IsSoftDeleted == true)

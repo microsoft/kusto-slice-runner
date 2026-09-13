@@ -99,6 +99,66 @@ namespace KoLite.Local.Kusto.Tests
         }
 
         [Theory]
+        [InlineData(1)]
+        [InlineData(32)]
+        public void Attempt_correlation_changes_neither_chunk_ingestion_identity_nor_command(int chunks)
+        {
+            var builder = new KustoRequestBuilder();
+            var job = Job() with { Chunks = chunks };
+            var slice = new SliceRange("job_kusto", At(0), At(5));
+            var requests = new List<KustoExecutionRequest>();
+
+            for (var chunkId = 0; chunkId < chunks; chunkId++)
+            {
+                var execution = SliceExecutionUnit.Chunk(slice, chunkId, chunks);
+                var firstAttempt = new LocalSliceAttemptContext($"chunk-{chunkId}-attempt-1", $"KoLite.Local.Output;{Guid.NewGuid():N}");
+                var nextAttempt = new LocalSliceAttemptContext($"chunk-{chunkId}-attempt-2", $"KoLite.Local.Output;{Guid.NewGuid():N}");
+                var legacy = builder.Build(job, execution);
+                var first = builder.Build(job, execution, firstAttempt);
+                var replay = builder.Build(job, execution, nextAttempt);
+
+                Assert.Equal(firstAttempt.ClientRequestId, first.ClientRequestId);
+                Assert.Equal(nextAttempt.ClientRequestId, replay.ClientRequestId);
+                Assert.NotEqual(first.ClientRequestId, replay.ClientRequestId);
+                Assert.Equal(first, builder.Build(job, execution, firstAttempt));
+                Assert.Equal(legacy, first with { ClientRequestIdOverride = null });
+                Assert.Equal(legacy, replay with { ClientRequestIdOverride = null });
+                Assert.Contains($", {chunkId}, {chunks}, dynamic(", first.CommandText, StringComparison.Ordinal);
+                requests.Add(first);
+            }
+
+            Assert.Equal(chunks, requests.Select(request => request.ExecutionKey).Distinct(StringComparer.Ordinal).Count());
+            Assert.Equal(chunks, requests.Select(request => request.IdempotencyKey).Distinct(StringComparer.Ordinal).Count());
+            Assert.Equal(chunks, requests.Select(request => request.IngestByTag).Distinct(StringComparer.Ordinal).Count());
+            Assert.Equal(chunks, requests.Select(request => request.ClientRequestId).Distinct(StringComparer.Ordinal).Count());
+        }
+
+        [Theory]
+        [InlineData("", "request")]
+        [InlineData("attempt", " ")]
+        public void Request_builder_rejects_missing_attempt_correlation(string attemptId, string clientRequestId)
+        {
+            var execution = SliceExecutionUnit.Unchunked(new SliceRange("job_kusto", At(0), At(5)));
+
+            Assert.Throws<InvalidOperationException>(() => new KustoRequestBuilder().Build(
+                Job(), execution, new LocalSliceAttemptContext(attemptId, clientRequestId)));
+        }
+
+        [Fact]
+        public void Legacy_request_builder_implementations_support_the_attempt_overload()
+        {
+            IKustoRequestBuilder builder = new LegacyRequestBuilder();
+            var execution = SliceExecutionUnit.Chunk(new SliceRange("job_kusto", At(0), At(5)), 0, 1);
+            var attempt = new LocalSliceAttemptContext("attempt-1", "KoLite.Local.Output;attempt-1");
+
+            var request = builder.Build(Job() with { Chunks = 1 }, execution, attempt);
+
+            Assert.Equal(attempt.ClientRequestId, request.ClientRequestId);
+            Assert.Equal(0, request.ChunkId);
+            Assert.Equal(1, request.TotalChunks);
+        }
+
+        [Theory]
         [InlineData("{}")]
         [InlineData("[]")]
         [InlineData("null")]
@@ -141,6 +201,80 @@ namespace KoLite.Local.Kusto.Tests
             Assert.Equal("ko-lite:job_kusto", result.OutputReference);
             Assert.Single(live.Requests);
             Assert.Equal("OutputTable", live.Requests[0].OutputTable);
+            Assert.Equal(live.Requests[0].ClientRequestId, result.ClientRequestId);
+            Assert.Null(result.DuplicateSuppressed);
+        }
+
+        [Theory]
+        [InlineData(true, true)]
+        [InlineData(true, false)]
+        [InlineData(false, true)]
+        [InlineData(false, false)]
+        public async Task Local_slice_executor_retains_attempt_and_duplicate_metadata_on_results(bool succeeded, bool duplicateSuppressed)
+        {
+            var live = new RecordingKustoExecutor(new KustoExecutionResult(
+                succeeded,
+                succeeded ? "output-reference" : null,
+                new Dictionary<string, string> { ["duplicateSuppressed"] = duplicateSuppressed.ToString() },
+                succeeded ? null : new KustoExecutionError("Failure", "Failure message.", IsRetryable: true, IsPermanent: false, FailureCode: 429)));
+            ILocalSliceOutputExecutor executor = new KustoLocalSliceOutputExecutor(new KustoRequestBuilder(), live);
+            var attempt = new LocalSliceAttemptContext("attempt-1", "KoLite.Local.Output;attempt-1");
+
+            var result = await executor.ExecuteAsync(
+                Job(), SliceExecutionUnit.Unchunked(new SliceRange("job_kusto", At(0), At(5))), attempt);
+
+            Assert.Equal(succeeded, result.Succeeded);
+            Assert.Equal(attempt.ClientRequestId, Assert.Single(live.Requests).ClientRequestId);
+            Assert.Equal(attempt.ClientRequestId, result.ClientRequestId);
+            Assert.Equal(duplicateSuppressed, result.DuplicateSuppressed);
+            if (!succeeded)
+            {
+                Assert.Equal("Failure", result.ErrorCode);
+                Assert.Equal("Failure message.", result.ErrorMessage);
+                Assert.True(result.IsRetryable);
+                Assert.False(result.IsPermanent);
+                Assert.Equal(429, result.FailureCode);
+            }
+        }
+
+        [Fact]
+        public async Task Local_slice_executor_retains_correlation_when_building_the_request_fails()
+        {
+            var live = new RecordingKustoExecutor();
+            var executor = new KustoLocalSliceOutputExecutor(new KustoRequestBuilder(), live);
+            var attempt = new LocalSliceAttemptContext("attempt-1", "KoLite.Local.Output;attempt-1");
+
+            var result = await executor.ExecuteAsync(
+                Job() with { OutputTable = "unsafe;table" },
+                SliceExecutionUnit.Unchunked(new SliceRange("job_kusto", At(0), At(5))),
+                attempt);
+
+            Assert.False(result.Succeeded);
+            Assert.False(result.IsRetryable);
+            Assert.Equal("KustoRequestInvalid", result.ErrorCode);
+            Assert.Equal(attempt.ClientRequestId, result.ClientRequestId);
+            Assert.Null(result.DuplicateSuppressed);
+            Assert.Empty(live.Requests);
+        }
+
+        [Theory]
+        [InlineData(false)]
+        [InlineData(true)]
+        public async Task Local_slice_executor_retains_correlation_when_live_execution_is_unavailable(bool notSupported)
+        {
+            Exception failure = notSupported ? new NotSupportedException("Unavailable.") : new InvalidOperationException("Unavailable.");
+            var executor = new KustoLocalSliceOutputExecutor(
+                new KustoRequestBuilder(), new KustoSdkExecutor(new ThrowingControlCommandClientFactory(failure)));
+            var attempt = new LocalSliceAttemptContext("attempt-1", "KoLite.Local.Output;attempt-1");
+
+            var result = await executor.ExecuteAsync(
+                Job(), SliceExecutionUnit.Unchunked(new SliceRange("job_kusto", At(0), At(5))), attempt);
+
+            Assert.False(result.Succeeded);
+            Assert.False(result.IsRetryable);
+            Assert.Equal("LiveKustoExecutionUnavailable", result.ErrorCode);
+            Assert.Equal(attempt.ClientRequestId, result.ClientRequestId);
+            Assert.Null(result.DuplicateSuppressed);
         }
 
         // Regression guard for the bug where Kusto low-memory failures were dead-lettered on the
@@ -394,6 +528,85 @@ namespace KoLite.Local.Kusto.Tests
         }
 
         [Fact]
+        public async Task Production_attempt_overload_sends_each_request_id_without_changing_the_ingestion_command()
+        {
+            var factory = new RecordingControlCommandClientFactory();
+            ILocalSliceOutputExecutor executor = new KustoLocalSliceOutputExecutor(new KustoRequestBuilder(), new KustoSdkExecutor(factory));
+            var job = Job() with { Chunks = 32 };
+            var execution = SliceExecutionUnit.Chunk(new SliceRange("job_kusto", At(0), At(5)), 31, 32);
+            var first = new LocalSliceAttemptContext("attempt-1", "KoLite.Local.Output;attempt-1");
+            var second = new LocalSliceAttemptContext("attempt-2", "KoLite.Local.Output;attempt-2");
+
+            var firstResult = await executor.ExecuteAsync(job, execution, first);
+            var secondResult = await executor.ExecuteAsync(job, execution, second);
+
+            Assert.Equal(2, factory.Clients.Count);
+            Assert.Equal(first.ClientRequestId, factory.Clients[0].Properties?.ClientRequestId);
+            Assert.Equal(second.ClientRequestId, factory.Clients[1].Properties?.ClientRequestId);
+            Assert.Equal(factory.Clients[0].CommandText, factory.Clients[1].CommandText);
+            Assert.Equal(first.ClientRequestId, firstResult.ClientRequestId);
+            Assert.Equal(second.ClientRequestId, secondResult.ClientRequestId);
+            Assert.Equal(firstResult.OutputReference, secondResult.OutputReference);
+            Assert.True(firstResult.Succeeded);
+            Assert.True(secondResult.Succeeded);
+            Assert.False(firstResult.DuplicateSuppressed);
+            Assert.False(secondResult.DuplicateSuppressed);
+        }
+
+        [Theory]
+        [InlineData("")]
+        [InlineData(" ")]
+        public async Task Sdk_executor_rejects_an_empty_request_id_override_before_dispatch(string clientRequestId)
+        {
+            var request = new KustoRequestBuilder().Build(Job(), new SliceRange("job_kusto", At(0), At(5))) with
+            {
+                ClientRequestIdOverride = clientRequestId
+            };
+            var factory = new RecordingControlCommandClientFactory();
+
+            await Assert.ThrowsAsync<ArgumentException>(() => new KustoSdkExecutor(factory).ExecuteAsync(request));
+
+            Assert.Empty(factory.Clients);
+        }
+
+        [Fact]
+        public async Task Sdk_and_local_failures_retain_the_request_correlation_without_inventing_duplicate_evidence()
+        {
+            var attempt = new LocalSliceAttemptContext("attempt-1", "KoLite.Local.Output;attempt-1");
+            var execution = SliceExecutionUnit.Unchunked(new SliceRange("job_kusto", At(0), At(5)));
+            var request = new KustoRequestBuilder().Build(Job(), execution, attempt);
+            var exception = new KustoServicePartialQueryFailureLowMemoryConditionException("Low memory.", new InvalidOperationException("low memory"));
+            var sdk = new KustoSdkExecutor(new ThrowingControlCommandClientFactory(exception));
+
+            var sdkResult = await sdk.ExecuteAsync(request);
+            var localResult = await new KustoLocalSliceOutputExecutor(new KustoRequestBuilder(), sdk).ExecuteAsync(Job(), execution, attempt);
+
+            Assert.False(sdkResult.Succeeded);
+            Assert.Equal(attempt.ClientRequestId, sdkResult.Metadata["clientRequestId"]);
+            Assert.Equal(request.IdempotencyKey, sdkResult.Metadata["idempotencyKey"]);
+            Assert.False(sdkResult.Metadata.ContainsKey("duplicateSuppressed"));
+            Assert.False(localResult.Succeeded);
+            Assert.Equal(attempt.ClientRequestId, localResult.ClientRequestId);
+            Assert.Null(localResult.DuplicateSuppressed);
+            Assert.True(localResult.IsRetryable);
+            Assert.False(localResult.IsPermanent);
+        }
+
+        [Fact]
+        public async Task Local_slice_executor_preserves_cancellation_and_the_sent_attempt_identity()
+        {
+            using var cancellation = new CancellationTokenSource();
+            var attempt = new LocalSliceAttemptContext("attempt-1", "KoLite.Local.Output;attempt-1");
+            var live = new CancellingKustoExecutor(cancellation);
+            var executor = new KustoLocalSliceOutputExecutor(new KustoRequestBuilder(), live);
+
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => executor.ExecuteAsync(
+                Job(), SliceExecutionUnit.Unchunked(new SliceRange("job_kusto", At(0), At(5))), attempt, cancellation.Token));
+
+            Assert.Equal(attempt.ClientRequestId, live.Request?.ClientRequestId);
+        }
+
+        [Fact]
         public async Task Sdk_executor_returns_retryable_result_for_outer_permanent_remote_non_permanent_payload()
         {
             var request = new KustoRequestBuilder().Build(Job(), new SliceRange("job_kusto", At(0), At(5)));
@@ -441,20 +654,24 @@ namespace KoLite.Local.Kusto.Tests
         }
 
         [Fact]
-        public void Request_builder_reuses_stable_idempotency_metadata_for_replayed_slice()
+        public void Request_builder_reuses_stable_idempotency_metadata_but_not_attempt_correlation_for_replayed_slice()
         {
             var builder = new KustoRequestBuilder();
             var slice = new SliceRange("job_kusto", At(0), At(5));
+            var execution = SliceExecutionUnit.Unchunked(slice);
 
-            var first = builder.Build(Job(), slice);
-            var replay = builder.Build(Job(), slice);
+            var first = builder.Build(Job(), execution, new LocalSliceAttemptContext("attempt-1", "KoLite.Local.Output;attempt-1"));
+            var replay = builder.Build(Job(), execution, new LocalSliceAttemptContext("attempt-2", "KoLite.Local.Output;attempt-2"));
+            var legacy = builder.Build(Job(), slice);
 
             Assert.Equal(first.SliceKey, replay.SliceKey);
             Assert.Equal(first.OperationId, replay.OperationId);
             Assert.Equal(first.IdempotencyKey, replay.IdempotencyKey);
             Assert.Equal(first.IngestByTag, replay.IngestByTag);
-            Assert.Equal(first.ClientRequestId, replay.ClientRequestId);
+            Assert.NotEqual(first.ClientRequestId, replay.ClientRequestId);
             Assert.Equal(first.CommandText, replay.CommandText);
+            Assert.Equal(legacy, first with { ClientRequestIdOverride = null });
+            Assert.Equal($"KoLite.Local.Output;{legacy.OperationId}", legacy.ClientRequestId);
             Assert.Equal($"output|{first.SliceKey}", first.OperationId);
             Assert.Equal($"ko-lite:{first.SliceKey}", first.IdempotencyKey);
             Assert.Equal($"ingest-by:{first.IdempotencyKey}", first.IngestByTag);
@@ -478,6 +695,15 @@ namespace KoLite.Local.Kusto.Tests
             Assert.Equal(request.ClientRequestId, result.Metadata["clientRequestId"]);
             Assert.Equal(request.IdempotencyKey, result.Metadata["idempotencyKey"]);
             Assert.Equal("true", result.Metadata["duplicateSuppressed"]);
+
+            var attempt = new LocalSliceAttemptContext("attempt-2", "KoLite.Local.Output;attempt-2");
+            var localResult = await new KustoLocalSliceOutputExecutor(new KustoRequestBuilder(), executor)
+                .ExecuteAsync(Job(), SliceExecutionUnit.Unchunked(request.Slice), attempt);
+
+            Assert.True(localResult.Succeeded);
+            Assert.True(localResult.DuplicateSuppressed);
+            Assert.Equal(attempt.ClientRequestId, localResult.ClientRequestId);
+            Assert.Equal(request.OutputReference, localResult.OutputReference);
         }
 
         public static IEnumerable<object[]> DuplicateIngestByExceptions()
@@ -542,6 +768,27 @@ namespace KoLite.Local.Kusto.Tests
                 return Task.FromResult(this.results.Count == 0
                     ? new KustoExecutionResult(false, null, new Dictionary<string, string>(), KustoErrorClassifier.Classify("NoResult", "No test result queued."))
                     : this.results.Dequeue());
+            }
+        }
+
+        private sealed class LegacyRequestBuilder : IKustoRequestBuilder
+        {
+            public KustoExecutionRequest Build(JobDefinition job, SliceRange slice) => new KustoRequestBuilder().Build(job, slice);
+            public KustoExecutionRequest Build(JobDefinition job, SliceExecutionUnit execution) => new KustoRequestBuilder().Build(job, execution);
+        }
+
+        private sealed class CancellingKustoExecutor : IKustoExecutor
+        {
+            private readonly CancellationTokenSource cancellation;
+            public KustoExecutionRequest? Request { get; private set; }
+
+            public CancellingKustoExecutor(CancellationTokenSource cancellation) => this.cancellation = cancellation;
+
+            public Task<KustoExecutionResult> ExecuteAsync(KustoExecutionRequest request, CancellationToken cancellationToken = default)
+            {
+                Request = request;
+                cancellation.Cancel();
+                return Task.FromCanceled<KustoExecutionResult>(cancellationToken);
             }
         }
 

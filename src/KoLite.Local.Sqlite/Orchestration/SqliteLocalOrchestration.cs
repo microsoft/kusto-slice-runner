@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
 using KoLite.Local.Core.Orchestration;
+using KoLite.Local.Core.Performance;
 using KoLite.Local.Core.Schedules;
 using KoLite.Local.Core.Scheduling;
 using KoLite.Local.Core.Time;
@@ -251,8 +252,12 @@ namespace KoLite.Local.Sqlite.Orchestration
             }
 
             var startedAtUtc = clock.UtcNow;
+            var attemptContext = new LocalSliceAttemptContext(AttemptId(item), $"KoLite.Local.Output;attempt|{AttemptId(item)}");
+            var performanceCapture = new PerformanceAttemptCapture(
+                jobRecord.Definition.Target.ClusterUri, jobRecord.Definition.Target.Database,
+                jobRecord.CatalogVersion, attemptContext.ClientRequestId);
             var progress = new LocalWorkerProgressEvent(item.JobId, item.QueueItemId, item.SliceStartUtc, item.SliceEndUtc, item.Attempts, options.WorkerId, LocalWorkerProgressStatus.Started, startedAtUtc, ClusterUri: jobRecord.Definition.Target.ClusterUri, DisplayName: jobRecord.ActivityId, ChunkId: execution.ChunkId, TotalChunks: execution.TotalChunks);
-            observability.RecordAttempt(AttemptId(item), item.JobId, item.SliceStartUtc, item.SliceEndUtc, item.Attempts, "Started", options.WorkerId, startedAtUtc, null, chunkId: execution.ChunkId, totalChunks: execution.TotalChunks);
+            observability.RecordAttempt(attemptContext.AttemptId, item.JobId, item.SliceStartUtc, item.SliceEndUtc, item.Attempts, "Started", options.WorkerId, startedAtUtc, null, chunkId: execution.ChunkId, totalChunks: execution.TotalChunks, performanceCapture: performanceCapture);
             observability.RecordLog("Information", execution.IsChunked ? "Slice chunk dispatched." : "Slice dispatched.", "worker", item.JobId, item.SliceStartUtc, item.SliceEndUtc, chunkId: execution.ChunkId, totalChunks: execution.TotalChunks);
             progressSink.RecordStarted(progress);
 
@@ -267,7 +272,7 @@ namespace KoLite.Local.Sqlite.Orchestration
 
                 try
                 {
-                    result = await executor.ExecuteAsync(jobRecord.Definition, execution, executionCts.Token).ConfigureAwait(false);
+                    result = await executor.ExecuteAsync(jobRecord.Definition, execution, attemptContext, executionCts.Token).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                 {
@@ -310,7 +315,7 @@ namespace KoLite.Local.Sqlite.Orchestration
                     ? chunkState!.CompleteLease($"complete|{item.QueueItemId}|{item.Attempts}", execution, options.WorkerId, leaseToken, completedAtUtc, payload)
                     : state.CompleteLease($"complete|{item.QueueItemId}|{item.Attempts}", item.JobId, item.SliceStartUtc, item.SliceEndUtc, options.WorkerId, leaseToken, completedAtUtc, payload);
                 if (completed) queue.Complete(item.QueueItemId, options.WorkerId);
-                observability.RecordAttempt(AttemptId(item), item.JobId, item.SliceStartUtc, item.SliceEndUtc, item.Attempts, completed ? "Succeeded" : "LeaseLost", options.WorkerId, null, completedAtUtc, chunkId: execution.ChunkId, totalChunks: execution.TotalChunks);
+                observability.RecordAttempt(attemptContext.AttemptId, item.JobId, item.SliceStartUtc, item.SliceEndUtc, item.Attempts, completed ? "Succeeded" : "LeaseLost", options.WorkerId, null, completedAtUtc, chunkId: execution.ChunkId, totalChunks: execution.TotalChunks, performanceCapture: performanceCapture with { DuplicateSuppressed = result.DuplicateSuppressed });
                 observability.RecordLog("Information", completed ? (execution.IsChunked ? "Slice chunk completed." : "Slice completed.") : "Slice completion lost lease.", "worker", item.JobId, item.SliceStartUtc, item.SliceEndUtc, chunkId: execution.ChunkId, totalChunks: execution.TotalChunks);
                 progressSink.RecordFinished(progress with
                 {
@@ -322,7 +327,7 @@ namespace KoLite.Local.Sqlite.Orchestration
                 return new LocalWorkerRunResult(true, item.QueueItemId, true, completed, false, completed ? null : "Slice lease lost before completion.");
             }
 
-            return FailSlice(item, execution, leaseToken, progress, result.ErrorCode, result.ErrorMessage, result.IsRetryable, clock.UtcNow, result.IsPermanent, result.FailureCode, result.FailureSubCode);
+            return FailSlice(item, execution, leaseToken, progress, result.ErrorCode, result.ErrorMessage, result.IsRetryable, clock.UtcNow, result.IsPermanent, result.FailureCode, result.FailureSubCode, performanceCapture with { DuplicateSuppressed = result.DuplicateSuppressed });
         }
 
         // Records a non-success terminal outcome for the current attempt and releases the queue item.
@@ -330,7 +335,7 @@ namespace KoLite.Local.Sqlite.Orchestration
         // promptly Abandon (retry) or DeadLetter the slice instead of leaving the lease to expire.
         // isPermanent/failureCode/failureSubCode are diagnostic detail from the Kusto SDK and are
         // null for failures that did not originate from a Kusto exception.
-        private LocalWorkerRunResult FailSlice(DurableWorkItem item, SliceExecutionUnit execution, string leaseToken, LocalWorkerProgressEvent progress, string? errorCode, string? errorMessage, bool isRetryable, DateTimeOffset failedAtUtc, bool? isPermanent = null, int? failureCode = null, string? failureSubCode = null)
+        private LocalWorkerRunResult FailSlice(DurableWorkItem item, SliceExecutionUnit execution, string leaseToken, LocalWorkerProgressEvent progress, string? errorCode, string? errorMessage, bool isRetryable, DateTimeOffset failedAtUtc, bool? isPermanent = null, int? failureCode = null, string? failureSubCode = null, PerformanceAttemptCapture? performanceCapture = null)
         {
             var reason = string.IsNullOrWhiteSpace(errorMessage) ? errorCode ?? "Execution failed." : errorMessage!;
             var maxAttempts = Math.Max(1, options.MaxAttempts);
@@ -348,7 +353,7 @@ namespace KoLite.Local.Sqlite.Orchestration
                     state.FailLease($"fail|{item.QueueItemId}|{item.Attempts}", item.JobId, item.SliceStartUtc, item.SliceEndUtc, options.WorkerId, leaseToken, failedAtUtc, reason, payloadJson);
                 }
                 queue.Abandon(item.QueueItemId, options.WorkerId, failedAtUtc + RetryDelay(item.Attempts));
-                observability.RecordAttempt(AttemptId(item), item.JobId, item.SliceStartUtc, item.SliceEndUtc, item.Attempts, "FailedRetryable", options.WorkerId, null, failedAtUtc, errorCode, errorMessage, metricsJson, execution.ChunkId, execution.TotalChunks);
+                observability.RecordAttempt(AttemptId(item), item.JobId, item.SliceStartUtc, item.SliceEndUtc, item.Attempts, "FailedRetryable", options.WorkerId, null, failedAtUtc, errorCode, errorMessage, metricsJson, execution.ChunkId, execution.TotalChunks, performanceCapture);
                 observability.RecordLog("Warning", execution.IsChunked ? "Slice chunk failed and was scheduled for retry." : "Slice failed and was scheduled for retry.", "worker", item.JobId, item.SliceStartUtc, item.SliceEndUtc, payloadJson, chunkId: execution.ChunkId, totalChunks: execution.TotalChunks);
                 progressSink.RecordFinished(progress with
                 {
@@ -370,7 +375,7 @@ namespace KoLite.Local.Sqlite.Orchestration
                 state.DeadLetterLease($"deadletter|{item.QueueItemId}|{item.Attempts}", item.JobId, item.SliceStartUtc, item.SliceEndUtc, options.WorkerId, leaseToken, failedAtUtc, reason, payloadJson);
             }
             queue.DeadLetter(item.QueueItemId, options.WorkerId);
-            observability.RecordAttempt(AttemptId(item), item.JobId, item.SliceStartUtc, item.SliceEndUtc, item.Attempts, "DeadLettered", options.WorkerId, null, failedAtUtc, errorCode, errorMessage, metricsJson, execution.ChunkId, execution.TotalChunks);
+            observability.RecordAttempt(AttemptId(item), item.JobId, item.SliceStartUtc, item.SliceEndUtc, item.Attempts, "DeadLettered", options.WorkerId, null, failedAtUtc, errorCode, errorMessage, metricsJson, execution.ChunkId, execution.TotalChunks, performanceCapture);
 
             // Separate "never eligible for retry" from "ran out of attempts" so an operator reading
             // the log can tell a permanent failure apart from an exhausted retry budget.
@@ -410,6 +415,6 @@ namespace KoLite.Local.Sqlite.Orchestration
                 ? DateTimeOffset.MaxValue
                 : leaseStartedAtUtc.ToUniversalTime() + leaseDuration;
 
-        private static string AttemptId(DurableWorkItem item) => $"{item.QueueItemId}:{item.Attempts}";
+        private static string AttemptId(DurableWorkItem item) => string.Create(CultureInfo.InvariantCulture, $"{item.QueueItemId}:{item.Attempts}");
     }
 }

@@ -140,6 +140,7 @@ namespace KoLite.Local.Sqlite.Lifecycle
                 reason,
                 counts.QueueRows,
                 counts.AttemptRows,
+                counts.PerformanceAttemptRows,
                 counts.ScheduledRows,
                 counts.LogRows,
                 counts.StateRows,
@@ -158,7 +159,8 @@ namespace KoLite.Local.Sqlite.Lifecycle
                 counts.JobRows,
                 counts.QueueRows,
                 counts.StateRows,
-                counts.RepairBatchRows
+                counts.RepairBatchRows,
+                counts.PerformanceAttemptRows
             });
             tx.Commit();
 
@@ -213,6 +215,7 @@ namespace KoLite.Local.Sqlite.Lifecycle
                     bulk = true,
                     counts.QueueRows,
                     counts.AttemptRows,
+                    counts.PerformanceAttemptRows,
                     counts.ScheduledRows,
                     counts.LogRows,
                     counts.StateRows,
@@ -234,7 +237,8 @@ namespace KoLite.Local.Sqlite.Lifecycle
                 totals.JobRows,
                 totals.QueueRows,
                 totals.StateRows,
-                totals.RepairBatchRows
+                totals.RepairBatchRows,
+                totals.PerformanceAttemptRows
             });
             tx.Commit();
 
@@ -370,6 +374,7 @@ namespace KoLite.Local.Sqlite.Lifecycle
             var repairBatchIds = ReadRepairBatchIds(c, tx, jobId);
             var queueRows = Delete(c, tx, "work_queue", "job_id=$job", jobId);
             var attemptRows = Delete(c, tx, "slice_attempts", "job_id=$job", jobId);
+            var performanceAttemptRows = Delete(c, tx, "performance_attempts", "job_id=$job", jobId);
             var scheduledRows = Delete(c, tx, "scheduled_slices", "job_id=$job", jobId);
             var logRows = Delete(c, tx, "operational_logs", "job_id=$job", jobId);
             var stateEventRows = Delete(c, tx, "slice_state_events", "job_id=$job", jobId);
@@ -394,7 +399,8 @@ namespace KoLite.Local.Sqlite.Lifecycle
                 repairBatchRows,
                 summaryRows,
                 lifecycleRows,
-                eventRows);
+                eventRows,
+                performanceAttemptRows);
         }
 
         private static void Checkpoint(Microsoft.Data.Sqlite.SqliteConnection c)
@@ -524,9 +530,10 @@ namespace KoLite.Local.Sqlite.Lifecycle
             int RepairBatchRows,
             int SummaryRows,
             int LifecycleRows,
-            int EventRows)
+            int EventRows,
+            int PerformanceAttemptRows)
         {
-            public static HardDeleteCounts Empty { get; } = new(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+            public static HardDeleteCounts Empty { get; } = new(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
 
             public static HardDeleteCounts operator +(HardDeleteCounts left, HardDeleteCounts right) => new(
                 left.JobRows + right.JobRows,
@@ -541,7 +548,8 @@ namespace KoLite.Local.Sqlite.Lifecycle
                 left.RepairBatchRows + right.RepairBatchRows,
                 left.SummaryRows + right.SummaryRows,
                 left.LifecycleRows + right.LifecycleRows,
-                left.EventRows + right.EventRows);
+                left.EventRows + right.EventRows,
+                left.PerformanceAttemptRows + right.PerformanceAttemptRows);
         }
     }
 }

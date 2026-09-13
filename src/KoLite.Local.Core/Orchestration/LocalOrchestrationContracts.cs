@@ -6,12 +6,14 @@ namespace KoLite.Local.Core.Orchestration
     // IsPermanent, FailureCode and FailureSubCode are diagnostic detail carried from the Kusto
     // SDK so operators can see why a slice was or was not retried. They are null when the
     // failure did not originate from a Kusto exception.
-    public sealed record LocalSliceOutputResult(bool Succeeded, string? OutputReference, string? ErrorCode, string? ErrorMessage, bool IsRetryable, bool? IsPermanent = null, int? FailureCode = null, string? FailureSubCode = null)
+    public sealed record LocalSliceOutputResult(bool Succeeded, string? OutputReference, string? ErrorCode, string? ErrorMessage, bool IsRetryable, bool? IsPermanent = null, int? FailureCode = null, string? FailureSubCode = null, string? ClientRequestId = null, bool? DuplicateSuppressed = null)
     {
         public static LocalSliceOutputResult Success(string? outputReference = null) => new(true, outputReference, null, null, false);
         public static LocalSliceOutputResult Failure(string code, string message, bool isRetryable = true, bool? isPermanent = null, int? failureCode = null, string? failureSubCode = null) =>
             new(false, null, code, message, isRetryable, isPermanent, failureCode, failureSubCode);
     }
+
+    public sealed record LocalSliceAttemptContext(string AttemptId, string ClientRequestId);
 
     public interface ILocalSliceOutputExecutor
     {
@@ -19,6 +21,9 @@ namespace KoLite.Local.Core.Orchestration
 
         Task<LocalSliceOutputResult> ExecuteAsync(JobDefinition job, SliceExecutionUnit execution, CancellationToken cancellationToken = default) =>
             ExecuteAsync(job, execution.Slice, cancellationToken);
+
+        Task<LocalSliceOutputResult> ExecuteAsync(JobDefinition job, SliceExecutionUnit execution, LocalSliceAttemptContext attempt, CancellationToken cancellationToken = default) =>
+            ExecuteAsync(job, execution, cancellationToken);
     }
 
     // MaxSlicesPerTick defaults to unbounded: a pass is already naturally bounded to the sum of each

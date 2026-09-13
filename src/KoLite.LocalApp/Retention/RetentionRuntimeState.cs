@@ -1,3 +1,5 @@
+using KoLite.Local.Sqlite.Observability;
+
 namespace KoLite.LocalApp.Retention
 {
     // The latest outcome of the retention background service, surfaced by /api/v1/system/status. Captured
@@ -15,6 +17,15 @@ namespace KoLite.LocalApp.Retention
     {
         public static RetentionSnapshot Initial(bool enabled) =>
             new(enabled, LastRunUtc: null, 0, 0, 0, 0, 0, 0, LastError: null);
+
+        public static RetentionSnapshot Completed(DateTimeOffset nowUtc, RetentionCleanupResult result)
+        {
+            ArgumentNullException.ThrowIfNull(result);
+            return new RetentionSnapshot(
+                true, nowUtc, result.LogsDeleted, result.AttemptsDeleted + result.PerformanceAttemptsDeleted,
+                result.ScheduledSlicesDeleted, result.IngestionThrottlesDeleted, result.QueueRowsDeleted,
+                result.TotalDeleted, null);
+        }
     }
 
     public sealed class RetentionRuntimeState

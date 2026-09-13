@@ -116,6 +116,9 @@ namespace KoLite.Local.Sqlite.Tests
             Assert.Equal(1, QueryInt(upgraded, "SELECT COUNT(*) FROM pragma_table_info('slice_attempts') WHERE name='total_chunks';"));
             Assert.Equal(1, QueryInt(upgraded, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='current_slice_chunk_state';"));
             Assert.Equal(1, QueryInt(upgraded, "SELECT COUNT(*) FROM work_queue WHERE chunk_id IS NULL AND total_chunks IS NULL;"));
+            Assert.Equal(1, QueryInt(upgraded, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='performance_attempts';"));
+            Assert.Equal(0, QueryInt(upgraded, "SELECT history_initialized FROM performance_collection_state;"));
+            Assert.Equal(0, QueryInt(upgraded, "SELECT COUNT(*) FROM performance_attempts;"));
         }
 
         [Fact]
@@ -140,6 +143,8 @@ namespace KoLite.Local.Sqlite.Tests
                 "operational_logs",
                 "scheduled_slices",
                 "slice_attempts",
+                "performance_attempts",
+                "performance_collection_state",
                 "repair_batches",
                 "repair_slices",
                 "repair_chunk_executions",
@@ -172,6 +177,15 @@ namespace KoLite.Local.Sqlite.Tests
                 "ix_scheduled_slices_due",
                 "ix_slice_attempts_job_completed",
                 "ix_slice_attempts_slice_attempt",
+                "ix_slice_attempts_completed",
+                "ix_performance_attempts_completed",
+                "ix_performance_attempts_job_completed",
+                "ix_performance_attempts_pending",
+                "ix_performance_attempts_target_pending",
+                "ux_performance_attempts_server",
+                "ix_performance_attempts_correlation",
+                "ix_performance_attempts_incomplete",
+                "ix_performance_attempts_errors",
                 "ix_repair_slices_batch_status",
                 "ix_repair_slices_job_slice",
                 "ix_repair_chunk_executions_batch_status",
@@ -181,6 +195,7 @@ namespace KoLite.Local.Sqlite.Tests
                 "ix_rerun_batches_root_requested",
                 "ix_rerun_slices_batch_status",
                 "ix_rerun_slices_job_slice",
+                "ix_rerun_slices_history",
                 "ix_retention_runs_policy_started",
                 "ix_purge_runs_job_requested",
                 "ix_job_lifecycle_events_job_recorded",
@@ -206,6 +221,48 @@ namespace KoLite.Local.Sqlite.Tests
             Assert.Equal(1, QueryInt(connection, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'ux_job_definitions_activity_id';"));
             Assert.Equal(1, QueryInt(connection, "SELECT COUNT(*) FROM pragma_table_info('work_queue') WHERE name = 'chunk_id';"));
             Assert.Equal(1, QueryInt(connection, "SELECT COUNT(*) FROM pragma_table_info('slice_attempts') WHERE name = 'total_chunks';"));
+        }
+
+        [Fact]
+        public void PrePerformanceUpgradePreservesCatalogQueueAndRunningLeaseState()
+        {
+            var factory = CreateFactory();
+            var schema = new KoLiteSqliteSchema(factory);
+            schema.EnsureSchema();
+            using (var connection = factory.OpenConnection())
+            {
+                ExecuteNonQuery(connection, """
+                    DROP TABLE performance_attempts;
+                    DROP TABLE performance_collection_state;
+                    INSERT INTO job_definitions(job_id,activity_id,display_name,schedule_json,catalog_version)
+                    VALUES ('upgrade-job','upgrade.job','upgrade.job','{}',17);
+                    INSERT INTO current_slice_state(
+                        job_id,slice_start_utc,slice_end_utc,state,attempt,lease_owner,lease_expires_at_utc,generation_id)
+                    VALUES ('upgrade-job','2026-09-01T00:00:00Z','2026-09-01T00:05:00Z','Running',3,'worker','2026-09-01T01:00:00Z','lease-token');
+                    INSERT INTO work_queue(
+                        queue_item_id,job_id,slice_start_utc,slice_end_utc,state,available_at_utc,attempts,idempotency_key,locked_by,locked_until_utc)
+                    VALUES ('queue','upgrade-job','2026-09-01T00:00:00Z','2026-09-01T00:05:00Z',
+                            'Leased','2026-09-01T00:00:00Z',3,'unchanged-ingest-identity','worker','2026-09-01T01:00:00Z');
+                    INSERT INTO slice_attempts(
+                        attempt_id,job_id,slice_start_utc,slice_end_utc,attempt,status,started_at_utc)
+                    VALUES ('queue:3','upgrade-job','2026-09-01T00:00:00Z','2026-09-01T00:05:00Z',3,'Started','2026-09-01T00:10:00Z');
+                    """);
+            }
+
+            schema.EnsureSchema();
+            schema.EnsureSchema();
+
+            using var upgraded = factory.OpenConnection();
+            Assert.Equal(17, QueryInt(upgraded, "SELECT catalog_version FROM job_definitions;"));
+            Assert.Equal("Running", QueryString(upgraded, "SELECT state FROM current_slice_state;"));
+            Assert.Equal("lease-token", QueryString(upgraded, "SELECT generation_id FROM current_slice_state;"));
+            Assert.Equal("Leased", QueryString(upgraded, "SELECT state FROM work_queue;"));
+            Assert.Equal("unchanged-ingest-identity", QueryString(upgraded, "SELECT idempotency_key FROM work_queue;"));
+            Assert.Equal("Started", QueryString(upgraded, "SELECT status FROM slice_attempts;"));
+            Assert.Equal(0, QueryInt(upgraded, "SELECT COUNT(*) FROM performance_attempts;"));
+            Assert.Equal(1, QueryInt(upgraded, "SELECT COUNT(*) FROM pragma_foreign_key_list('performance_attempts');"));
+            Assert.Equal("job_definitions", QueryString(upgraded, "SELECT \"table\" FROM pragma_foreign_key_list('performance_attempts');"));
+            Assert.Equal("CASCADE", QueryString(upgraded, "SELECT on_delete FROM pragma_foreign_key_list('performance_attempts');"));
         }
 
         [Fact]
