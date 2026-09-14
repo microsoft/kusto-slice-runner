@@ -1971,6 +1971,7 @@
     var input = root.querySelector("[data-performance-filter-input]");
     var status = root.querySelector("[data-performance-filter-status]");
     var noMatches = root.querySelector("[data-performance-no-matches]");
+    var coverageWarning = root.querySelector("[data-performance-coverage-warning]");
 
     root.querySelectorAll("[data-performance-disclosure]").forEach(function (button) {
       button.addEventListener("click", function () {
@@ -1986,6 +1987,51 @@
       });
     });
 
+    function readCoverageCount(element, attribute) {
+      var value = element.getAttribute(attribute);
+      if (value === null || !/^\d+$/.test(value)) {
+        throw new Error("Invalid Performance coverage count: " + attribute);
+      }
+      return BigInt(value);
+    }
+
+    function updateCoverageWarning() {
+      if (!coverageWarning) return;
+      try {
+        var eligible = 0n;
+        var missing = 0n;
+        var threshold = readCoverageCount(coverageWarning, "data-performance-threshold-percent");
+        var minimum = readCoverageCount(coverageWarning, "data-performance-minimum-missing");
+        var message = coverageWarning.querySelector("[data-performance-coverage-message]");
+        if (threshold < 1n || threshold > 100n || minimum < 1n || !message) {
+          throw new Error("Invalid Performance coverage policy or warning markup.");
+        }
+        groups.forEach(function (group) {
+          if (group.hidden) return;
+          var jobEligible = readCoverageCount(group, "data-performance-eligible-attempts");
+          var jobMissing = readCoverageCount(group, "data-performance-missing-attempts");
+          if (jobMissing > jobEligible) {
+            throw new Error("Missing Performance attempts exceed eligible attempts.");
+          }
+          eligible += jobEligible;
+          missing += jobMissing;
+        });
+
+        var percent = "n/a";
+        if (eligible > 0n) {
+          var tenths = (missing * 1000n + eligible / 2n) / eligible;
+          var fraction = tenths % 10n;
+          percent = (tenths / 10n).toString() + (fraction === 0n ? "" : "." + fraction.toString()) + "%";
+        }
+        var nextMessage = missing.toLocaleString("en-US") + " of " + eligible.toLocaleString("en-US")
+          + " eligible successful attempts (" + percent + ") in the selected period and filters are missing one or more resource measurements.";
+        if (message.textContent !== nextMessage) message.textContent = nextMessage;
+        coverageWarning.hidden = !(eligible > 0n && missing >= minimum && missing * 100n >= eligible * threshold);
+      } catch (error) {
+        console.error("Could not update the Performance coverage warning; retaining its prior state.", error);
+      }
+    }
+
     function applyFilter() {
       var query = input ? input.value.trim() : "";
       var search = query.toLowerCase();
@@ -1996,6 +2042,7 @@
       });
       if (status) status.textContent = "Showing " + visible + " of " + groups.length + " job(s).";
       if (noMatches) noMatches.hidden = visible > 0;
+      updateCoverageWarning();
 
       document.querySelectorAll("[data-performance-state-link='true']").forEach(function (link) {
         var url = new URL(link.getAttribute("href"), document.baseURI);

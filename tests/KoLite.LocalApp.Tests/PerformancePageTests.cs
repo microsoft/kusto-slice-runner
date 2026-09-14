@@ -57,6 +57,7 @@ namespace KoLite.LocalApp.Tests
             Assert.Equal(Now.AddHours(-hours), data.FromUtc);
             Assert.Equal(data.FromUtc, call.FromUtc);
             Assert.Equal(data.ToUtc, call.ToUtc);
+            Assert.Equal(Now - PerformanceCoveragePolicy.GracePeriod, call.CoverageCutoffUtc);
             Assert.Equal([job.JobId], call.JobIds);
             Assert.Equal("1d", ChartRangeOptions.Normalize(null));
             Assert.Equal("24 hours", PerformanceRangeOptions.Links.Single(link => link.Key == "1d").Label);
@@ -308,6 +309,94 @@ namespace KoLite.LocalApp.Tests
             Assert.Equal(0, repository.StatusReads);
         }
 
+        [Theory]
+        [InlineData(0, 0, false, true)]
+        [InlineData(3, 3, false, true)]
+        [InlineData(20, 4, false, true)]
+        [InlineData(26, 5, false, true)]
+        [InlineData(25, 5, true, false)]
+        [InlineData(25, 6, true, true)]
+        public async Task Prominent_warning_uses_scoped_coverage_not_the_global_error(
+            long eligible, long missing, bool expectedWarning, bool hasDiagnostic)
+        {
+            const string diagnostic = "Authentication failed for an older retained-history lookup.";
+            var job = CreateJob("coverage");
+            repository.Rows.Add(Row(job.JobId, completed: Math.Max(1, eligible), succeeded: Math.Max(1, eligible)) with
+            {
+                Coverage = new PerformanceCoverageCounts(eligible, missing)
+            });
+            repository.Status = repository.Status with { LastError = hasDiagnostic ? diagnostic : null };
+            using var client = CreateClient();
+
+            var page = await client.GetStringAsync("/activity?view=performance");
+            var warning = Regex.Match(page, @"<div\b[^>]*data-performance-coverage-warning\b[^>]*>");
+
+            Assert.True(warning.Success);
+            Assert.Equal(!expectedWarning, Regex.IsMatch(warning.Value, @"\bhidden(?:\s|=|>)"));
+            Assert.Contains("data-performance-threshold-percent=\"20\"", warning.Value);
+            Assert.Contains("data-performance-minimum-missing=\"5\"", warning.Value);
+            Assert.Contains(PerformanceFormatting.CoverageMessage(new PerformanceCoverageCounts(eligible, missing)), page);
+            if (hasDiagnostic)
+            {
+                var details = Regex.Match(page, "<details class=\"performance-collection\">.*?</details>", RegexOptions.Singleline);
+                Assert.Contains(diagnostic, details.Value);
+                Assert.Contains("Latest diagnostic (all retained history)", details.Value);
+                Assert.DoesNotContain(diagnostic, page.Replace(details.Value, string.Empty, StringComparison.Ordinal));
+                Assert.DoesNotContain("role=\"alert\"", details.Value);
+            }
+        }
+
+        [Fact]
+        public async Task Warning_follows_job_tag_and_name_filters_and_never_sums_child_rows_twice()
+        {
+            var alpha = CreateJob("Alpha", chunks: 1, tags: ["incomplete"]);
+            var beta = CreateJob("Beta", tags: ["complete"]);
+            var alphaRow = Row(alpha.JobId, completed: 25, succeeded: 25) with { Coverage = new(25, 5) };
+            repository.Rows.AddRange([
+                alphaRow,
+                alphaRow with { ChunkId = 0, IsJobTotal = false },
+                Row(beta.JobId, completed: 75, succeeded: 75) with { Coverage = new(75, 0) }
+            ]);
+            Assert.Equal(new PerformanceCoverageCounts(100, 5), Query().Get().VisibleCoverage);
+            Assert.Equal(new PerformanceCoverageCounts(25, 5), Query().Get(search: "alpha").VisibleCoverage);
+            Assert.Equal(new PerformanceCoverageCounts(25, 5), Query().Get(tags: ["incomplete"]).VisibleCoverage);
+            Assert.Equal(new PerformanceCoverageCounts(25, 5), Query().Get(jobId: alpha.JobId).VisibleCoverage);
+            Assert.Equal(PerformanceCoverageCounts.Empty, Query().Get(search: "missing").VisibleCoverage);
+            using var client = CreateClient();
+
+            var all = await client.GetStringAsync("/activity?view=performance");
+            var filtered = await client.GetStringAsync("/activity?view=performance&q=alpha");
+            var sorted = await client.GetStringAsync("/activity?view=performance&q=alpha&sort=cpu-p95&dir=desc");
+            var allWarning = Regex.Match(all, @"<div\b[^>]*data-performance-coverage-warning\b[^>]*>").Value;
+            var filteredWarning = Regex.Match(filtered, @"<div\b[^>]*data-performance-coverage-warning\b[^>]*>").Value;
+
+            Assert.Matches(@"\bhidden(?:\s|=|>)", allWarning);
+            Assert.DoesNotMatch(@"\bhidden(?:\s|=|>)", filteredWarning);
+            Assert.Contains("5 of 25 eligible successful attempts (20%)", filtered);
+            Assert.Contains("5 of 25 eligible successful attempts (20%)", sorted);
+            Assert.Contains("data-performance-eligible-attempts=\"25\"", filtered);
+            Assert.Contains("data-performance-missing-attempts=\"5\"", filtered);
+        }
+
+        [Fact]
+        public async Task Initializing_history_and_invalid_filters_do_not_evaluate_a_coverage_warning()
+        {
+            var job = CreateJob("initializing.warning");
+            repository.Rows.Add(Row(job.JobId, completed: 5, succeeded: 5) with { Coverage = new(5, 5) });
+            repository.Status = repository.Status with { HistoryInitialized = false, LastError = "<history failed>" };
+            using var client = CreateClient();
+
+            var initializing = await client.GetStringAsync("/activity?view=performance");
+            Assert.DoesNotContain("data-performance-coverage-warning", initializing);
+            Assert.Contains("&lt;history failed&gt;", initializing);
+            Assert.Contains("data-performance-initializing", initializing);
+
+            repository.Status = repository.Status with { HistoryInitialized = true };
+            using var invalid = await client.GetAsync("/activity?view=performance&jobId=not-a-guid");
+            Assert.Equal(HttpStatusCode.BadRequest, invalid.StatusCode);
+            Assert.DoesNotContain("data-performance-coverage-warning", await invalid.Content.ReadAsStringAsync());
+        }
+
         private PerformancePageQuery Query(bool enabled = true) =>
             new(repository, catalog, new LifecycleReadModel(new SqliteLifecycleReadModelRepository(sqlite)),
                 clock, new LocalBackgroundSchedulerOptions(enabled, TimeSpan.FromSeconds(10), false));
@@ -378,7 +467,7 @@ namespace KoLite.LocalApp.Tests
             TestCleanup.DeleteDirectoryBestEffort(testDirectory);
         }
 
-        private sealed record AggregateCall(DateTimeOffset FromUtc, DateTimeOffset ToUtc, IReadOnlyCollection<string>? JobIds);
+        private sealed record AggregateCall(DateTimeOffset FromUtc, DateTimeOffset ToUtc, IReadOnlyCollection<string>? JobIds, DateTimeOffset? CoverageCutoffUtc);
 
         private sealed class FakeReportRepository : IPerformanceReportRepository
         {
@@ -388,10 +477,11 @@ namespace KoLite.LocalApp.Tests
             public int StatusReads { get; private set; }
             public bool ThrowOnRead { get; set; }
 
-            public IReadOnlyList<PerformanceAggregateRow> GetAggregates(DateTimeOffset fromUtc, DateTimeOffset toUtc, IReadOnlyCollection<string>? jobIds = null)
+            public IReadOnlyList<PerformanceAggregateRow> GetAggregates(
+                DateTimeOffset fromUtc, DateTimeOffset toUtc, IReadOnlyCollection<string>? jobIds = null, DateTimeOffset? coverageCutoffUtc = null)
             {
                 if (ThrowOnRead) throw new InvalidOperationException("Unexpected Performance query.");
-                Calls.Add(new AggregateCall(fromUtc, toUtc, jobIds?.ToArray()));
+                Calls.Add(new AggregateCall(fromUtc, toUtc, jobIds?.ToArray(), coverageCutoffUtc));
                 return Rows.Where(row => jobIds is null || jobIds.Contains(row.JobId, StringComparer.Ordinal)).ToArray();
             }
 

@@ -1,6 +1,7 @@
 @page "/activity"
 @using KoLite.LocalApp.Ui
 @model KoLite.LocalApp.Pages.Activity.IndexModel
+@using KoLite.Local.Core.Performance
 @{
     ViewData["Title"] = "Activity";
     var ci = System.Globalization.CultureInfo.InvariantCulture;
@@ -107,12 +108,24 @@
             {
                 <p class="muted" data-performance-no-execution>This instance has execution disabled and performs no automatic collection or backfill. Stored data remains available; the normal execution-capable instance collects resource measurements.</p>
             }
+            @if (!string.IsNullOrWhiteSpace(performance.Collection.LastError))
+            {
+                <p class="muted" data-performance-collection-error>
+                    <strong>Latest diagnostic (all retained history):</strong> @performance.Collection.LastError
+                </p>
+            }
             <p class="muted">Collection retries automatically in the normal execution-capable instance. Review its operational logs if a problem persists.</p>
         </details>
-        @if (!string.IsNullOrWhiteSpace(performance.Collection.LastError))
+        @if (performance.Collection.HistoryInitialized && performance.FilterError is null)
         {
-            <div class="alert warning" role="alert" data-performance-collection-error>
-                Resource collection: @performance.Collection.LastError
+            var coverage = performance.VisibleCoverage;
+            <div class="alert warning" role="status" aria-live="polite" data-performance-coverage-warning
+                 data-performance-threshold-percent="@PerformanceCoveragePolicy.ThresholdPercent.ToString(ci)"
+                 data-performance-minimum-missing="@PerformanceCoveragePolicy.MinimumMissingAttempts.ToString(ci)"
+                 hidden="@(!PerformanceCoveragePolicy.ShouldWarn(coverage))">
+                <strong>Resource statistics are incomplete.</strong>
+                <span data-performance-coverage-message>@PerformanceFormatting.CoverageMessage(coverage)</span>
+                <div class="muted">The newest @PerformanceCoveragePolicy.GracePeriodMinutes minutes and known duplicate-suppressed attempts are excluded. See Collection details for diagnostics.</div>
             </div>
         }
         @if (performance.FilterError is not null)

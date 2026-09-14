@@ -384,6 +384,20 @@ chunk percentiles or percentages. Missing measurements show `n/a`, not zero; one
 has identical P50/P90/P95. Known idempotent duplicate-suppression successes do not create artificial
 zero-cost samples. Resource gaps do not remove known attempts from the reliability denominator.
 
+**Coverage warning.** The prominent warning appears only when **at least 20%** of eligible successful
+attempts are missing statistics **and at least five attempts** are missing. It is scoped to the
+selected completion period and the visible job-ID, tag, and name filters. The newest five minutes
+of completions and known duplicate-suppressed attempts are excluded from this warning population.
+Each attempt missing any required resource family counts once, not once per missing metric.
+For example, five missing out of 25 eligible attempts shows the warning; four out of 20 does not.
+
+This grace period does not remove recent attempts from the table or change its percentiles or
+success rates. Name filtering recomputes the warning locally; sorting and chunk expansion do not
+change its population. Smaller gaps remain visible in row sample counts. Individual lookup,
+authentication, network, and historical errors are retained under **Collection details**, labeled
+as global retained-history diagnostics, and do not independently trigger the prominent warning.
+Collection and retries continue even when the warning is hidden.
+
 **Automatic collection.** In a normal execution-enabled instance, a built-in background service
 reads bounded `.show commands-and-queries` metadata from the recorded job targets and stores the
 selected statistics in SQLite. There is no feature opt-in or off switch. It runs independently of

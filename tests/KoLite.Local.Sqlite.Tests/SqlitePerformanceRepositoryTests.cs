@@ -155,10 +155,11 @@ namespace KoLite.Local.Sqlite.Tests
         {
             using var connection = store.Factory.OpenConnection();
             var range = QueryPlan(connection, SqlitePerformanceRepository.AggregateSql(false),
-                ("$from", SqliteStorage.Utc(At(0))), ("$to", SqliteStorage.Utc(At(60))), ("$maxSeconds", SqlitePerformanceRepository.MaxMetricSeconds));
+                ("$from", SqliteStorage.Utc(At(0))), ("$to", SqliteStorage.Utc(At(60))), ("$maxSeconds", SqlitePerformanceRepository.MaxMetricSeconds),
+                ("$coverageCutoff", SqliteStorage.Utc(At(60))));
             var filtered = QueryPlan(connection, SqlitePerformanceRepository.AggregateSql(true),
                 ("$from", SqliteStorage.Utc(At(0))), ("$to", SqliteStorage.Utc(At(60))), ("$maxSeconds", SqlitePerformanceRepository.MaxMetricSeconds),
-                ("$jobs", "[\"one\",\"two\"]"));
+                ("$jobs", "[\"one\",\"two\"]"), ("$coverageCutoff", SqliteStorage.Utc(At(60))));
             var pending = QueryPlan(connection, SqlitePerformanceRepository.PendingSql(false),
                 ("$now", SqliteStorage.Utc(At(60))), ("$cutoff", SqliteStorage.Utc(At(0))), ("$take", 200));
             var delete = QueryPlan(connection, "SELECT 1 FROM performance_attempts WHERE job_id='one';");

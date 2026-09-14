@@ -84,7 +84,9 @@ namespace KoLite.LocalApp.Ui
             {
                 // Keep groups available when the local text filter is cleared, without refetching
                 // data or losing the expansion state of hidden chunks.
-                var rows = repository.GetAggregates(since, until, includedJobs.Select(job => job.Record.JobId).ToArray());
+                var rows = repository.GetAggregates(
+                    since, until, includedJobs.Select(job => job.Record.JobId).ToArray(),
+                    coverageCutoffUtc: until - PerformanceCoveragePolicy.GracePeriod);
                 var rowsByJob = rows.ToLookup(row => row.JobId, StringComparer.Ordinal);
                 foreach (var job in includedJobs)
                 {

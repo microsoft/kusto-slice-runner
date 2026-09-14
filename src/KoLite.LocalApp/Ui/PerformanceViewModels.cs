@@ -135,6 +135,8 @@ namespace KoLite.LocalApp.Ui
         string? FilterError)
     {
         public int VisibleJobCount => Jobs.Count(job => job.MatchesSearch(State.Search));
+        public PerformanceCoverageCounts VisibleCoverage => PerformanceCoverageCounts.Sum(
+            Jobs.Where(job => job.MatchesSearch(State.Search)).Select(job => job.Total.Coverage));
     }
 
     public static class PerformanceFormatting
@@ -152,5 +154,13 @@ namespace KoLite.LocalApp.Ui
 
         public static string Success(PerformanceAggregateRow row) =>
             row.SuccessPercent is { } percent ? percent.ToString("0.0", CultureInfo.InvariantCulture) + "%" : "n/a";
+
+        public static string CoverageMessage(PerformanceCoverageCounts coverage)
+        {
+            var percent = coverage.MissingPercent is { } value
+                ? decimal.Round(value, 1, MidpointRounding.AwayFromZero).ToString("0.#", CultureInfo.InvariantCulture) + "%"
+                : "n/a";
+            return $"{Count(coverage.MissingAttempts)} of {Count(coverage.EligibleAttempts)} eligible successful attempts ({percent}) in the selected period and filters are missing one or more resource measurements.";
+        }
     }
 }

@@ -54,6 +54,13 @@ confirmed job hard deletion removes them. Performance facts use the protected ch
 window, never shorter than 30 days. Resource availability and collector checkpoints are separate
 from authoritative execution state.
 
+The Performance warning is a scoped read-model policy, not the collector's last-error state.
+The same aggregate snapshot counts successful, non-suppressed attempts in the selected period,
+excluding its newest five minutes, and counts each attempt missing any valid resource family once.
+A warning requires both at least 20% missing and five missing attempts across visible job totals.
+Name filtering recomputes those totals locally. Global errors remain in Collection details; neither
+warning visibility nor filtering changes collection, retries, storage, or the table's statistics.
+
 The app uses local queue leases sized from the larger of worker visibility timeout and job `queryTimeout`, plus a fixed buffer. This prevents reclaiming work while a valid Kusto request is still running, but crash recovery can take longer for jobs with long query timeouts.
 
 Each execution attempt has a client-side deadline (job `queryTimeout` plus a small buffer) kept below the lease duration, so a hung call is cancelled and released rather than holding the lease open. An attempt that faults or times out abandons and retries its queue item immediately, and expired (orphaned) leases are reclaimed on the next dispatch cycle once past a short grace margin — not only when the worker pool is idle. Re-execution is idempotent (`ingest-by`), so recovery never duplicates output. Orphaned leases on paused or soft-deleted jobs are not auto-recovered (consistent with pause semantics); they surface as **Stalled** in the window history and can be recovered from the slice detail page once the job is enabled. See [operations runbook](operations-runbook.md#orphaned-leases-and-recovery).

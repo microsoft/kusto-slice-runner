@@ -22,7 +22,9 @@ namespace KoLite.Local.Sqlite.Performance
                    CASE WHEN typeof(cpu_seconds) IN ('integer','real') AND cpu_seconds BETWEEN 0 AND $maxSeconds THEN cpu_seconds END,
                    CASE WHEN typeof(duration_seconds) IN ('integer','real') AND duration_seconds BETWEEN 0 AND $maxSeconds THEN duration_seconds END,
                    CASE WHEN typeof(memory_peak_bytes) = 'integer' AND memory_peak_bytes >= 0 THEN memory_peak_bytes END,
-                   duplicate_suppressed, server_activity_id
+                   duplicate_suppressed, server_activity_id,
+                   CASE WHEN status='Succeeded' AND duplicate_suppressed IS NOT 1
+                             AND completed_at_utc < $coverageCutoff THEN 1 ELSE 0 END
             FROM performance_attempts
             WHERE completed_at_utc >= $from AND completed_at_utc < $to
               AND status IN ('Succeeded','FailedRetryable','Failed','DeadLettered','LeaseLost')
@@ -31,7 +33,8 @@ namespace KoLite.Local.Sqlite.Performance
         public IReadOnlyList<PerformanceAggregateRow> GetAggregates(
             DateTimeOffset fromUtc,
             DateTimeOffset toUtc,
-            IReadOnlyCollection<string>? jobIds = null)
+            IReadOnlyCollection<string>? jobIds = null,
+            DateTimeOffset? coverageCutoffUtc = null)
         {
             if (toUtc < fromUtc)
             {
@@ -47,6 +50,7 @@ namespace KoLite.Local.Sqlite.Performance
             using var command = SqliteStorage.Command(connection, null, AggregateSql(jobIds is not null));
             command.Add("$from", SqliteStorage.Utc(fromUtc));
             command.Add("$to", SqliteStorage.Utc(toUtc));
+            command.Add("$coverageCutoff", SqliteStorage.Utc(coverageCutoffUtc ?? toUtc));
             command.Add("$maxSeconds", MaxMetricSeconds);
             if (jobIds is not null)
             {
@@ -67,10 +71,11 @@ namespace KoLite.Local.Sqlite.Performance
                     var cpu = hasResources && !reader.IsDBNull(3) ? reader.GetDouble(3) : (double?)null;
                     var duration = hasResources && !reader.IsDBNull(4) ? reader.GetDouble(4) : (double?)null;
                     var memory = hasResources && !reader.IsDBNull(5) ? reader.GetInt64(5) / BytesPerGiB : (double?)null;
-                    Add((jobId, null), succeeded, cpu, duration, memory);
+                    var coverageEligible = reader.GetInt32(8) == 1;
+                    Add((jobId, null), succeeded, cpu, duration, memory, coverageEligible);
                     if (chunkId.HasValue)
                     {
-                        Add((jobId, chunkId), succeeded, cpu, duration, memory);
+                        Add((jobId, chunkId), succeeded, cpu, duration, memory, coverageEligible);
                     }
                 }
             }
@@ -80,7 +85,7 @@ namespace KoLite.Local.Sqlite.Performance
                 .Select(pair => pair.Value.ToRow(pair.Key.JobId, pair.Key.ChunkId))
                 .ToArray();
 
-            void Add((string JobId, int? ChunkId) key, bool succeeded, double? cpu, double? duration, double? memory)
+            void Add((string JobId, int? ChunkId) key, bool succeeded, double? cpu, double? duration, double? memory, bool coverageEligible)
             {
                 if (!groups.TryGetValue(key, out var samples))
                 {
@@ -88,7 +93,7 @@ namespace KoLite.Local.Sqlite.Performance
                     groups.Add(key, samples);
                 }
 
-                samples.Add(succeeded, cpu, duration, memory);
+                samples.Add(succeeded, cpu, duration, memory, coverageEligible);
             }
         }
 
@@ -163,11 +168,13 @@ namespace KoLite.Local.Sqlite.Performance
         {
             private long completed;
             private long succeeded;
+            private long eligibleForCoverage;
+            private long missingForCoverage;
             private readonly List<double> cpu = [];
             private readonly List<double> duration = [];
             private readonly List<double> memory = [];
 
-            public void Add(bool success, double? cpuSeconds, double? durationSeconds, double? memoryGiB)
+            public void Add(bool success, double? cpuSeconds, double? durationSeconds, double? memoryGiB, bool coverageEligible)
             {
                 completed++;
                 if (success)
@@ -178,10 +185,21 @@ namespace KoLite.Local.Sqlite.Performance
                 if (cpuSeconds.HasValue) cpu.Add(cpuSeconds.Value);
                 if (durationSeconds.HasValue) duration.Add(durationSeconds.Value);
                 if (memoryGiB.HasValue) memory.Add(memoryGiB.Value);
+                if (coverageEligible)
+                {
+                    eligibleForCoverage++;
+                    if (!cpuSeconds.HasValue || !durationSeconds.HasValue || !memoryGiB.HasValue)
+                    {
+                        missingForCoverage++;
+                    }
+                }
             }
 
             public PerformanceAggregateRow ToRow(string jobId, int? chunkId) =>
-                new(jobId, chunkId, !chunkId.HasValue, completed, succeeded, Percentiles(cpu), Percentiles(duration), Percentiles(memory));
+                new(jobId, chunkId, !chunkId.HasValue, completed, succeeded, Percentiles(cpu), Percentiles(duration), Percentiles(memory))
+                {
+                    Coverage = new PerformanceCoverageCounts(eligibleForCoverage, missingForCoverage)
+                };
 
             private static PerformancePercentiles Percentiles(List<double> values)
             {

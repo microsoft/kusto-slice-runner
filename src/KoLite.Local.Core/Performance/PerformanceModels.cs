@@ -28,6 +28,7 @@ namespace KoLite.Local.Core.Performance
         PerformancePercentiles DurationSeconds,
         PerformancePercentiles MemoryGiB)
     {
+        public PerformanceCoverageCounts Coverage { get; init; } = PerformanceCoverageCounts.Empty;
         public double? SuccessPercent => CompletedAttempts == 0 ? null : SucceededAttempts * 100d / CompletedAttempts;
     }
 
@@ -55,7 +56,8 @@ namespace KoLite.Local.Core.Performance
         IReadOnlyList<PerformanceAggregateRow> GetAggregates(
             DateTimeOffset fromUtc,
             DateTimeOffset toUtc,
-            IReadOnlyCollection<string>? jobIds = null);
+            IReadOnlyCollection<string>? jobIds = null,
+            DateTimeOffset? coverageCutoffUtc = null);
 
         PerformanceCollectionReadout GetCollectionStatus();
     }

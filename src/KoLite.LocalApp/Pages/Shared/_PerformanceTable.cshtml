@@ -93,7 +93,10 @@ else
             {
                 var rowHeader = "performance-job-" + job.JobId;
                 var controls = string.Join(" ", job.Chunks.Select(chunk => $"performance-chunk-{job.JobId}-{chunk.ChunkId}"));
-                <tbody data-performance-job-id="@job.JobId" data-performance-search="@job.ActivityId" hidden="@(!job.MatchesSearch(state.Search))">
+                <tbody data-performance-job-id="@job.JobId" data-performance-search="@job.ActivityId"
+                       data-performance-eligible-attempts="@job.Total.Coverage.EligibleAttempts.ToString(ci)"
+                       data-performance-missing-attempts="@job.Total.Coverage.MissingAttempts.ToString(ci)"
+                       hidden="@(!job.MatchesSearch(state.Search))">
                     <tr>
                         <th class="performance-job-cell" scope="row" id="@rowHeader">
                             <div class="performance-job-heading">
