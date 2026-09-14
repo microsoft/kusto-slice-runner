@@ -149,7 +149,7 @@ jobs:
         run: dotnet build .\KoLite.Local.sln --no-restore --nologo
 
       - name: Test
-        run: dotnet test .\KoLite.Local.sln --no-build --nologo
+        run: dotnet test .\KoLite.Local.sln --no-build --nologo --logger "console;verbosity=normal" -- xUnit.ShowLiveOutput=true
 
       - name: Check NuGet vulnerabilities
         run: dotnet list .\KoLite.Local.sln package --vulnerable

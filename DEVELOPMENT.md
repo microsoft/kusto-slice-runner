@@ -39,6 +39,21 @@ npm audit --omit=dev --audit-level=moderate
 
 `npm ci` restores Chart.js, Cytoscape.js (plus cytoscape-dagre), marked, and the jsdom test dependency, then runs the `postinstall` asset copy step. `npm run test:js` verifies that `site.js` consumes Razor-rendered endpoint data attributes for Kusto lineage and failure analysis.
 
+### Aggregation scale diagnostics
+
+The SQLite repository's 100,000-attempt scale test remains in the normal .NET suite, with
+assertions for exact counts, pooled percentiles, chunk results, and a single connection.
+Its elapsed aggregation time is informational, not a pass/fail limit, because local and
+hosted runner load varies. The reported duration covers `GetAggregates` only, excluding
+fixture setup and the rest of the test process.
+
+CI and release validation display the timing through xUnit live output. After the build
+steps above, run the focused test with the same output settings:
+
+```powershell
+dotnet test .\tests\KoLite.Local.Sqlite.Tests\KoLite.Local.Sqlite.Tests.csproj --no-build --nologo --filter "FullyQualifiedName~One_hundred_thousand_attempts_have_exact_uncapped_aggregates_in_one_pipeline" --logger "console;verbosity=normal" -- xUnit.ShowLiveOutput=true
+```
+
 ## Local development run
 
 For UI review, run with scheduler dispatch disabled and an explicit local SQLite path:
