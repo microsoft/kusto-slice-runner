@@ -369,15 +369,19 @@ Each job row pools its successful query attempts. Expand a chunked job to see ra
 with the same metrics; IDs are not interpreted as regions. Successful chunks contribute even if
 their parent window is incomplete. Paused and completed jobs with history remain useful comparison
 subjects. Sorting/filtering keeps each job and its children together.
+The initial order is job name ascending. Selecting a different column header sorts descending first;
+subsequent clicks on that header toggle ascending/descending. Explicit sort URLs remain supported.
 
 | Columns | Meaning |
 | --- | --- |
-| Completed attempts | All known completed attempt outcomes in the period, including retryable failures, dead letters, and lease loss. Running and unknown outcomes are not reported. |
-| Attempt success | Successful attempts divided by completed attempts, not eventual logical-window success. Sixteen successful chunks plus one failed retry means 17 attempts and approximately 94.1%. |
+| Attempt success | Percentage plus successful/total completed-attempt counts, not eventual logical-window success. Sixteen successful chunks plus one failed retry shows 16 / 17 and approximately 94.1%. Completed attempts include failures and lease loss; running and unknown outcomes are excluded. |
 | CPU P50/P90/P95 | Kusto command `TotalCpu` in seconds. CPU time can exceed elapsed time. |
 | Duration P50/P90/P95 | Server-side `.set-or-append` duration in seconds, never worker elapsed time, scheduling wait, or whole-window latency. |
 | Memory peak P50/P90/P95 | Kusto-reported `MemoryPeak` in GiB (`bytes / 1024^3`), not inferred concurrent job memory. |
-| Metric samples | Valid successful-attempt measurements contributing to each resource family. Different family counts are shown separately. |
+
+Hover a metric value for its exact value and the number of valid samples out of successful attempts.
+Each resource family can have a different sample count; these counts are distinct from the
+successful/total fraction in Attempt success. The same context is available to table accessibility tools.
 
 Percentiles use exact nearest rank over the underlying samples. Job totals are not averages of
 chunk percentiles or percentages. Missing measurements show `n/a`, not zero; one sample legitimately
@@ -393,10 +397,13 @@ For example, five missing out of 25 eligible attempts shows the warning; four ou
 
 This grace period does not remove recent attempts from the table or change its percentiles or
 success rates. Name filtering recomputes the warning locally; sorting and chunk expansion do not
-change its population. Smaller gaps remain visible in row sample counts. Individual lookup,
+change its population. Smaller gaps remain available in metric-value sample-count tooltips. Individual lookup,
 authentication, network, and historical errors are retained under **Collection details**, labeled
 as global retained-history diagnostics, and do not independently trigger the prominent warning.
 Collection and retries continue even when the warning is hidden.
+
+**Collection details** and **How these statistics are calculated** are always-visible sections below
+the report, not collapsible panels. They remain available for empty or initializing reports.
 
 **Automatic collection.** In a normal execution-enabled instance, a built-in background service
 reads bounded `.show commands-and-queries` metadata from the recorded job targets and stores the

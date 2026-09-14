@@ -4,9 +4,12 @@ import { JSDOM } from "jsdom";
 
 const alpha = "11111111222233334444555566667777";
 const beta = "888888889999aaaabbbbccccddddeeee";
+const metricCells = Array.from({ length: 9 }, () =>
+  '<td title="CPU P50: unavailable; 0 samples from 1 successful attempt." aria-label="CPU P50: unavailable; 0 samples from 1 successful attempt.">n/a</td>').join("");
+const valueCells = `<td>100.0%<span>1 / 1</span></td>${metricCells}`;
 const childIds = Array.from({ length: 32 }, (_, id) => `performance-chunk-${alpha}-${id}`);
 const childRows = childIds.map((id, chunkId) =>
-  `<tr id="${id}" data-performance-chunk-row data-performance-chunk-id="${chunkId}" hidden><th scope="row">Chunk ${chunkId}</th><td>n/a</td></tr>`).join("");
+  `<tr id="${id}" data-performance-chunk-row data-performance-chunk-id="${chunkId}" hidden><th scope="row">Chunk ${chunkId}</th>${valueCells}</tr>`).join("");
 const html = `<!doctype html><html><body>
   <a id="refresh" href="/activity?view=performance&range=7d&tag=ops&tag=daily&jobId=${alpha}&sort=cpu-p95&dir=desc" data-performance-state-link="true">Refresh</a>
   <section data-performance-root>
@@ -21,10 +24,9 @@ const html = `<!doctype html><html><body>
       <label>Job name <input name="q" value="Alpha" data-performance-filter-input></label>
     </form>
     <a id="range" href="/activity?view=performance&range=1d&tag=ops&tag=daily&jobId=${alpha}&sort=cpu-p95&dir=desc" data-performance-state-link="true">24 hours</a>
-    <a id="sort" href="/activity?view=performance&range=7d&tag=ops&tag=daily&jobId=${alpha}&sort=memory-p50&dir=asc" data-performance-state-link="true">Memory P50</a>
+    <a id="sort" href="/activity?view=performance&range=7d&tag=ops&tag=daily&jobId=${alpha}&sort=memory-p50&dir=desc" data-performance-state-link="true">Memory P50</a>
     <a id="clear" href="/activity?view=performance&range=7d&sort=cpu-p95&dir=desc" data-performance-clear-filters>Clear filters</a>
     <p data-performance-filter-status role="status" aria-live="polite"></p>
-    <details class="performance-collection"><p data-performance-collection-error>Old global lookup error</p></details>
     <div data-performance-coverage-warning data-performance-threshold-percent="20" data-performance-minimum-missing="5" hidden>
       <span data-performance-coverage-message></span>
     </div>
@@ -34,15 +36,19 @@ const html = `<!doctype html><html><body>
           <tr><th scope="row">
             <button type="button" aria-expanded="false" aria-controls="${childIds.join(" ")}" aria-label="Show chunks for Alpha" data-performance-disclosure data-performance-job-name="Alpha">Show chunks</button>
             <a href="/jobs/${alpha}">Alpha</a>
-          </th></tr>
+          </th>${valueCells}</tr>
           ${childRows}
         </tbody>
         <tbody data-performance-job-id="${beta}" data-performance-search="Beta" data-performance-eligible-attempts="75" data-performance-missing-attempts="0">
-          <tr><th scope="row"><a href="/jobs/${beta}">Beta</a></th></tr>
+          <tr><th scope="row"><a href="/jobs/${beta}">Beta</a></th>${valueCells}</tr>
         </tbody>
       </table>
     </div>
     <p data-performance-no-matches hidden>No jobs match the job-name filter.</p>
+    <div data-performance-footer>
+      <section class="performance-collection"><h3>Collection details</h3><p data-performance-collection-error>Old global lookup error</p></section>
+      <section class="performance-definitions"><h3>How these statistics are calculated</h3></section>
+    </div>
   </section>
 </body></html>`;
 
@@ -69,6 +75,10 @@ const noMatches = document.querySelector("[data-performance-no-matches]");
 const warning = document.querySelector("[data-performance-coverage-warning]");
 const coverageMessage = document.querySelector("[data-performance-coverage-message]");
 assert.equal(rows.length, 32);
+assert.ok([...document.querySelectorAll("tbody tr")].every(row => row.cells.length === 11));
+assert.equal(document.querySelector("[data-performance-footer] details"), null);
+assert.equal(document.querySelector("[data-performance-footer] summary"), null);
+assert.ok(document.querySelector("[data-performance-table]").compareDocumentPosition(document.querySelector("[data-performance-footer]")) & window.Node.DOCUMENT_POSITION_FOLLOWING);
 assert.deepEqual(rows.map(row => Number(row.getAttribute("data-performance-chunk-id"))), Array.from({ length: 32 }, (_, id) => id));
 assert.ok(rows.every(row => row.hidden));
 assert.equal(button.tabIndex, 0);
@@ -125,7 +135,7 @@ for (const id of ["refresh", "range", "sort"]) {
 }
 assert.equal(new URL(document.querySelector("#range").href).searchParams.get("range"), "1d");
 assert.equal(new URL(document.querySelector("#sort").href).searchParams.get("sort"), "memory-p50");
-assert.equal(new URL(document.querySelector("#sort").href).searchParams.get("dir"), "asc");
+assert.equal(new URL(document.querySelector("#sort").href).searchParams.get("dir"), "desc");
 assert.equal(new URL(document.querySelector("#clear").href).searchParams.has("q"), false);
 assert.deepEqual(Array.from(new window.FormData(document.querySelector("form")).getAll("tag")), ["ops", "daily"]);
 

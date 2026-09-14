@@ -86,36 +86,6 @@
                 </div>
             </div>
         }
-        <details class="performance-collection">
-            <summary>
-                Collection details
-                <span class="muted">(@PerformanceFormatting.Count(performance.Collection.AvailableSamples) observed; @PerformanceFormatting.Count(performance.Collection.PendingSamples) awaiting metrics)</span>
-                @if (!performance.ExecutionEnabled)
-                {
-                    <span class="muted">- this instance reads stored data only</span>
-                }
-            </summary>
-            <p class="muted">
-                History last reconciled: @AppFormatting.Iso(performance.Collection.LastHistorySyncUtc).
-                Resource collection last succeeded: @AppFormatting.Iso(performance.Collection.LastCollectionUtc).
-            </p>
-            <p class="muted">
-                Across retained history, before report filters:
-                @PerformanceFormatting.Count(performance.Collection.AvailableSamples) resource samples available;
-                @PerformanceFormatting.Count(performance.Collection.PendingSamples) awaiting collection.
-            </p>
-            @if (!performance.ExecutionEnabled)
-            {
-                <p class="muted" data-performance-no-execution>This instance has execution disabled and performs no automatic collection or backfill. Stored data remains available; the normal execution-capable instance collects resource measurements.</p>
-            }
-            @if (!string.IsNullOrWhiteSpace(performance.Collection.LastError))
-            {
-                <p class="muted" data-performance-collection-error>
-                    <strong>Latest diagnostic (all retained history):</strong> @performance.Collection.LastError
-                </p>
-            }
-            <p class="muted">Collection retries automatically in the normal execution-capable instance. Review its operational logs if a problem persists.</p>
-        </details>
         @if (performance.Collection.HistoryInitialized && performance.FilterError is null)
         {
             var coverage = performance.VisibleCoverage;
@@ -125,7 +95,7 @@
                  hidden="@(!PerformanceCoveragePolicy.ShouldWarn(coverage))">
                 <strong>Resource statistics are incomplete.</strong>
                 <span data-performance-coverage-message>@PerformanceFormatting.CoverageMessage(coverage)</span>
-                <div class="muted">The newest @PerformanceCoveragePolicy.GracePeriodMinutes minutes and known duplicate-suppressed attempts are excluded. See Collection details for diagnostics.</div>
+                <div class="muted">The newest @PerformanceCoveragePolicy.GracePeriodMinutes minutes and known duplicate-suppressed attempts are excluded. See <a href="#performance-collection-details">Collection details</a> for diagnostics.</div>
             </div>
         }
         @if (performance.FilterError is not null)
@@ -142,6 +112,7 @@
         {
             <partial name="_PerformanceTable" model="performance" />
         }
+        <partial name="_PerformanceFooter" model="performance" />
     </section>
 }
 else if (Model.Data is { } data)

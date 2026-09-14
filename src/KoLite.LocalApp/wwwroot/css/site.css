@@ -604,19 +604,14 @@ h3 { font-size: 16px; margin-bottom: 10px; }
 .performance-filter-input { min-width: 180px; max-width: 300px; }
 .performance-tag-filters { margin-top: 12px; }
 .performance-tag-filters .tag-list { margin-top: 4px; }
-.performance-collection { border-top: 1px solid var(--border); margin-top: 14px; padding-top: 8px; }
+.performance-collection { border-top: 1px solid var(--border); margin-top: 14px; padding-top: 12px; }
 .performance-collection p { margin: 4px 0; }
-.performance-collection .alert { margin-top: 10px; }
-.performance-collection summary,
-.performance-definitions summary { cursor: pointer; font-size: 12px; padding: 5px 0; }
-.performance-collection + .alert { margin-top: 8px; }
-.performance-definitions { border-top: 1px solid var(--border); margin-top: 12px; padding-top: 4px; }
+.performance-definitions { border-top: 1px solid var(--border); margin-top: 12px; padding-top: 12px; }
+.performance-footer h3 { margin: 0 0 8px; }
 .performance-table-wrap:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
-.performance-table { min-width: 1220px; table-layout: fixed; }
+.performance-table { min-width: 1000px; table-layout: fixed; }
 .performance-job-column { width: 220px; }
-.performance-attempts-column { width: 85px; }
-.performance-success-column { width: 95px; }
-.performance-samples-column { width: 140px; }
+.performance-success-column { width: 105px; }
 .performance-table .performance-job-cell {
   background: var(--surface);
   box-shadow: 1px 0 0 var(--border);
@@ -634,7 +629,6 @@ h3 { font-size: 16px; margin-bottom: 10px; }
 .performance-job-heading { align-items: center; display: flex; gap: 6px; min-width: 0; }
 .performance-job-heading a { min-width: 0; }
 .performance-subline { color: var(--muted); display: block; font-size: 11px; font-weight: 400; margin-top: 3px; }
-.performance-coverage { display: block; font-size: 11px; white-space: nowrap; }
 .performance-table .performance-chunk-row td,
 .performance-table .performance-chunk-row .performance-job-cell { background: var(--bg); }
 .performance-table .performance-chunk-row .performance-job-cell { padding-left: 34px; }
@@ -660,7 +654,7 @@ h3 { font-size: 16px; margin-bottom: 10px; }
 .performance-disclosure[aria-expanded="true"]::before { transform: rotate(90deg); }
 .performance-disclosure:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 .performance-scroll-hint { display: none; margin-bottom: 8px; }
-@media (max-width: 1300px) {
+@media (max-width: 1080px) {
   .performance-scroll-hint { display: block; }
 }
 @media (max-width: 720px) {

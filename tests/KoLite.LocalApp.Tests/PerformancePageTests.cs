@@ -156,6 +156,66 @@ namespace KoLite.LocalApp.Tests
                 Query().Get(sort: "attempts").Jobs.Select(job => job.JobId));
         }
 
+        [Theory]
+        [InlineData("activity")]
+        [InlineData("success")]
+        [InlineData("cpu-p50")]
+        [InlineData("cpu-p90")]
+        [InlineData("cpu-p95")]
+        [InlineData("duration-p50")]
+        [InlineData("duration-p90")]
+        [InlineData("duration-p95")]
+        [InlineData("memory-p50")]
+        [InlineData("memory-p90")]
+        [InlineData("memory-p95")]
+        public void Header_links_start_descending_then_toggle_without_changing_initial_order(string key)
+        {
+            var state = new PerformanceViewState("7d", "A B", ["ops"], "job-id", PerformanceSort.Default);
+
+            Assert.Contains($"sort={key}&dir=desc", state.SortHref(key));
+            var descending = state with { Sort = new PerformanceSort(key, true) };
+            var ascendingLink = descending.SortHref(key);
+            if (key == "activity")
+            {
+                Assert.Equal(state.Href, ascendingLink);
+            }
+            else
+            {
+                Assert.Contains($"sort={key}&dir=asc", ascendingLink);
+            }
+
+            Assert.Contains($"sort={key}&dir=desc", (state with { Sort = new PerformanceSort(key, false) }).SortHref(key));
+            var otherKey = key == "cpu-p50" ? "cpu-p90" : "cpu-p50";
+            var switched = (state with { Sort = new PerformanceSort(otherKey, true) }).SortHref(key);
+            Assert.Contains($"sort={key}&dir=desc", switched);
+            Assert.Contains("view=performance&range=7d&q=A%20B&tag=ops&jobId=job-id", switched);
+            Assert.Equal(new PerformanceSort("activity", false), PerformanceSort.Default);
+            Assert.False(PerformanceSort.Parse("cpu-p50", null).Descending);
+            Assert.Equal(new PerformanceSort("attempts", true), PerformanceSort.Parse("attempts", "desc"));
+        }
+
+        [Fact]
+        public void Metric_tooltips_preserve_exact_values_and_distinct_sample_counts()
+        {
+            var row = Row("job", completed: 17, succeeded: 16) with
+            {
+                CpuSeconds = new PerformancePercentiles(2, 12.3456789, 20, 30),
+                DurationSeconds = new PerformancePercentiles(1, 0, 0, 0),
+                MemoryGiB = PerformancePercentiles.Empty
+            };
+
+            Assert.Equal("CPU P50: 12.3456789 s; 2 samples from 16 successful attempts.",
+                PerformanceFormatting.MetricTooltip(row, PerformanceMetrics.All[0], "p50"));
+            Assert.Equal("Duration P95: 0 s; 1 sample from 16 successful attempts.",
+                PerformanceFormatting.MetricTooltip(row, PerformanceMetrics.All[1], "p95"));
+            Assert.Equal("Memory peak P50: unavailable; 0 samples from 16 successful attempts.",
+                PerformanceFormatting.MetricTooltip(row, PerformanceMetrics.All[2], "p50"));
+            Assert.Equal("12.35", PerformanceFormatting.Value(row.CpuSeconds.P50, "s"));
+            Assert.Equal("0.123", PerformanceFormatting.Value(0.123456, "GiB"));
+            Assert.Contains("1 sample from 1 successful attempt.",
+                PerformanceFormatting.MetricTooltip(row with { SucceededAttempts = 1 }, PerformanceMetrics.All[1], "p50"));
+        }
+
         [Fact]
         public void Filters_preserve_GUID_identity_current_label_tags_range_and_sort()
         {
@@ -236,7 +296,7 @@ namespace KoLite.LocalApp.Tests
         [Fact]
         public async Task Performance_renders_nine_metrics_grouped_headers_and_collapsed_raw_children()
         {
-            var job = CreateJob("job.performance", chunks: 12, tags: ["ops"]);
+            var job = CreateJob("job.performance", chunks: 32, tags: ["ops"]);
             repository.Rows.Add(Row(job.JobId, completed: 17, succeeded: 16) with
             {
                 CpuSeconds = new PerformancePercentiles(2, 10, 11, 12),
@@ -249,16 +309,20 @@ namespace KoLite.LocalApp.Tests
             var page = await client.GetStringAsync("/activity?view=performance");
             var headers = Regex.Match(page, @"<thead>(.*?)</thead>", RegexOptions.Singleline).Groups[1].Value;
 
-            Assert.Equal(4, Regex.Matches(headers, "rowspan=\"2\"").Count);
+            Assert.Equal(2, Regex.Matches(headers, "rowspan=\"2\"").Count);
             Assert.Equal(3, Regex.Matches(headers, "scope=\"colgroup\" colspan=\"3\"").Count);
             Assert.Equal(9, Regex.Matches(headers, "data-performance-sort=\"").Count);
             Assert.Contains("CPU (s)", page);
             Assert.Contains("Duration (s)", page);
             Assert.Contains("Memory peak (GiB)", page);
             Assert.Contains("94.1%", page);
-            Assert.Contains("data-performance-coverage=\"cpu\"", page);
-            Assert.Contains("data-performance-coverage=\"duration\"", page);
-            Assert.Contains("data-performance-coverage=\"memory\"", page);
+            Assert.Contains("title=\"CPU P50: 10 s; 2 samples from 16 successful attempts.\"", page);
+            Assert.Contains("title=\"Duration P50: 20 s; 1 sample from 16 successful attempts.\"", page);
+            Assert.Contains("aria-label=\"Memory peak P50: unavailable; 0 samples from 16 successful attempts.\"", page);
+            Assert.DoesNotContain("performance-col-attempts", page);
+            Assert.DoesNotContain("performance-col-samples", page);
+            Assert.DoesNotContain("Metric samples", headers);
+            Assert.DoesNotContain("Completed attempts", headers);
             Assert.Contains("n/a", page);
             Assert.Contains("aria-expanded=\"false\"", page);
             Assert.Contains("tabindex=\"0\" role=\"region\" aria-label=\"Historical job performance\"", page);
@@ -271,9 +335,16 @@ namespace KoLite.LocalApp.Tests
             Assert.DoesNotContain("Ignored attempts", page);
             Assert.DoesNotContain("data-running-chunk-id", page);
             var childTags = Regex.Matches(page, @"<tr\b[^>]*data-performance-chunk-row[^>]*>");
-            Assert.Equal(12, childTags.Count);
+            Assert.Equal(32, childTags.Count);
             Assert.All(childTags.Cast<Match>(), match => Assert.Matches(@"\bhidden(?:\s|=|>)", match.Value));
-            Assert.Equal(Enumerable.Range(0, 12), Regex.Matches(page, "data-performance-chunk-id=\"(\\d+)\"").Cast<Match>().Select(match => int.Parse(match.Groups[1].Value)));
+            Assert.Equal(Enumerable.Range(0, 32), Regex.Matches(page, "data-performance-chunk-id=\"(\\d+)\"").Cast<Match>().Select(match => int.Parse(match.Groups[1].Value)));
+            foreach (Match body in Regex.Matches(page, @"<tbody\b.*?</tbody>", RegexOptions.Singleline))
+            {
+                foreach (Match row in Regex.Matches(body.Value, @"<tr\b.*?</tr>", RegexOptions.Singleline))
+                {
+                    Assert.Equal(11, Regex.Matches(row.Value, @"<(?:td|th)\b").Count);
+                }
+            }
         }
 
         [Fact]
@@ -338,7 +409,7 @@ namespace KoLite.LocalApp.Tests
             Assert.Contains(PerformanceFormatting.CoverageMessage(new PerformanceCoverageCounts(eligible, missing)), page);
             if (hasDiagnostic)
             {
-                var details = Regex.Match(page, "<details class=\"performance-collection\">.*?</details>", RegexOptions.Singleline);
+                var details = Regex.Match(page, "<section class=\"performance-collection\"[^>]*>.*?</section>", RegexOptions.Singleline);
                 Assert.Contains(diagnostic, details.Value);
                 Assert.Contains("Latest diagnostic (all retained history)", details.Value);
                 Assert.DoesNotContain(diagnostic, page.Replace(details.Value, string.Empty, StringComparison.Ordinal));
@@ -395,6 +466,51 @@ namespace KoLite.LocalApp.Tests
             using var invalid = await client.GetAsync("/activity?view=performance&jobId=not-a-guid");
             Assert.Equal(HttpStatusCode.BadRequest, invalid.StatusCode);
             Assert.DoesNotContain("data-performance-coverage-warning", await invalid.Content.ReadAsStringAsync());
+        }
+
+        [Theory]
+        [InlineData("populated")]
+        [InlineData("empty")]
+        [InlineData("initializing")]
+        [InlineData("invalid")]
+        public async Task Collection_and_calculation_sections_are_plain_and_follow_every_report_state(string state)
+        {
+            var job = CreateJob("footer");
+            if (state != "empty") repository.Rows.Add(Row(job.JobId));
+            repository.Status = repository.Status with
+            {
+                HistoryInitialized = state != "initializing",
+                LastError = "<footer diagnostic>"
+            };
+            using var client = CreateClient();
+            var path = "/activity?view=performance" + (state == "invalid" ? "&jobId=invalid" : string.Empty);
+            using var response = await client.GetAsync(path);
+            var page = await response.Content.ReadAsStringAsync();
+            var footer = Regex.Match(page, @"<div class=""performance-footer""[^>]*>.*?</div>", RegexOptions.Singleline);
+
+            Assert.True(footer.Success);
+            Assert.DoesNotContain("<details", footer.Value);
+            Assert.DoesNotContain("<summary", footer.Value);
+            Assert.DoesNotContain("aria-expanded", footer.Value);
+            Assert.Single(Regex.Matches(page, "id=\"performance-collection-heading\""));
+            Assert.Single(Regex.Matches(page, "id=\"performance-definitions-heading\""));
+            Assert.Contains("Collection details", footer.Value);
+            Assert.Contains("How these statistics are calculated", footer.Value);
+            Assert.Contains("&lt;footer diagnostic&gt;", footer.Value);
+            Assert.Contains("data-performance-no-execution", footer.Value);
+            Assert.Contains("id=\"performance-statistics-help\"", footer.Value);
+            Assert.Contains("Hover a metric value", footer.Value);
+            Assert.DoesNotContain("role=\"alert\"", footer.Value);
+            var preceding = state switch
+            {
+                "populated" => "</table>",
+                "empty" => "No completed attempts in this period.",
+                "initializing" => "data-performance-initializing",
+                _ => "The job filter must be a valid job ID."
+            };
+            Assert.True(page.IndexOf(preceding, StringComparison.Ordinal) >= 0);
+            Assert.True(page.IndexOf(preceding, StringComparison.Ordinal) < footer.Index);
+            if (state == "invalid") Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         }
 
         private PerformancePageQuery Query(bool enabled = true) =>

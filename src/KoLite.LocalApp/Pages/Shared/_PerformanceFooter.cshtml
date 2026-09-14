@@ -1,0 +1,42 @@
+@model PerformancePageData
+
+<div class="performance-footer" data-performance-footer>
+    <section class="performance-collection" id="performance-collection-details" aria-labelledby="performance-collection-heading">
+        <h3 id="performance-collection-heading">Collection details</h3>
+        <p class="muted">
+            History last reconciled: @AppFormatting.Iso(Model.Collection.LastHistorySyncUtc).
+            Resource collection last succeeded: @AppFormatting.Iso(Model.Collection.LastCollectionUtc).
+        </p>
+        <p class="muted">
+            Across retained history, before report filters:
+            @PerformanceFormatting.Count(Model.Collection.AvailableSamples) resource samples available;
+            @PerformanceFormatting.Count(Model.Collection.PendingSamples) awaiting collection.
+        </p>
+        @if (!Model.ExecutionEnabled)
+        {
+            <p class="muted" data-performance-no-execution>This instance has execution disabled and performs no automatic collection or backfill. Stored data remains available; the normal execution-capable instance collects resource measurements.</p>
+        }
+        @if (!string.IsNullOrWhiteSpace(Model.Collection.LastError))
+        {
+            <p class="muted" data-performance-collection-error>
+                <strong>Latest diagnostic (all retained history):</strong> @Model.Collection.LastError
+            </p>
+        }
+        <p class="muted">Collection retries automatically in the normal execution-capable instance. Review its operational logs if a problem persists.</p>
+    </section>
+    <section class="performance-definitions" aria-labelledby="performance-definitions-heading">
+        <h3 id="performance-definitions-heading">How these statistics are calculated</h3>
+        <p class="muted" id="performance-statistics-help">
+            Exact nearest-rank percentiles of captured measurements from successful query attempts.
+            Job rows pool all their query samples, including successful chunks of incomplete windows.
+            Duration is server-side <code>.set-or-append</code> duration, not local elapsed time.
+            Memory peak is Kusto-reported per-command peak memory, not concurrent job or cluster memory.
+        </p>
+        <p class="muted">
+            Attempt success shows the successful/total completed-attempt count, including attempts without resource measurements.
+            Hover a metric value for its exact value and the number of available samples from successful attempts; each resource family can have a different sample count.
+            Zero successful attempts and missing measurements both have <strong>n/a</strong> percentiles; tooltip sample counts distinguish them.
+            A single sample has identical percentiles. The UTC completion interval includes its start and excludes its end.
+        </p>
+    </section>
+</div>

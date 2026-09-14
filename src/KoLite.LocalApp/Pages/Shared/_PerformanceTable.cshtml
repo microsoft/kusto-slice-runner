@@ -6,24 +6,9 @@
 
     void RenderValues(PerformanceAggregateRow row, string rowHeader)
     {
-        <td class="performance-number" headers="@rowHeader performance-col-attempts">@PerformanceFormatting.Count(row.CompletedAttempts)</td>
         <td class="performance-number" headers="@rowHeader performance-col-success">
             <strong>@PerformanceFormatting.Success(row)</strong>
             <span class="performance-subline">@PerformanceFormatting.Count(row.SucceededAttempts) / @PerformanceFormatting.Count(row.CompletedAttempts)</span>
-        </td>
-        <td class="performance-number performance-samples" headers="@rowHeader performance-col-samples">
-            @if (row.CpuSeconds.SampleCount == row.DurationSeconds.SampleCount && row.CpuSeconds.SampleCount == row.MemoryGiB.SampleCount)
-            {
-                <span>@PerformanceFormatting.Count(row.CpuSeconds.SampleCount) / @PerformanceFormatting.Count(row.SucceededAttempts)</span>
-                <span class="performance-subline">successful attempts</span>
-            }
-            else
-            {
-                @foreach (var metric in PerformanceMetrics.All)
-                {
-                    <span class="performance-coverage" data-performance-coverage="@metric.Key">@metric.Label: @PerformanceFormatting.Count(metric.Samples(row).SampleCount) / @PerformanceFormatting.Count(row.SucceededAttempts)</span>
-                }
-            }
         </td>
         foreach (var metric in PerformanceMetrics.All)
         {
@@ -31,7 +16,8 @@
             {
                 var key = metric.Key + "-" + percentile;
                 var value = metric.Value(row, percentile);
-                <td class="performance-number @(percentile == "p50" ? "performance-group-start" : null)" headers="@rowHeader @("performance-group-" + metric.Key) @("performance-col-" + key)" data-performance-metric="@key" title="@value?.ToString("R", ci)">@PerformanceFormatting.Value(value, metric.Unit)</td>
+                var tooltip = PerformanceFormatting.MetricTooltip(row, metric, percentile);
+                <td class="performance-number @(percentile == "p50" ? "performance-group-start" : null)" headers="@rowHeader @("performance-group-" + metric.Key) @("performance-col-" + key)" data-performance-metric="@key" title="@tooltip" aria-label="@tooltip">@PerformanceFormatting.Value(value, metric.Unit)</td>
             }
         }
     }
@@ -48,12 +34,10 @@ else
     <p class="muted performance-scroll-hint" id="performance-scroll-help">Scroll horizontally to see all nine resource statistics. The job column stays visible.</p>
     <div class="table-wrap performance-table-wrap" tabindex="0" role="region" aria-label="Historical job performance" aria-describedby="performance-statistics-help performance-scroll-help">
         <table class="ko-table compact performance-table" data-performance-table>
-            <caption class="visually-hidden">Completed attempts and successful query-attempt resource percentiles by job and chunk</caption>
+            <caption class="visually-hidden">Attempt success and successful query-attempt resource percentiles by job and chunk</caption>
             <colgroup>
                 <col class="performance-job-column" />
-                <col class="performance-attempts-column" />
                 <col class="performance-success-column" />
-                <col class="performance-samples-column" />
             </colgroup>
             @foreach (var metric in PerformanceMetrics.All)
             {
@@ -64,13 +48,9 @@ else
                     <th class="performance-job-cell" id="performance-col-activity" scope="col" rowspan="2" aria-sort="@state.SortAria("activity")">
                         <a class="sort-link" href="@state.SortHref("activity")" aria-label="Sort jobs by job name" data-performance-state-link="true">Job <span class="sort-indicator" aria-hidden="true">@state.SortIndicator("activity")</span></a>
                     </th>
-                    <th id="performance-col-attempts" scope="col" rowspan="2" aria-sort="@state.SortAria("attempts")">
-                        <a class="sort-link" href="@state.SortHref("attempts")" aria-label="Sort jobs by completed attempts" data-performance-state-link="true">Completed attempts <span class="sort-indicator" aria-hidden="true">@state.SortIndicator("attempts")</span></a>
-                    </th>
                     <th id="performance-col-success" scope="col" rowspan="2" aria-sort="@state.SortAria("success")">
                         <a class="sort-link" href="@state.SortHref("success")" aria-label="Sort jobs by attempt success percentage" data-performance-state-link="true">Attempt success <span class="sort-indicator" aria-hidden="true">@state.SortIndicator("success")</span></a>
                     </th>
-                    <th id="performance-col-samples" scope="col" rowspan="2">Metric samples</th>
                     @foreach (var metric in PerformanceMetrics.All)
                     {
                         <th class="performance-group-heading performance-group-start" id="@("performance-group-" + metric.Key)" scope="colgroup" colspan="3">@metric.Label (@metric.Unit)</th>
@@ -128,18 +108,3 @@ else
     <p class="empty" data-performance-no-matches hidden="@(Model.VisibleJobCount > 0)">No jobs match the job-name filter.</p>
     <noscript><p class="muted">JavaScript is required to expand chunk rows. Job totals and submitted filters remain available.</p></noscript>
 }
-
-<details class="performance-definitions">
-    <summary>How these statistics are calculated</summary>
-    <p class="muted" id="performance-statistics-help">
-        Exact nearest-rank percentiles of captured measurements from successful query attempts.
-        Job rows pool all their query samples, including successful chunks of incomplete windows.
-        Duration is server-side <code>.set-or-append</code> duration, not local elapsed time.
-        Memory peak is Kusto-reported per-command peak memory, not concurrent job or cluster memory.
-    </p>
-    <p class="muted">
-        Metric samples are shown relative to successful attempts. Counts and success rates include completed attempts even when resource measurements are unavailable.
-        Zero successful attempts and missing measurements both have <strong>n/a</strong> percentiles; sample counts distinguish them. A single sample has identical percentiles.
-        The UTC completion interval includes its start and excludes its end.
-    </p>
-</details>

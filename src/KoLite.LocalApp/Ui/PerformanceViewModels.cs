@@ -96,7 +96,7 @@ namespace KoLite.LocalApp.Ui
         public string RangeHref(string range) => (this with { Range = PerformanceRangeOptions.Normalize(range) }).Href;
 
         public string SortHref(string key) =>
-            (this with { Sort = new PerformanceSort(key, Sort.Key == key && !Sort.Descending) }).Href;
+            (this with { Sort = new PerformanceSort(key, Sort.Key != key || !Sort.Descending) }).Href;
 
         public string SortAria(string key) => Sort.Key == key ? (Sort.Descending ? "descending" : "ascending") : "none";
 
@@ -154,6 +154,16 @@ namespace KoLite.LocalApp.Ui
 
         public static string Success(PerformanceAggregateRow row) =>
             row.SuccessPercent is { } percent ? percent.ToString("0.0", CultureInfo.InvariantCulture) + "%" : "n/a";
+
+        public static string MetricTooltip(PerformanceAggregateRow row, PerformanceMetricDefinition metric, string percentile)
+        {
+            var value = metric.Value(row, percentile);
+            var measurement = value is { } number
+                ? number.ToString("R", CultureInfo.InvariantCulture) + " " + metric.Unit
+                : "unavailable";
+            var samples = metric.Samples(row).SampleCount;
+            return $"{metric.Label} {percentile.ToUpperInvariant()}: {measurement}; {Count(samples)} {(samples == 1 ? "sample" : "samples")} from {Count(row.SucceededAttempts)} successful {(row.SucceededAttempts == 1 ? "attempt" : "attempts")}.";
+        }
 
         public static string CoverageMessage(PerformanceCoverageCounts coverage)
         {
