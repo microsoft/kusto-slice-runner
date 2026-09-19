@@ -75,3 +75,18 @@ sign-ins and requires no PAT, repository secret, or organization change.
 If local Copilot is unavailable, the output fails validation, or the draft
 changes after preview, keep the GitHub-generated notes unchanged; the draft and
 packages remain valid.
+
+## Startup helpers in release packages
+
+Both Windows package types include `Start-KoLiteApp.ps1`, `Stop-KoLiteApp.ps1`,
+`KoLite.Startup.psm1`, `Register-KoLiteStartup.ps1`, `Get-KoLiteStartup.ps1`, and
+`Unregister-KoLiteStartup.ps1` at the package root. Archive validation checks
+that the startup helpers are present. Neither packaging nor extraction registers
+a startup task.
+
+Users can explicitly opt into startup at Windows sign-in, choosing the default
+visible console or background mode. The per-user task/settings live outside
+the replaceable app directory. A new extraction path needs re-registration;
+an in-place upgrade at a stable path retains the registration. Follow the
+[startup and upgrade precautions](operations-runbook.md#automatic-startup-at-windows-sign-in)
+before replacing any running deployment.

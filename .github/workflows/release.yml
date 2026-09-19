@@ -234,6 +234,10 @@ jobs:
           $packageFiles = @(
               '.\scripts\Start-KoLiteApp.ps1',
               '.\scripts\Stop-KoLiteApp.ps1',
+              '.\scripts\KoLite.Startup.psm1',
+              '.\scripts\Register-KoLiteStartup.ps1',
+              '.\scripts\Get-KoLiteStartup.ps1',
+              '.\scripts\Unregister-KoLiteStartup.ps1',
               '.\README.md',
               '.\DEVELOPMENT.md',
               '.\CONTRIBUTING.md',
@@ -536,6 +540,11 @@ jobs:
                   }
                   if ($entryNames -notcontains 'Stop-KoLiteApp.ps1') {
                       throw "Archive '$archive' does not have Stop-KoLiteApp.ps1 at its package root."
+                  }
+                  foreach ($helper in @('KoLite.Startup.psm1', 'Register-KoLiteStartup.ps1', 'Get-KoLiteStartup.ps1', 'Unregister-KoLiteStartup.ps1')) {
+                      if ($entryNames -notcontains $helper) {
+                          throw "Archive '$archive' does not have $helper at its package root."
+                      }
                   }
                   if (-not ($entryNames | Where-Object { $_ -like '.github/skills/*' })) {
                       throw "Archive '$archive' is missing .github/skills."

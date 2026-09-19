@@ -4,9 +4,9 @@ Publishes the KO Lite local app to an isolated folder so it can run outside the 
 
 .DESCRIPTION
 Runs 'dotnet publish' for src\KoLite.LocalApp\KoLite.LocalApp.csproj into an isolated output
-directory, then copies the Stop-KoLiteApp.ps1 and Start-KoLiteApp.ps1 helper scripts next to
-the published app so the deployed folder is self-sufficient. When it finishes it prints the
-full deployed path.
+directory, then copies the start/stop and optional Windows startup helper scripts next to
+the published app so the deployed folder is self-sufficient. It does not register automatic
+startup. When it finishes it prints the full deployed path.
 
 Running the deployed copy (with Start-KoLiteApp.ps1) keeps the repository build output free,
 so 'dotnet build' and 'dotnet test' are not blocked by a running app holding
@@ -58,7 +58,14 @@ $repositoryRoot = Split-Path -Parent $scriptsDirectory
 $projectPath = Join-Path $repositoryRoot 'src\KoLite.LocalApp\KoLite.LocalApp.csproj'
 $stopScript = Join-Path $scriptsDirectory 'Stop-KoLiteApp.ps1'
 $startScript = Join-Path $scriptsDirectory 'Start-KoLiteApp.ps1'
-$helperScripts = @($stopScript, $startScript)
+$helperScripts = @(
+    $stopScript,
+    $startScript,
+    (Join-Path $scriptsDirectory 'KoLite.Startup.psm1'),
+    (Join-Path $scriptsDirectory 'Register-KoLiteStartup.ps1'),
+    (Join-Path $scriptsDirectory 'Get-KoLiteStartup.ps1'),
+    (Join-Path $scriptsDirectory 'Unregister-KoLiteStartup.ps1')
+)
 
 Write-Host 'KO Lite publish (deploy to isolated folder)'
 Write-Host "Project        : $projectPath"
@@ -78,6 +85,11 @@ if ($DryRun) {
 
 if (-not (Test-Path -LiteralPath $projectPath)) {
     throw "Could not find the KO Lite app project at '$projectPath'."
+}
+foreach ($helper in $helperScripts) {
+    if (-not (Test-Path -LiteralPath $helper -PathType Leaf)) {
+        throw "Required helper script not found: $helper"
+    }
 }
 
 if ($StopRunning) {
@@ -124,12 +136,8 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 foreach ($helper in $helperScripts) {
-    if (Test-Path -LiteralPath $helper) {
-        Copy-Item -LiteralPath $helper -Destination $OutputDirectory -Force
-        Write-Host "Copied $(Split-Path -Leaf $helper) into the deployed folder."
-    } else {
-        Write-Host "Warning: helper script not found, skipped: $helper" -ForegroundColor Yellow
-    }
+    Copy-Item -LiteralPath $helper -Destination $OutputDirectory -Force
+    Write-Host "Copied $(Split-Path -Leaf $helper) into the deployed folder."
 }
 
 $resolvedOutput = (Resolve-Path -LiteralPath $OutputDirectory).Path

@@ -39,6 +39,11 @@ which matches running the app with no parameters.
 .PARAMETER DryRun
 Print the resolved entrypoint and the exact 'dotnet' command without starting the app.
 
+.PARAMETER StartupConfiguration
+Versioned configuration data supplied by Register-KoLiteStartup.ps1. Scheduled startup uses
+the selected console/background mode and bounded logs in %LOCALAPPDATA%\KoLite\startup.
+Cannot be combined with AppDirectory or AppArguments.
+
 .EXAMPLE
 .\Start-KoLiteApp.ps1
 
@@ -48,11 +53,21 @@ Print the resolved entrypoint and the exact 'dotnet' command without starting th
 param(
     [string]$AppDirectory,
     [string[]]$AppArguments = @(),
+    [string]$StartupConfiguration,
     [switch]$DryRun
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+if ($PSBoundParameters.ContainsKey('StartupConfiguration')) {
+    if ($PSBoundParameters.ContainsKey('AppDirectory') -or $PSBoundParameters.ContainsKey('AppArguments')) {
+        throw 'StartupConfiguration cannot be combined with AppDirectory or AppArguments.'
+    }
+    Import-Module (Join-Path $PSScriptRoot 'KoLite.Startup.psm1') -Force -ErrorAction Stop
+    $startupExitCode = Invoke-KoLiteStartup -Encoded $StartupConfiguration -DryRun:$DryRun
+    exit $startupExitCode
+}
 
 $exeName = 'KoLite.LocalApp.exe'
 $dllName = 'KoLite.LocalApp.dll'

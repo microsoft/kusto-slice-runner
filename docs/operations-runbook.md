@@ -311,6 +311,99 @@ try {
 
 Stop the running process before publishing again because published DLLs can be locked while the app is running. If service hosting is needed, publish first, use your service manager's normal process registration, and pass the same safety flags shown above.
 
+## Automatic startup at Windows sign-in
+
+Automatic startup is opt-in and Windows-only. From a **stable published folder**,
+register a per-user Task Scheduler task:
+
+```powershell
+.\Register-KoLiteStartup.ps1 -DryRun
+.\Register-KoLiteStartup.ps1                         # first registration: visible console
+.\Register-KoLiteStartup.ps1 -WindowMode Background  # change the next start to background
+.\Register-KoLiteStartup.ps1 -WindowMode Console     # change back to a visible console
+.\Get-KoLiteStartup.ps1
+.\Unregister-KoLiteStartup.ps1 -DryRun
+.\Unregister-KoLiteStartup.ps1
+```
+
+The task runs as the registering user at limited privileges, only after that user
+signs in. It stores no Windows password and does not require Windows Terminal.
+Windows can host the visible PowerShell console in the configured default
+terminal; selecting a specific Terminal profile/tab is not supported.
+Registration, updates, and removal never launch or stop the app immediately.
+Publishing/extracting a package never opts you in automatically.
+
+**Settings and job execution.** The app uses the published folder as its working
+directory and resumes existing enabled jobs according to its normal settings.
+Paused/deleted jobs stay paused/deleted; a disabled scheduler is not enabled by
+registration. Preserve custom database, URL, or other launch overrides explicitly:
+
+```powershell
+.\Register-KoLiteStartup.ps1 -AppDirectory 'D:\KO Lite' -AppArguments @(
+    '--ConnectionStrings:KoLiteSqlite=D:\KO Lite data\catalog.db',
+    '--KoLite:Urls=http://127.0.0.1:5058'
+)
+```
+
+On updates, omitted arguments and window mode retain their previous values.
+Use `-AppArguments @()` to clear saved overrides. The app directory is resolved
+from an explicit `-AppDirectory`, an app adjacent to the registration script,
+the existing registration, or `%LOCALAPPDATA%\KoLite\run-app`, in that order.
+Settings are encoded **data, not executable commands**, in the task definition.
+Encoding is not encryption: never put credentials or secrets in `-AppArguments`.
+The task and settings are replaced together, avoiding separate settings-file
+updates. The scripts refuse unrelated tasks with the same name.
+
+**Lifecycle.** Console mode shows live app output; background mode displays no
+console. Minimize the console to leave the app running. Closing it is not a
+hide-to-background action and can interrupt work; use `Stop-KoLiteApp.ps1` for
+a graceful drain. The startup console closes when the app exits. A deliberate
+stop or crash stays stopped until another sign-in or an explicit manual start;
+there is no crash watchdog or periodic restart. Removing startup removes the
+owned task/settings, not a running process, the database, or its logs.
+
+The task ignores duplicate triggers, has no execution time limit, and can start
+and continue on battery power. It continues while the workstation is locked,
+but is not an always-on service across sign-out. No work runs while the machine
+is off or asleep, and startup does not change power settings or wake the PC.
+
+**Authentication and prerequisites.** The task uses the existing Azure CLI
+identity without prompting. Azure CLI must be available on the normal Windows
+user/machine PATH; the framework-dependent package also needs the .NET 10
+ASP.NET Core runtime. PowerShell profiles are not loaded. Make custom environment
+settings such as `AZURE_CONFIG_DIR` available in the user's persistent Windows
+environment rather than only in a terminal session. Registration does not copy
+environment variables, credentials, or token caches. MFA, conditional access,
+expired/revoked credentials, and VPN/network readiness can still require
+operator action (`az login` in a separate terminal). Successful app startup is
+not proof of Kusto access. Pre-login hosting would require a separate unattended
+identity/hosting design; the desktop task does not implement it.
+
+**Diagnostics.** `Get-KoLiteStartup.ps1` reports the task name, enabled/state
+values, selected mode, arguments, last run/result, and log directory.
+`%LOCALAPPDATA%\KoLite\startup\startup.log` records startup, stdout/stderr, and
+exit codes in either mode. It keeps three rotated files (`startup.log.1` through
+`.3`), each at most 1 MiB; individual messages are truncated after 4,096
+characters. Registration itself does not create these logs. A nonzero task
+result or missing logs can indicate a launcher, execution-policy, or missing-file
+failure before the app started. Inspect the Task Scheduler history and use the
+matching start script manually for diagnosis. `/healthz` checks local health;
+`/api/v1/system/status` exposes the database and scheduler configuration, not a
+Kusto authentication test.
+
+The helpers respect Windows execution policy and organization restrictions;
+they do not bypass policy, elevate, or fall back to another account when
+registration is denied. Review downloaded scripts and follow your organization's
+policy for allowing them to run.
+
+**Upgrades.** Replacing application files at the same stable path preserves the
+task; moving to another folder requires re-registration from the new folder or
+with `-AppDirectory`. Keep `Start-KoLiteApp.ps1`, `KoLite.Startup.psm1`, and the
+registration helpers from the same release. Follow the existing backup, drain,
+and schema-upgrade precautions before replacing a deployed version. Startup
+registration is not permission to upgrade a running app or open an older app's
+live database from a new build.
+
 ## Catch-up estimate
 
 The **Job details** page (`/jobs/{jobId}`) shows a catch-up estimate card above the tabs **only when the estimate is useful**: the job must be enabled and not paused, and it must have a real *actionable* backlog — more than a couple of eligible-but-incomplete slices that the job can work off itself. Slices that are merely waiting on an upstream dependency are excluded, so a dependent job that is only blocked on upstream (for its most recent slices) shows no card. Once a real backlog exists the card stays visible until it is actually worked off; it is **not** hidden as the job nears its frontier. When there is a real backlog but not yet enough fresh data to project a rate (typically right after a definition change), the card stays visible in a **collecting data** state. A job running at its normal cadence, or one whose only lag is upstream-blocked, shows no card.

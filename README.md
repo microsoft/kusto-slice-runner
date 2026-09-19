@@ -64,6 +64,29 @@ skill. Developers can separately install or register a `kusto-cli` skill in
 their Copilot environment; KO Lite repository instructions require explicit
 cluster and database arguments when it is used.
 
+### Optional startup at Windows sign-in
+
+After reviewing your jobs, opt in from the published folder to resume KO Lite
+automatically when you sign in after a reboot:
+
+```powershell
+.\Register-KoLiteStartup.ps1                         # visible PowerShell console
+.\Register-KoLiteStartup.ps1 -WindowMode Background  # alternatively, no visible window
+.\Get-KoLiteStartup.ps1                              # inspect settings and last result
+.\Unregister-KoLiteStartup.ps1                       # disable startup; leave the app running
+```
+
+Registration does not start or stop the app now. It reuses your Windows user,
+Azure CLI sign-in, and application settings; pass any custom launch overrides
+through `-AppArguments`. The first registration defaults to a visible console;
+later updates preserve omitted settings. Minimize the console to leave KO Lite
+running; closing it can terminate active work. Azure CLI may still require
+`az login` when credentials expire or MFA is needed.
+
+Both package types include these helpers. Use `-DryRun` to preview, and see
+[automatic startup](docs/operations-runbook.md#automatic-startup-at-windows-sign-in)
+for logging, upgrades, and limitations.
+
 ## Quick start from source
 
 From the repository root:

@@ -101,6 +101,28 @@ There is no separate performance enable/off configuration. UI-only tests inherit
 
 `Start-KoLiteApp.ps1` can be invoked from the repository as shown above or from inside the deployed folder after `Publish-KoLiteApp.ps1` copies it there. In both cases it starts the process with the deployed folder as the working directory so published static assets resolve correctly. Pass `-StopRunning` to gracefully drain an instance already running from the target folder before re-publishing. See the [operations runbook](operations-runbook.md#published-output) for all options.
 
+Publishing also includes the optional Windows sign-in startup helpers and their
+shared `KoLite.Startup.psm1` module. Publishing does not register a task. From
+the deployed folder, `.\Register-KoLiteStartup.ps1` opts into a visible console
+on sign-in; `-WindowMode Background` selects no visible window.
+`Get-KoLiteStartup.ps1` inspects the registration and `Unregister-KoLiteStartup.ps1`
+removes it without stopping the app. See the
+[startup runbook](docs/operations-runbook.md#automatic-startup-at-windows-sign-in).
+
+Startup script tests use isolated application/log directories, fake executable
+probes, and mocked task registration; in-memory task-definition checks never
+register a real task. Run the focused coverage with:
+
+```powershell
+dotnet test .\tests\KoLite.LocalApp.Tests\KoLite.LocalApp.Tests.csproj --no-restore --filter "FullyQualifiedName~StartupScriptTests|FullyQualifiedName~OperationalScriptTests" --nologo
+```
+
+Do not test startup by rebooting/signing out, registering against the live app,
+or publishing over its files. Any manual startup smoke test must use a sandbox
+database, a separate port, and `KoLite:Scheduler:Enabled=false` (which also
+disables performance collection/backfill). Actual console visibility is a
+Windows visual acceptance check, not just a task-definition assertion.
+
 ## Create a GitHub Release
 
 Run the **KO Lite Release** workflow from GitHub Actions with an unused
