@@ -18,6 +18,12 @@ agent API through:
 The generated OpenAPI document at `/api/v1/openapi/v1.json` is the endpoint-shape
 source of truth. `docs\local-api.md` explains workflows and safety.
 
+For health-gated historical cleanup and downstream recovery, use
+[ko-lite-gap-repair](../ko-lite-gap-repair/SKILL.md). It reuses this helper,
+checks recent logical-slice health, and leaves `healthPolicy: "recent"` gaps
+report-only unless explicitly requested. This skill remains the low-level API
+contract; gap repair supplies the bounded authorization and recovery workflow.
+
 ## Safety boundary
 
 Allowed:
@@ -28,7 +34,8 @@ Allowed:
 - additive/update-only batch import and compatible export;
 - explicit pause/resume;
 - reversible soft-delete/restore;
-- repair only `Failed`/`DeadLettered` slices or chunks after preview approval.
+- repair only `Failed`/`DeadLettered` slices or chunks after preview and user
+  authorization, including explicit prompt preauthorization of bounded work.
 
 Never:
 

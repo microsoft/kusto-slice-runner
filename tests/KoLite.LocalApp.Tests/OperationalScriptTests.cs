@@ -59,6 +59,31 @@ namespace KoLite.LocalApp.Tests
         }
 
         [Fact]
+        public void Gap_repair_skill_has_frontmatter_and_existing_workflow_references()
+        {
+            var root = FindRepositoryRoot();
+            var skill = File.ReadAllText(Path.Combine(root, ".github", "skills", "ko-lite-gap-repair", "SKILL.md"));
+
+            Assert.Contains("name: ko-lite-gap-repair", skill, StringComparison.Ordinal);
+            Assert.Contains("description:", skill, StringComparison.Ordinal);
+            Assert.Contains("../ko-lite-job-manager/SKILL.md", skill, StringComparison.Ordinal);
+            Assert.Contains(@"scripts\Invoke-KoLiteJobApi.ps1", skill, StringComparison.Ordinal);
+            Assert.Contains("../../../docs/local-api.md", skill, StringComparison.Ordinal);
+            Assert.Contains("../../../docs/schedule-json.md", skill, StringComparison.Ordinal);
+            Assert.Contains("../../../docs/operations-runbook.md", skill, StringComparison.Ordinal);
+
+            foreach (var path in new[]
+            {
+                Path.Combine(root, "README.md"),
+                Path.Combine(root, "docs", "operations-runbook.md"),
+                Path.Combine(root, ".github", "skills", "ko-lite-job-manager", "SKILL.md")
+            })
+            {
+                Assert.Contains("ko-lite-gap-repair", File.ReadAllText(path), StringComparison.Ordinal);
+            }
+        }
+
+        [Fact]
         public void Shipped_agent_tools_and_instructions_do_not_call_legacy_routes()
         {
             var root = FindRepositoryRoot();
@@ -66,6 +91,7 @@ namespace KoLite.LocalApp.Tests
             {
                 Path.Combine(root, ".github", "copilot-instructions.md"),
                 Path.Combine(root, ".github", "agents", "ko-lite-maintainer.agent.md"),
+                Path.Combine(root, ".github", "skills", "ko-lite-gap-repair", "SKILL.md"),
                 Path.Combine(root, ".github", "skills", "ko-lite-job-manager", "SKILL.md"),
                 Path.Combine(root, ".github", "skills", "ko-lite-job-manager", "scripts", "Invoke-KoLiteJobApi.ps1"),
                 Path.Combine(root, ".github", "skills", "ko-lite-schedule-json", "SKILL.md"),

@@ -672,6 +672,20 @@ dead letters.
 
 ### Requeuing slices that already dead-lettered
 
+For agent-guided historical cleanup, use the
+[`ko-lite-gap-repair` skill](../.github/skills/ko-lite-gap-repair/SKILL.md).
+It requires the newest three resolved logical slices to be Completed for
+windows up to and including one hour, or the newest one for longer windows.
+Recovered retries are allowed; a newer terminal failure is not skipped to
+find older successes. This workflow gate does not change dashboard health.
+Unhealthy jobs are reported and skipped. `healthPolicy: "recent"` gaps,
+including downstream gaps, are report-only unless the user explicitly
+follows up requesting their repair. One bounded manifest approval normally
+covers the work; an explicit prompt to proceed without waiting supplies that
+authorization, but does not waive policy, health or preview safeguards.
+The skill uses failed-work repair, preserves successful history and checks
+affected downstream completion; it never performs whole-slice rerun or cleanup.
+
 The classification change is forward-looking; it does not revisit slices that dead-lettered earlier.
 To re-run those, use the **repair API** (`POST /api/v1/jobs/{jobId}/repairs`), which accepts an aligned
 UTC range and re-queues the `Failed`/`DeadLettered` slices in it. Review the failures first so
