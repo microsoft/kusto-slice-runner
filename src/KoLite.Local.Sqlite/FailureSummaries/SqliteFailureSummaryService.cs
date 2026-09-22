@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -90,7 +93,7 @@ namespace KoLite.Local.Sqlite.FailureSummaries
             var json = JsonSerializer.Serialize(failures.Take(20));
             if (json.Length > 6000) json = json[..6000];
             return Sanitize($"""
-                You are analyzing recent KO Lite job failures from a local SQLite database.
+                You are analyzing recent Kusto Slice Runner job failures from a local SQLite database.
                 Summarize likely root causes, recurring patterns, impacted jobs/slices, and recommended next actions.
                 Scope: {(jobId is null ? "all jobs" : jobId)}
 

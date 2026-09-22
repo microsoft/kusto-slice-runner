@@ -1,3 +1,5 @@
+@* Copyright (c) Microsoft Corporation.
+   Licensed under the MIT License. *@
 @page "/jobs/soft-deleted"
 @model KoLite.LocalApp.Pages.Catalog.SoftDeletedModel
 @{
@@ -30,7 +32,7 @@
 
 <div class="alert danger" role="alert">
     <strong>Hard delete is permanent.</strong>
-    It removes the selected jobs and their local KO Lite history. It does not delete data from Kusto.
+    It removes the selected jobs and their local Kusto Slice Runner history. It does not delete data from Kusto.
 </div>
 
 @if (Model.Jobs.Count > 0)

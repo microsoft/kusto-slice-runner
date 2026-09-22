@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFile, writeFile, realpath } from "node:fs/promises";

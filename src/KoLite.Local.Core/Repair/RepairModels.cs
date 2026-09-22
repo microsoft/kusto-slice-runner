@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 using KoLite.Local.Core.Scheduling;
 
 namespace KoLite.Local.Core.Repair

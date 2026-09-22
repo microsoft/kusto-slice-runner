@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 namespace KoLite.LocalApp.Ui
 {
     public sealed record ChartRangeLink(string Key, string Label);

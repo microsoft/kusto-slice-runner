@@ -1,9 +1,41 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 using System.Diagnostics;
 
 namespace KoLite.LocalApp.Tests
 {
     public sealed class OperationalScriptTests
     {
+        [Fact]
+        public void Public_repository_documents_and_license_metadata_are_consistent()
+        {
+            var root = FindRepositoryRoot();
+            foreach (var name in new[] { "LICENSE.txt", "NOTICE", "SECURITY.md", "CODE_OF_CONDUCT.md", "CONTRIBUTING.md", "SUPPORT.md" })
+            {
+                Assert.True(File.Exists(Path.Combine(root, name)), $"Missing {name}");
+            }
+
+            Assert.Contains("MIT License", File.ReadAllText(Path.Combine(root, "LICENSE.txt")), StringComparison.Ordinal);
+            Assert.Contains("\"license\": \"MIT\"", File.ReadAllText(Path.Combine(root, "package.json")), StringComparison.Ordinal);
+            Assert.Contains("Microsoft's Trademark & Brand Guidelines", File.ReadAllText(Path.Combine(root, "README.md")), StringComparison.Ordinal);
+            Assert.Contains("cla.opensource.microsoft.com", File.ReadAllText(Path.Combine(root, "CONTRIBUTING.md")), StringComparison.Ordinal);
+            Assert.Contains("https://aka.ms/SECURITY.md", File.ReadAllText(Path.Combine(root, "SECURITY.md")), StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void Release_packaging_includes_license_and_notices()
+        {
+            var root = FindRepositoryRoot();
+            var workflow = File.ReadAllText(Path.Combine(root, ".github", "workflows", "release.yml"));
+            var project = File.ReadAllText(Path.Combine(root, "src", "KoLite.LocalApp", "KoLite.LocalApp.csproj"));
+            foreach (var name in new[] { "LICENSE.txt", "NOTICE", "THIRD-PARTY-NOTICES.md" })
+            {
+                Assert.Contains(name, workflow, StringComparison.Ordinal);
+                Assert.Contains($"Link=\"{name}\" CopyToPublishDirectory=\"PreserveNewest\"", project, StringComparison.Ordinal);
+            }
+        }
+
         [Theory]
         [MemberData(nameof(OperationalScripts))]
         public void Operational_scripts_default_to_dry_run_style_and_safe_local_flags(string path)

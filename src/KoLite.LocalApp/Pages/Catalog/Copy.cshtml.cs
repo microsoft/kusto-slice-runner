@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 using System.Text.Json.Nodes;
 using KoLite.Local.Sqlite.Catalog;
 using KoLite.LocalApp.Ui;

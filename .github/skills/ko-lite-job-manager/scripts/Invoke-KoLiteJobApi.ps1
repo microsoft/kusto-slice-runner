@@ -1,7 +1,10 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 #Requires -Version 7.0
 <#
 .SYNOPSIS
-Reads and safely manages KO Lite jobs through the versioned localhost agent API.
+Reads and safely manages Kusto Slice Runner jobs through the versioned localhost agent API.
 
 .DESCRIPTION
 Drives /api/v1 with named request contracts, Problem Details errors, ETag/If-Match
@@ -139,7 +142,7 @@ function Invoke-KoLiteApi {
     try {
         $response = Invoke-WebRequest @arguments
     } catch [System.Net.Http.HttpRequestException] {
-        throw "Could not reach KO Lite at $uri. Is the app running? ($($_.Exception.Message))"
+        throw "Could not reach Kusto Slice Runner at $uri. Is the app running? ($($_.Exception.Message))"
     }
 
     $content = if ($response.Content -is [byte[]]) {
@@ -151,7 +154,7 @@ function Invoke-KoLiteApi {
     if ([int]$response.StatusCode -ge 400) {
         $code = if ($null -ne $parsed -and $parsed.PSObject.Properties.Name -contains 'code') { [string]$parsed.code } else { 'unknown-error' }
         $detail = if ($null -ne $parsed -and $parsed.PSObject.Properties.Name -contains 'detail') { [string]$parsed.detail } else { $content }
-        throw "KO Lite API call failed: $Method $RelativeUri returned HTTP $([int]$response.StatusCode) ($code). $detail"
+        throw "Kusto Slice Runner API call failed: $Method $RelativeUri returned HTTP $([int]$response.StatusCode) ($code). $detail"
     }
 
     return [pscustomobject]@{
@@ -166,7 +169,7 @@ function Invoke-KoLiteApi {
 function Assert-SupportedApi {
     $status = (Invoke-KoLiteApi -Method 'GET' -RelativeUri "$apiRoot/system/status").Body
     if (@($status.supportedApiVersions) -notcontains 'v1') {
-        throw "The running KO Lite app does not advertise agent API v1. Update the app or use a matching helper before attempting writes."
+        throw "The running Kusto Slice Runner app does not advertise agent API v1. Update the app or use a matching helper before attempting writes."
     }
 }
 

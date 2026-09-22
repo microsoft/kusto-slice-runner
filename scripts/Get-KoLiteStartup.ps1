@@ -1,6 +1,9 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 <#
 .SYNOPSIS
-Reports the current user's KO Lite startup registration and last task result.
+Reports the current user's Kusto Slice Runner startup registration and last task result.
 
 .DESCRIPTION
 Reads Task Scheduler only. A running task does not prove Kusto authentication is valid.

@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 using System.Data;
 using System.Text.RegularExpressions;
 using Kusto.Data.Common;

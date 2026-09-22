@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 using KoLite.Local.Core.Time;
 using KoLite.Local.Sqlite.Observability;
 using Microsoft.Extensions.DependencyInjection;
@@ -42,12 +45,12 @@ namespace KoLite.LocalApp.Retention
         {
             if (!options.Enabled)
             {
-                logger.LogInformation("KO Lite database retention is disabled; the local database will grow unbounded.");
+                logger.LogInformation("Kusto Slice Runner database retention is disabled; the local database will grow unbounded.");
                 return;
             }
 
             logger.LogInformation(
-                "KO Lite database retention enabled: pruning operational telemetry older than {WindowDays:N0} days every {Interval}.",
+                "Kusto Slice Runner database retention enabled: pruning operational telemetry older than {WindowDays:N0} days every {Interval}.",
                 options.Window.TotalDays,
                 options.Interval);
 

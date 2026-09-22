@@ -1,6 +1,9 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 <#
 .SYNOPSIS
-Generates and optionally applies AI highlights for an existing KO Lite release draft.
+Generates and optionally applies AI highlights for an existing Kusto Slice Runner release draft.
 
 .DESCRIPTION
 Reads an existing GitHub release draft, finds the previous published release, and asks the locally
@@ -203,15 +206,15 @@ function Get-ReleaseMarker {
     $matches = [regex]::Matches($Body, $markerPattern)
     if ($matches.Count -eq 0) {
         if ($Body.Contains('ko-lite-release-workflow:', [System.StringComparison]::Ordinal)) {
-            throw 'Release body contains a malformed KO Lite workflow ownership marker.'
+            throw 'Release body contains a malformed Kusto Slice Runner workflow ownership marker.'
         }
         if ($AllowMissing) {
             return $null
         }
-        throw 'Release body does not contain a KO Lite workflow ownership marker.'
+        throw 'Release body does not contain a Kusto Slice Runner workflow ownership marker.'
     }
     if ($matches.Count -ne 1) {
-        throw "Release body must contain exactly one KO Lite workflow ownership marker; received $($matches.Count)."
+        throw "Release body must contain exactly one Kusto Slice Runner workflow ownership marker; received $($matches.Count)."
     }
 
     return [pscustomobject]@{
@@ -382,13 +385,13 @@ function Select-WorkflowOwnedDraft {
     )
 
     if ($Drafts.Count -eq 0) {
-        throw "No workflow-owned KO Lite draft release exists in '$Repository'. Run the KO Lite Release workflow first."
+        throw "No workflow-owned Kusto Slice Runner draft release exists in '$Repository'. Run the Kusto Slice Runner Release workflow first."
     }
     if ($Drafts.Count -gt 1) {
         $choices = $Drafts |
             Sort-Object TagName |
             ForEach-Object { "- $($_.TagName) $($_.Url)" }
-        throw "Multiple workflow-owned KO Lite draft releases exist. Choose one and rerun with -Version:`n$($choices -join "`n")"
+        throw "Multiple workflow-owned Kusto Slice Runner draft releases exist. Choose one and rerun with -Version:`n$($choices -join "`n")"
     }
 
     return $Drafts[0]
@@ -1055,7 +1058,7 @@ if ($applyRequested) {
     }
 
     Remove-Item -LiteralPath $resolvedUpdatePlanPath -Force
-    Write-Host 'KO Lite release highlights'
+    Write-Host 'Kusto Slice Runner release highlights'
     Write-Host "Draft      : $($verifiedRelease.Url)"
     Write-Host 'Updated    : ## Changes'
     Write-Host 'The release remains a draft and must be published manually.'
@@ -1144,7 +1147,7 @@ if ($null -eq $previousRelease) {
 $commitGrounding = Get-CommitGrounding -Comparison $comparison
 $commitCount = @($comparison.commits).Count
 
-Write-Host 'KO Lite release highlights'
+Write-Host 'Kusto Slice Runner release highlights'
 Write-Host "Draft      : $($release.Url)"
 Write-Host "Commit range: $commitRangeDisplay ($commitCount commits)"
 if ($PrepareUpdate) {

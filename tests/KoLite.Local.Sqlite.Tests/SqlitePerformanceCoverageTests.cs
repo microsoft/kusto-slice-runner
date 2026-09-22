@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 using KoLite.Local.Core.Performance;
 using static KoLite.Local.Sqlite.Tests.PerformanceTestStore;
 

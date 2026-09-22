@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 using System.Globalization;
 using System.Text;
 using KoLite.Local.Core.Time;
@@ -13,7 +16,7 @@ namespace KoLite.LocalApp.FailureAnalysis
     // model call.
     public sealed record FailureEvidence(string Prompt, int FailureCount);
 
-    // Builds the failure-analysis prompt for a single job from KO Lite's local read models. This runs
+    // Builds the failure-analysis prompt for a single job from Kusto Slice Runner's local read models. This runs
     // inside the request scope (it uses scoped repositories) and produces a plain immutable string, so
     // the slow model call can happen later on a background task without touching scoped services.
     public sealed class FailureAnalysisPromptBuilder
@@ -56,7 +59,7 @@ namespace KoLite.LocalApp.FailureAnalysis
             var failureCount = failed.Count + deadLettered.Count + failedAttempts.Count;
 
             var builder = new StringBuilder();
-            builder.AppendLine("Analyze the recent failures for this KO Lite job and explain the likely root cause.");
+            builder.AppendLine("Analyze the recent failures for this Kusto Slice Runner job and explain the likely root cause.");
             builder.AppendLine();
             builder.AppendLine("## Job");
             builder.AppendLine(Invariant($"- activityId: {definition.ActivityId}"));

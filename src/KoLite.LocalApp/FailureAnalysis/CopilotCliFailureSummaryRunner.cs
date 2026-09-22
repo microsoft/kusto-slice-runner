@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 using System.ComponentModel;
 using System.Diagnostics;
 using KoLite.Local.Core.FailureSummaries;
@@ -135,8 +138,8 @@ namespace KoLite.LocalApp.FailureAnalysis
     {
         private const string SystemPrompt =
             "You are an expert Azure Data Explorer (Kusto) operations engineer helping analyze failures of a " +
-            "scheduled data-production job in KO Lite, a local-first Kusto orchestrator. You will be given evidence " +
-            "gathered from KO Lite's local state: the job definition, slice-state counts, and recent failed or " +
+            "scheduled data-production job in Kusto Slice Runner, a local-first Kusto orchestrator. You will be given evidence " +
+            "gathered from Kusto Slice Runner's local state: the job definition, slice-state counts, and recent failed or " +
             "dead-lettered slices with their Kusto error codes and messages, plus recent attempts. Produce a concise, " +
             "high-signal root-cause analysis in GitHub-flavored Markdown covering: (1) a one-line verdict; (2) what " +
             "failed and the blast radius (how many slices and the affected time window); (3) the most likely root " +

@@ -1,14 +1,14 @@
 ---
 name: ko-lite-job-manager
-description: "Use when the user wants an agent to read KO Lite jobs, inspect read-only operational diagnostics, create/update/pause/resume/soft-delete/restore jobs, or repair Failed/DeadLettered work in a running local KO Lite app. Drives the loopback-only /api/v1 JSON surface with ETag and repair-preview safeguards. Never hard-deletes, whole-slice reruns, runs Kusto cleanup, or performs arbitrary Kusto writes."
+description: "Use when the user wants an agent to read Kusto Slice Runner jobs, inspect read-only operational diagnostics, create/update/pause/resume/soft-delete/restore jobs, or repair Failed/DeadLettered work in a running local Kusto Slice Runner app. Drives the loopback-only /api/v1 JSON surface with ETag and repair-preview safeguards. Never hard-deletes, whole-slice reruns, runs Kusto cleanup, or performs arbitrary Kusto writes."
 metadata:
   author: Azure Core Team
   version: "2.0.0"
 ---
 
-# KO Lite job manager
+# Kusto Slice Runner job manager
 
-Use this skill only against a running local KO Lite app. It drives the versioned
+Use this skill only against a running local Kusto Slice Runner app. It drives the versioned
 agent API through:
 
 ```powershell

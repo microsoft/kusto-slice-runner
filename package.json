@@ -1,8 +1,8 @@
 {
-  "name": "ko-lite",
+  "name": "kusto-slice-runner",
   "version": "1.0.0",
   "private": true,
-  "description": "Local-first KO Lite dashboard assets.",
+  "description": "Local-first Kusto Slice Runner dashboard assets.",
   "scripts": {
     "copy:chartjs": "node ./scripts/copy-chartjs.mjs",
     "copy:cytoscape": "node ./scripts/copy-cytoscape.mjs",
@@ -11,7 +11,7 @@
     "test:js": "node ./scripts/test-site-routes.mjs",
     "postinstall": "npm run copy:chartjs && npm run copy:cytoscape && npm run copy:marked"
   },
-  "license": "UNLICENSED",
+  "license": "MIT",
   "type": "commonjs",
   "dependencies": {
     "chart.js": "^4.5.1",

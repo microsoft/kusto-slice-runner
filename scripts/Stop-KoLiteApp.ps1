@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 param(
     [string]$BaseUrl = 'http://127.0.0.1:5057',
     [string]$Reason = 'operator-request',
@@ -36,7 +39,7 @@ function Assert-ShutdownSnapshot {
         ($properties -notcontains 'activeWorkerCount') -or
         (-not [int]::TryParse([string]$Snapshot.activeWorkerCount, [ref]$activeWorkerCount)) -or
         ($activeWorkerCount -lt 0)) {
-        throw "A service is responding at $Url but did not return the expected KO Lite shutdown contract. Use the Stop-KoLiteApp.ps1 version shipped with that app."
+        throw "A service is responding at $Url but did not return the expected Kusto Slice Runner shutdown contract. Use the Stop-KoLiteApp.ps1 version shipped with that app."
     }
 
     return $Snapshot
@@ -62,7 +65,7 @@ function Get-ShutdownSnapshot {
         $snapshot = $response.Content | ConvertFrom-Json -Depth 20
         return Assert-ShutdownSnapshot -Snapshot $snapshot -Url $Url
     } catch {
-        throw "A service is responding at $Url but did not return the expected KO Lite shutdown contract. Use the Stop-KoLiteApp.ps1 version shipped with that app."
+        throw "A service is responding at $Url but did not return the expected Kusto Slice Runner shutdown contract. Use the Stop-KoLiteApp.ps1 version shipped with that app."
     }
 }
 
@@ -104,7 +107,7 @@ function Confirm-AppStopped {
     return -not (Test-TcpEndpoint -Url $Url)
 }
 
-Write-Host 'KO Lite graceful drain stop'
+Write-Host 'Kusto Slice Runner graceful drain stop'
 Write-Host "DrainUrl: $drainUrl"
 Write-Host "StatusUrl: $statusUrl"
 Write-Host "Timeout: $Timeout"
@@ -117,11 +120,11 @@ if ($DryRun) {
 $initial = Get-ShutdownSnapshot -Url $statusUrl
 if ($null -eq $initial) {
     if (Confirm-AppStopped -Url $statusUrl) {
-        Write-Host 'KO Lite app is not responding; nothing to stop.'
+        Write-Host 'Kusto Slice Runner app is not responding; nothing to stop.'
         return
     }
 
-    throw "A service is listening at $BaseUrl, but KO Lite shutdown status could not be verified. No drain request was sent."
+    throw "A service is listening at $BaseUrl, but Kusto Slice Runner shutdown status could not be verified. No drain request was sent."
 }
 
 if ($initial.mode -eq 'Running') {
@@ -137,10 +140,10 @@ if ($initial.mode -eq 'Running') {
         # instead of treating that as a failure.
         $drainError = $_.Exception.Message
         Write-Host "Drain POST did not return a complete response: $drainError"
-        Write-Host 'Confirming KO Lite app state via the status endpoint...'
+        Write-Host 'Confirming Kusto Slice Runner app state via the status endpoint...'
 
         if (Confirm-AppStopped -Url $statusUrl) {
-            Write-Host 'KO Lite app is no longer responding; graceful drain stop completed.'
+            Write-Host 'Kusto Slice Runner app is no longer responding; graceful drain stop completed.'
             return
         }
 
@@ -166,7 +169,7 @@ while ([DateTimeOffset]::UtcNow -lt $deadline) {
     $status = Get-ShutdownSnapshot -Url $statusUrl -TimeoutSec 5
     if ($null -eq $status) {
         if (Confirm-AppStopped -Url $statusUrl) {
-            Write-Host 'KO Lite app is no longer responding; graceful drain stop completed.'
+            Write-Host 'Kusto Slice Runner app is no longer responding; graceful drain stop completed.'
             return
         }
 
@@ -176,4 +179,4 @@ while ([DateTimeOffset]::UtcNow -lt $deadline) {
     Write-Host "Still running: mode=$($status.mode), activeWorkerCount=$($status.activeWorkerCount)"
 }
 
-throw "Timed out waiting for KO Lite app to stop after $Timeout. Active work may still be draining in the app."
+throw "Timed out waiting for Kusto Slice Runner app to stop after $Timeout. Active work may still be draining in the app."

@@ -1,4 +1,4 @@
-name: KO Lite Release
+name: Kusto Slice Runner Release
 
 on:
   workflow_dispatch:
@@ -243,6 +243,9 @@ jobs:
               '.\CONTRIBUTING.md',
               '.\SECURITY.md',
               '.\SUPPORT.md',
+              '.\LICENSE.txt',
+              '.\NOTICE',
+              '.\CODE_OF_CONDUCT.md',
               '.\THIRD-PARTY-NOTICES.md'
           )
           $skillsSource = '.\.github\skills'
@@ -662,7 +665,7 @@ jobs:
               $previousTag
           }
           $grounding = @"
-          # KO Lite release-note grounding
+          # Kusto Slice Runner release-note grounding
 
           - Target version: $env:RELEASE_VERSION
           - Target commit: $env:RELEASE_SHA
@@ -961,7 +964,7 @@ jobs:
                   --repo $env:GITHUB_REPOSITORY `
                   --verify-tag `
                   --fail-on-no-commits `
-                  --title "KO Lite $env:RELEASE_VERSION" `
+                  --title "Kusto Slice Runner $env:RELEASE_VERSION" `
                   --notes-file $env:RELEASE_BODY `
                   --draft `
                   $env:SELF_CONTAINED_ZIP `
@@ -975,7 +978,7 @@ jobs:
                   --repo $env:GITHUB_REPOSITORY `
                   --target $env:RELEASE_SHA `
                   --fail-on-no-commits `
-                  --title "KO Lite $env:RELEASE_VERSION" `
+                  --title "Kusto Slice Runner $env:RELEASE_VERSION" `
                   --notes-file $env:RELEASE_BODY `
                   --draft `
                   $env:SELF_CONTAINED_ZIP `

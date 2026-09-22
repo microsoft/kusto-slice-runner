@@ -1,6 +1,6 @@
-# KO Lite local-first architecture
+# Kusto Slice Runner local-first architecture
 
-KO Lite runs as a local ASP.NET Core Razor Pages app with hosted background services. Local SQLite is the durable source of truth for catalog, queue, slice state, logs, repair, rerun history, and performance observations. Kusto is contacted for job execution, automatic command-statistics collection in execution-enabled instances, and explicitly requested lineage resolution. Performance reporting itself reads SQLite only.
+Kusto Slice Runner runs as a local ASP.NET Core Razor Pages app with hosted background services. Local SQLite is the durable source of truth for catalog, queue, slice state, logs, repair, rerun history, and performance observations. Kusto is contacted for job execution, automatic command-statistics collection in execution-enabled instances, and explicitly requested lineage resolution. Performance reporting itself reads SQLite only.
 
 ## Components
 

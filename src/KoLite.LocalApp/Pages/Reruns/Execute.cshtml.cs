@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 using KoLite.Local.Core.Rerun;
 using KoLite.Local.Sqlite.Rerun;
 using Microsoft.AspNetCore.Mvc;

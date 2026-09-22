@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 using KoLite.LocalApp.Application;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Antiforgery;
@@ -36,7 +39,7 @@ namespace KoLite.LocalApp.Http
                     StatusCodes.Status500InternalServerError,
                     "internal-error",
                     "An unexpected error occurred.",
-                    "KO Lite could not complete the request.",
+                    "Kusto Slice Runner could not complete the request.",
                     innerException: exception));
             httpContext.Response.StatusCode = problem.StatusCode;
             var details = new ProblemDetails

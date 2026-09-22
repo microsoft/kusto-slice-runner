@@ -1,9 +1,12 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 using System.Globalization;
 using Microsoft.Extensions.Configuration;
 
 namespace KoLite.LocalApp.FailureAnalysis
 {
-    // Configuration for the "Analyze failures with Copilot" feature. KO Lite invokes GitHub Copilot
+    // Configuration for the "Analyze failures with Copilot" feature. Kusto Slice Runner invokes GitHub Copilot
     // CLI in non-interactive, no-tools mode and reads its final markdown response from stdout.
     public sealed record CopilotAnalysisOptions
     {

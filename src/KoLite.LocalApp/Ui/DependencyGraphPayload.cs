@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 namespace KoLite.LocalApp.Ui
 {
     // Single source of truth for the JSON the dependency graph client renderer consumes. Both the

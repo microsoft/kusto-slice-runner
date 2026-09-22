@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 namespace KoLite.Local.Kusto.Tests
 {
     public sealed class KustoProjectSmokeTests

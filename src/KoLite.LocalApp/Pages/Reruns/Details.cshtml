@@ -1,3 +1,5 @@
+@* Copyright (c) Microsoft Corporation.
+   Licensed under the MIT License. *@
 @page "/reruns/{rerunBatchId}"
 @model KoLite.LocalApp.Pages.Reruns.DetailsModel
 @{
@@ -48,7 +50,7 @@ else
 
     <section class="card">
         <div class="card-header"><h2>Suggested Kusto cleanup</h2></div>
-        <p class="muted">Run or adapt these commands before executing the rerun. KO Lite records your acknowledgement but does not run Kusto cleanup.</p>
+        <p class="muted">Run or adapt these commands before executing the rerun. Kusto Slice Runner records your acknowledgement but does not run Kusto cleanup.</p>
         <pre class="code-block">@batch.KustoCleanupCommands</pre>
     </section>
 

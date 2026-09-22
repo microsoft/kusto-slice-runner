@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -312,7 +315,7 @@ namespace KoLite.LocalApp.ScreenshotHost
             var firstDay = ScreenshotDataset.DailyEndUtc.AddDays(-3).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
             var lastDay = ScreenshotDataset.DailyEndUtc.AddDays(-1).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
             return Task.FromResult(FailureSummaryRunnerResult.Success($$"""
-                ## KO Lite Job Failure Analysis
+                ## Kusto Slice Runner Job Failure Analysis
 
                 > Illustrative analysis of synthetic data. No Copilot request was made.
 

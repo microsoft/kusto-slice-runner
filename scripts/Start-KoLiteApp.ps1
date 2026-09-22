@@ -1,9 +1,12 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 <#
 .SYNOPSIS
-Runs a published KO Lite local app from a deployed folder.
+Runs a published Kusto Slice Runner local app from a deployed folder.
 
 .DESCRIPTION
-Starts the published KO Lite app in the foreground (Ctrl+C to stop) from an isolated deployed
+Starts the published Kusto Slice Runner app in the foreground (Ctrl+C to stop) from an isolated deployed
 copy instead of the repository build output. A self-contained KoLite.LocalApp.exe is preferred
 when present; otherwise the script runs KoLite.LocalApp.dll through dotnet. Running from a
 deployed folder keeps the repository bin/obj output free, so 'dotnet build' and 'dotnet test'
@@ -98,7 +101,7 @@ if (@($AppArguments).Count -gt 0) {
     $commandPreview += ' ' + ($AppArguments -join ' ')
 }
 
-Write-Host 'KO Lite start (deployed copy)'
+Write-Host 'Kusto Slice Runner start (deployed copy)'
 Write-Host "AppDirectory: $AppDirectory"
 Write-Host "Entrypoint  : $entrypoint"
 Write-Host "WorkingDir  : $AppDirectory"

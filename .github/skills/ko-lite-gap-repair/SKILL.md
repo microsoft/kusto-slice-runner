@@ -1,12 +1,12 @@
 ---
 name: ko-lite-gap-repair
-description: "Recover historical KO Lite Failed/DeadLettered gaps after a job is healthy again. Use for cleanup, failed-slice backfill, or dependency-aware recovery of selected jobs or groups. Requires three recent successful logical slices for windows up to one hour, or one for longer windows. healthPolicy=recent jobs are report-only unless explicitly overridden. Reuses ko-lite-job-manager; never replays successful slices or performs Kusto cleanup."
+description: "Recover historical Kusto Slice Runner Failed/DeadLettered gaps after a job is healthy again. Use for cleanup, failed-slice backfill, or dependency-aware recovery of selected jobs or groups. Requires three recent successful logical slices for windows up to one hour, or one for longer windows. healthPolicy=recent jobs are report-only unless explicitly overridden. Reuses ko-lite-job-manager; never replays successful slices or performs Kusto cleanup."
 metadata:
   author: Azure Core Team
   version: "1.0.0"
 ---
 
-# KO Lite gap repair
+# Kusto Slice Runner gap repair
 
 Fill terminal execution gaps, not replace successful output. Use the installed
 [ko-lite-job-manager](../ko-lite-job-manager/SKILL.md) and its existing
@@ -219,7 +219,7 @@ Use short bounded reads for initial recovery. Once successful initial slices
 establish health, use **one available session follow-up at a 15-minute cadence**
 if the authorized repair/downstream closure still needs time. Do not poll or
 sleep between scheduled checks, invent unavailable scheduling tools, or alter
-the KO Lite schedule. If continuation is unavailable, report pending batch IDs
+the Kusto Slice Runner schedule. If continuation is unavailable, report pending batch IDs
 and conditions rather than claiming to monitor.
 
 Stop adding work to a branch on a new terminal fault or loss of eligibility,
@@ -238,7 +238,7 @@ recovery, not success or permission to repair them.
 
 Report repaired logical slices and executions separately, downstream recovery,
 preserved work, recent-policy exclusions, unhealthy/insufficient-evidence skips,
-remaining blockers and monitor state. This verifies **KO Lite execution-state
+remaining blockers and monitor state. This verifies **Kusto Slice Runner execution-state
 recovery**, not business-data correctness. Do not invent nonempty-output
 requirements, dashboard checks or domain-specific Kusto audits.
 

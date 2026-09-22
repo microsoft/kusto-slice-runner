@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 namespace KoLite.Local.Core.FailureSummaries
 {
     public sealed record FailureSummaryRunnerResult(bool Succeeded, string SummaryMarkdown, int ExitCode = 0, string? ErrorMessage = null)

@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 using System.Net;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -100,7 +103,7 @@ namespace KoLite.LocalApp.Tests
 
             var dashboard = await client.GetStringAsync("/");
             var history = await client.GetStringAsync($"/jobs/{JobId("e2e.downstream")}/history?from=2026-01-01T00%3A00%3A00Z&to=2026-01-01T00%3A15%3A00Z");
-            Assert.Contains("KO Lite Local Dashboard", dashboard);
+            Assert.Contains("Kusto Slice Runner Local Dashboard", dashboard);
             Assert.Contains("e2e.downstream", dashboard);
             Assert.Contains("Slice History: e2e.downstream", history);
             Assert.Contains("class=\"cell completed\"", history);

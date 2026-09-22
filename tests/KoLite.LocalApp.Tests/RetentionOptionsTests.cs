@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 using KoLite.LocalApp.Retention;
 using Microsoft.Extensions.Configuration;
 

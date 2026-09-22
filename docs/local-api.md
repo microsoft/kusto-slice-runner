@@ -1,6 +1,6 @@
-# KO Lite HTTP surfaces
+# Kusto Slice Runner HTTP surfaces
 
-KO Lite exposes three deliberately separate HTTP boundaries:
+Kusto Slice Runner exposes three deliberately separate HTTP boundaries:
 
 - **Agent API:** `/api/v1`, loopback-only JSON, generated OpenAPI, named contracts,
   Problem Details, and safe agent actions.
@@ -21,7 +21,7 @@ Production fails closed when a remote address is missing and accepts only loopba
 addresses. `/healthz` is intentionally minimal and contains no database path or
 runtime configuration.
 
-KO Lite still binds to `http://127.0.0.1:5057` by default. Do not widen
+Kusto Slice Runner still binds to `http://127.0.0.1:5057` by default. Do not widen
 `KoLite:Urls` as a substitute for authentication.
 
 ## Contract conventions
@@ -37,7 +37,7 @@ KO Lite still binds to `http://127.0.0.1:5057` by default. Do not widen
 - Errors use `application/problem+json` with a stable `code` extension and optional
   structured evidence such as `dependents`, `currentVersion`, or repair-preview
   conflict fields.
-- Inbound instants require an explicit UTC offset (`Z` or `+/-HH:mm`). KO Lite
+- Inbound instants require an explicit UTC offset (`Z` or `+/-HH:mm`). Kusto Slice Runner
   emits UTC `Z` values.
 - Large operational collections use `limit` plus an opaque `cursor`, returning
   `{ "items": [...], "nextCursor": "..." }`. A cursor is bound to its endpoint and

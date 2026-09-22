@@ -1,6 +1,9 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 <#
 .SYNOPSIS
-Publishes the KO Lite local app to an isolated folder so it can run outside the repository.
+Publishes the Kusto Slice Runner local app to an isolated folder so it can run outside the repository.
 
 .DESCRIPTION
 Runs 'dotnet publish' for src\KoLite.LocalApp\KoLite.LocalApp.csproj into an isolated output
@@ -67,7 +70,7 @@ $helperScripts = @(
     (Join-Path $scriptsDirectory 'Unregister-KoLiteStartup.ps1')
 )
 
-Write-Host 'KO Lite publish (deploy to isolated folder)'
+Write-Host 'Kusto Slice Runner publish (deploy to isolated folder)'
 Write-Host "Project        : $projectPath"
 Write-Host "OutputDirectory: $OutputDirectory"
 Write-Host "Configuration  : $Configuration"
@@ -84,7 +87,7 @@ if ($DryRun) {
 }
 
 if (-not (Test-Path -LiteralPath $projectPath)) {
-    throw "Could not find the KO Lite app project at '$projectPath'."
+    throw "Could not find the Kusto Slice Runner app project at '$projectPath'."
 }
 foreach ($helper in $helperScripts) {
     if (-not (Test-Path -LiteralPath $helper -PathType Leaf)) {
@@ -106,17 +109,17 @@ if ($StopRunning) {
         $health = $response.Content | ConvertFrom-Json -Depth 20
         $properties = @($health.PSObject.Properties | ForEach-Object Name)
         if ($properties -notcontains 'supportedApiVersions') {
-            throw "A service is responding at $statusUrl but did not advertise KO Lite agent API v1. Use the Publish-KoLiteApp.ps1 version shipped with that app."
+            throw "A service is responding at $statusUrl but did not advertise Kusto Slice Runner agent API v1. Use the Publish-KoLiteApp.ps1 version shipped with that app."
         }
         if (@($health.supportedApiVersions) -notcontains 'v1') {
-            throw "A service is responding at $statusUrl but did not advertise KO Lite agent API v1. Use the Publish-KoLiteApp.ps1 version shipped with that app."
+            throw "A service is responding at $statusUrl but did not advertise Kusto Slice Runner agent API v1. Use the Publish-KoLiteApp.ps1 version shipped with that app."
         }
     } catch [System.Net.Http.HttpRequestException] {
         $health = $null
     }
 
     if ($null -ne $health) {
-        Write-Host "Warning: a KO Lite instance is responding at $BaseUrl." -ForegroundColor Yellow
+        Write-Host "Warning: a Kusto Slice Runner instance is responding at $BaseUrl." -ForegroundColor Yellow
         Write-Host "If it is running from $OutputDirectory the publish will fail on a locked DLL." -ForegroundColor Yellow
         Write-Host 'Re-run with -StopRunning, or stop it first with scripts\Stop-KoLiteApp.ps1.' -ForegroundColor Yellow
     }
@@ -150,7 +153,7 @@ $deployedEntrypoint = if (Test-Path -LiteralPath $deployedExecutable) {
 }
 
 Write-Host ''
-Write-Host 'KO Lite deployed successfully.'
+Write-Host 'Kusto Slice Runner deployed successfully.'
 Write-Host "Deployed path: $resolvedOutput"
 Write-Host "Entrypoint   : $deployedEntrypoint"
 Write-Host 'Run it from the deployed folder with:'

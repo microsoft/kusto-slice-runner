@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 using KoLite.LocalApp.Application;
 using KoLite.LocalApp.Application.Lineage;
 using KoLite.LocalApp.Http;
@@ -12,7 +15,7 @@ namespace KoLite.LocalApp.Http.AgentApi
             api.MapPost("/dependency-graphs/kusto-lineage", GetKustoLineage)
                 .WithTags("Kusto lineage")
                 .WithName("GetKustoLineage")
-                .WithSummary("Resolves read-only Kusto lineage for selected KO Lite jobs.");
+                .WithSummary("Resolves read-only Kusto lineage for selected Kusto Slice Runner jobs.");
         }
 
         private static async Task<Results<Ok<KustoLineageResponse>, ProblemHttpResult>> GetKustoLineage(

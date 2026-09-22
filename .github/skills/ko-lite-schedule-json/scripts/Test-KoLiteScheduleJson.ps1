@@ -1,7 +1,10 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 #requires -Version 7.0
 <#
 .SYNOPSIS
-Validates KO Lite job-schedule JSON locally against the strict KO Lite
+Validates Kusto Slice Runner job-schedule JSON locally against the strict Kusto Slice Runner
 schedule contract.
 
 .DESCRIPTION
@@ -192,7 +195,7 @@ function Test-Definition {
 
     foreach ($prop in $Root.EnumerateObject()) {
         if (-not $AllowedTopLevel.Contains($prop.Name)) {
-            Add-Error $errors $prop.Name "Field '$($prop.Name)' is not part of the supported KO Lite schedule contract."
+            Add-Error $errors $prop.Name "Field '$($prop.Name)' is not part of the supported Kusto Slice Runner schedule contract."
         }
     }
 
@@ -397,7 +400,7 @@ function Test-Definition {
     else {
         foreach ($prop in $targetProp.EnumerateObject()) {
             if (-not $AllowedTargetFields.Contains($prop.Name)) {
-                Add-Error $errors "target.$($prop.Name)" "Field 'target.$($prop.Name)' is not part of the supported KO Lite schedule target contract."
+                Add-Error $errors "target.$($prop.Name)" "Field 'target.$($prop.Name)' is not part of the supported Kusto Slice Runner schedule target contract."
             }
         }
 
@@ -451,7 +454,7 @@ function Test-Definition {
                 else {
                     foreach ($prop in $entry.EnumerateObject()) {
                         if (-not $AllowedDependencyFields.Contains($prop.Name)) {
-                            Add-Error $errors "$path.$($prop.Name)" "Field '$path.$($prop.Name)' is not part of the supported KO Lite dependency contract."
+                            Add-Error $errors "$path.$($prop.Name)" "Field '$path.$($prop.Name)' is not part of the supported Kusto Slice Runner dependency contract."
                         }
                     }
                     $depActProp = Get-Property -Element $entry -Name 'activityId'

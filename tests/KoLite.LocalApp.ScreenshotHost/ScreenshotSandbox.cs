@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 using System.Globalization;
 using System.Text.Json;
 
@@ -38,7 +41,7 @@ namespace KoLite.LocalApp.ScreenshotHost
             if (!File.Exists(Path.Combine(workspace, "KoLite.Local.sln"))
                 || !File.Exists(Path.Combine(workspace, "src", "KoLite.LocalApp", "KoLite.LocalApp.csproj")))
             {
-                throw new ArgumentException("Workspace must be an explicit KO Lite source checkout.", nameof(workspace));
+                throw new ArgumentException("Workspace must be an explicit Kusto Slice Runner source checkout.", nameof(workspace));
             }
 
             var sandbox = new ScreenshotSandbox(workspace, runId, port);

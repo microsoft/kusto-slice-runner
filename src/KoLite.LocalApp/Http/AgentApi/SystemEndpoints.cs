@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 using KoLite.LocalApp.Application.System;
 using Microsoft.AspNetCore.Http.HttpResults;
 

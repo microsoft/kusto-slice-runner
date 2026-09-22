@@ -1,3 +1,5 @@
+@* Copyright (c) Microsoft Corporation.
+   Licensed under the MIT License. *@
 @page "/jobs/new"
 @model KoLite.LocalApp.Pages.Catalog.CreateModel
 @{
@@ -7,7 +9,7 @@
 <div class="page-heading">
     <div>
         <h1>Create job</h1>
-        <p class="muted">@(string.IsNullOrWhiteSpace(Model.ErrorMessage) ? "Create a local KO Lite job definition." : "Fix validation errors and submit again.")</p>
+        <p class="muted">@(string.IsNullOrWhiteSpace(Model.ErrorMessage) ? "Create a local Kusto Slice Runner job definition." : "Fix validation errors and submit again.")</p>
     </div>
     <a class="btn" href="/">Back to jobs</a>
 </div>

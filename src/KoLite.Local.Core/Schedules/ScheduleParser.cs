@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -99,7 +102,7 @@ namespace KoLite.Local.Core.Schedules
             {
                 if (!AllowedTopLevel.Contains(prop.Name))
                 {
-                    errors.Add(new ScheduleValidationError(activityId, prop.Name, $"Field '{prop.Name}' is not part of the supported KO Lite schedule contract."));
+                    errors.Add(new ScheduleValidationError(activityId, prop.Name, $"Field '{prop.Name}' is not part of the supported Kusto Slice Runner schedule contract."));
                 }
             }
 
@@ -109,7 +112,7 @@ namespace KoLite.Local.Core.Schedules
                 {
                     if (!AllowedTargetFields.Contains(prop.Name))
                     {
-                        errors.Add(new ScheduleValidationError(activityId, $"target.{prop.Name}", $"Field 'target.{prop.Name}' is not part of the supported KO Lite schedule target contract."));
+                        errors.Add(new ScheduleValidationError(activityId, $"target.{prop.Name}", $"Field 'target.{prop.Name}' is not part of the supported Kusto Slice Runner schedule target contract."));
                     }
                 }
             }
@@ -246,7 +249,7 @@ namespace KoLite.Local.Core.Schedules
                 {
                     if (!AllowedDependencyFields.Contains(prop.Name))
                     {
-                        errors.Add(new ScheduleValidationError(activityId, $"{path}.{prop.Name}", $"Field '{path}.{prop.Name}' is not part of the supported KO Lite dependency contract."));
+                        errors.Add(new ScheduleValidationError(activityId, $"{path}.{prop.Name}", $"Field '{path}.{prop.Name}' is not part of the supported Kusto Slice Runner dependency contract."));
                     }
                 }
 

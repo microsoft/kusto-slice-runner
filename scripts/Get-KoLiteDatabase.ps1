@@ -1,6 +1,9 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 <#
 .SYNOPSIS
-Reports which local SQLite database the KO Lite app is using.
+Reports which local SQLite database the Kusto Slice Runner app is using.
 
 .DESCRIPTION
 The in-use database path is resolved at runtime from configuration precedence
@@ -89,7 +92,7 @@ if ($null -ne $health -and $null -ne $health.database -and -not [string]::IsNull
     $info = Get-DatabaseFileInfo -Path $databasePath
     $info.Likely = $true
 
-    Write-Host 'KO Lite in-use database (authoritative, from running app):'
+    Write-Host 'Kusto Slice Runner in-use database (authoritative, from running app):'
     Write-Host "  $databasePath"
     Write-Host "  source     : running app /api/v1/system/status ($BaseUrl)"
     if ($info.Exists) {
@@ -110,7 +113,7 @@ if ($null -ne $health -and $null -ne $health.database -and -not [string]::IsNull
 }
 
 # 2. App not running: report the default and make a best-effort guess.
-Write-Host "KO Lite app is not responding at $BaseUrl; reporting a best-effort guess." -ForegroundColor Yellow
+Write-Host "Kusto Slice Runner app is not responding at $BaseUrl; reporting a best-effort guess." -ForegroundColor Yellow
 Write-Host "Default database path (used when no connection string is configured):"
 Write-Host "  $defaultPath"
 

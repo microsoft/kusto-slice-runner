@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 namespace KoLite.Local.Core.Graph
 {
     // A normalized "source reads dependency" edge from a cluster's resolved entity graph. Both
@@ -13,7 +16,7 @@ namespace KoLite.Local.Core.Graph
         string DependencyName,
         string DependencyType);
 
-    // A KO Lite job whose Kusto entities we reason about. FunctionName/OutputTable let the engine
+    // A Kusto Slice Runner job whose Kusto entities we reason about. FunctionName/OutputTable let the engine
     // recognize when a Kusto entity IS this job (so it maps onto the job node instead of becoming a
     // duplicate consumer/source node, and so an upstream read of another job's table becomes a
     // job->job link).
@@ -24,7 +27,7 @@ namespace KoLite.Local.Core.Graph
     // different cluster than the job that reads it. Key is globally unique (includes the cluster).
     public sealed record KustoConsumerNode(string Key, string Cluster, string Database, string Name, string EntityType, bool IsRemote);
 
-    // A produces->consumes edge. FromId is either a KO Lite job id or another node Key; ToId is a
+    // A produces->consumes edge. FromId is either a Kusto Slice Runner job id or another node Key; ToId is a
     // node Key (downstream consumer) or a job id (upstream source -> job).
     public sealed record KustoConsumerEdge(string FromId, string ToId);
 
@@ -48,12 +51,12 @@ namespace KoLite.Local.Core.Graph
             Array.Empty<KustoJobLink>());
     }
 
-    // Pure, cluster-aware lineage around KO Lite jobs.
+    // Pure, cluster-aware lineage around Kusto Slice Runner jobs.
     //
     // ComputeConsumers (downstream): walks "who reads this" from each job's output table to surface
     // the Functions/MaterializedViews that consume job output (transitively, through function chains).
     // Pass-through tables (e.g. update-policy targets) are bridged through but not drawn. Consumers
-    // that are themselves KO Lite jobs are skipped (that link is already the job dependency graph).
+    // that are themselves Kusto Slice Runner jobs are skipped (that link is already the job dependency graph).
     //
     // ComputeUpstream: for each job's function, classifies its DIRECT reads (one hop). A read of
     // another KO job's output table/function becomes a job->job link; any other read becomes a source

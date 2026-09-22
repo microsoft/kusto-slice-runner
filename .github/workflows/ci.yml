@@ -1,4 +1,4 @@
-name: KO Lite CI
+name: Kusto Slice Runner CI
 
 on:
   push:
@@ -38,6 +38,9 @@ jobs:
 
       - name: Restore JavaScript assets
         run: npm ci
+
+      - name: Test browser behavior
+        run: npm run test:js
 
       - name: Restore .NET packages
         run: dotnet restore .\KoLite.Local.sln

@@ -1,10 +1,13 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 <#
 .SYNOPSIS
-Opts the current Windows user into KO Lite startup at sign-in.
+Opts the current Windows user into Kusto Slice Runner startup at sign-in.
 
 .DESCRIPTION
 Registers a limited-privilege, passwordless interactive task for a published app. It does not
-start or stop KO Lite. Console mode is the first-registration default; Background hides the
+start or stop Kusto Slice Runner. Console mode is the first-registration default; Background hides the
 window. Updates preserve unspecified arguments and window mode. Settings are stored as data
 in the task, not credentials; never pass secrets through AppArguments.
 
@@ -84,7 +87,7 @@ if ($DryRun) {
     Write-Host 'DryRun: no task is registered, no files are written, and the app is not started.'
     return
 }
-if (-not $PSCmdlet.ShouldProcess($context.TaskName, 'Register KO Lite startup at sign-in')) { return }
+if (-not $PSCmdlet.ShouldProcess($context.TaskName, 'Register Kusto Slice Runner startup at sign-in')) { return }
 
 $current = Get-KoLiteStartupTask $context
 if (($null -eq $existing) -ne ($null -eq $current) -or

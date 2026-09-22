@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 using System.Net;
 using KoLite.Local.Sqlite.Connections;
 using KoLite.Local.Sqlite.Schema;
@@ -52,7 +55,7 @@ namespace KoLite.LocalApp
             app.Services.GetRequiredService<KoLiteSqliteSchema>().EnsureSchema();
 
             app.Logger.LogInformation(
-                "KO Lite local SQLite database resolved to {DatabasePath}.",
+                "Kusto Slice Runner local SQLite database resolved to {DatabasePath}.",
                 databasePath);
 
             app.Use(async (context, next) =>

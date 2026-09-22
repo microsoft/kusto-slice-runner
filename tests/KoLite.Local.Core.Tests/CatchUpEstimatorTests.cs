@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 using System.Globalization;
 using KoLite.Local.Core.Schedules;
 using KoLite.Local.Core.Scheduling;

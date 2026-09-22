@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 using KoLite.Local.Core.Performance;
 using KoLite.Local.Sqlite.Infrastructure;
 using Microsoft.Data.Sqlite;

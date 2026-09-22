@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Extensions.Configuration;
@@ -51,7 +54,7 @@ namespace KoLite.LocalApp
             {
                 mutex.Dispose();
                 throw new InvalidOperationException(
-                    $"Another KO Lite instance is already running against '{databasePath}'. " +
+                    $"Another Kusto Slice Runner instance is already running against '{databasePath}'. " +
                     "Refusing to start a second instance that shares the same SQLite database. " +
                     "Stop the other instance first, or set KoLite:AllowMultipleInstances=true (with a distinct database) to override.");
             }

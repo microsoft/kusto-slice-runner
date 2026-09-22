@@ -1,4 +1,4 @@
-# KO Lite schedule JSON
+# Kusto Slice Runner schedule JSON
 
 The schedule contract is intentionally strict. Unknown top-level fields, unknown `target` fields, and unknown dependency fields are rejected so imports stay predictable.
 
@@ -25,8 +25,8 @@ The schedule contract is intentionally strict. Unknown top-level fields, unknown
 }
 ```
 
-A job's permanent identity is an opaque GUID `id` that KO Lite assigns. You normally omit `id`
-when authoring a new job (KO Lite mints one); exports always include it. `activityId` is a
+A job's permanent identity is an opaque GUID `id` that Kusto Slice Runner assigns. You normally omit `id`
+when authoring a new job (Kusto Slice Runner mints one); exports always include it. `activityId` is a
 mutable, unique, human-facing label (a display name) — it can be renamed without affecting the
 durable `id`, dependency edges, slice history, or output idempotency.
 
@@ -34,7 +34,7 @@ durable `id`, dependency edges, slice history, or output idempotency.
 
 | Field | Required | Notes |
 | --- | --- | --- |
-| `id` | No | Opaque GUID permanent identity. Omit when creating (KO Lite mints one); preserved on export so export→import round-trips and matches an existing job for rename. Immutable once assigned. |
+| `id` | No | Opaque GUID permanent identity. Omit when creating (Kusto Slice Runner mints one); preserved on export so export→import round-trips and matches an existing job for rename. Immutable once assigned. |
 | `activityId` | Yes | Mutable, unique, human-facing display label. May be renamed at any time. Used as a dependency alias and import match key when `id` is absent. |
 | `functionName` | Yes | Kusto function to invoke for each slice. Must be a safe Kusto identifier when executed. |
 | `outputTable` | Yes | Kusto table appended by `.set-or-append`. Must be a safe Kusto identifier when executed. |
@@ -50,7 +50,7 @@ durable `id`, dependency edges, slice history, or output idempotency.
 | `endOn` | No | Optional UTC ISO-8601 timestamp. Must be greater than `startFrom` when present. |
 | `folder` | No | Existing output/Kusto-oriented metadata. It is not a UI grouping tag. |
 | `tags` | No | Optional array of job organization tags. Tags are trimmed, normalized to lowercase, deduplicated, and used by dashboard/catalog filters. |
-| `dependsOn` | No | Array of dependency objects, each referencing an upstream by `id` (GUID) and/or `activityId`. KO Lite resolves `activityId` to the upstream's GUID and stores edges by `id`, so renames don't break dependencies. Self-dependencies are rejected. |
+| `dependsOn` | No | Array of dependency objects, each referencing an upstream by `id` (GUID) and/or `activityId`. Kusto Slice Runner resolves `activityId` to the upstream's GUID and stores edges by `id`, so renames don't break dependencies. Self-dependencies are rejected. |
 | `jobSettings` | No | Optional JSON value passed after the time-window arguments; it is third when `chunks` is absent and fifth when `chunks` is present. |
 | `target.clusterUri` | Yes | Absolute HTTPS Kusto cluster URI. |
 | `target.database` | Yes | Kusto database name. |
@@ -61,14 +61,14 @@ durable `id`, dependency edges, slice history, or output idempotency.
 
 ## Chunks
 
-When `chunks` is absent, KO Lite preserves the existing function signatures:
+When `chunks` is absent, Kusto Slice Runner preserves the existing function signatures:
 
 ```kusto
 MyFunction(startTime:datetime, endTime:datetime)
 MyFunction(startTime:datetime, endTime:datetime, jobSettings:dynamic)
 ```
 
-When `chunks` is present (including `chunks: 1`), KO Lite invokes the function once for every 0-based chunk:
+When `chunks` is present (including `chunks: 1`), Kusto Slice Runner invokes the function once for every 0-based chunk:
 
 ```kusto
 MyFunction(startTime:datetime, endTime:datetime, chunkId:long, chunks:long)
@@ -83,7 +83,7 @@ Concurrency is counted per execution unit. For example, `chunks: 32` with
 `maxParallelism: 8` permits at most 8 chunks of the job to run simultaneously; with
 `maxParallelism: 32`, all 32 chunks of one window can run together when at least 32
 global worker slots are free. `maxParallelism` values above 32 are valid and can overlap
-chunks from later windows. KO Lite's global worker pool is unbounded by default, but an
+chunks from later windows. Kusto Slice Runner's global worker pool is unbounded by default, but an
 operator-configured `KoLite:WorkerPool:MaxConcurrency` may impose a lower all-up limit.
 
 Pause is immediate: already-running chunks finish, while unstarted chunks and retries wait for
@@ -110,7 +110,7 @@ resets every chunk in the logical slice (plus affected downstream slices).
 
 Dependencies block downstream slice readiness until the corresponding upstream slice is complete.
 A dependency entry may reference the upstream by `activityId` (human-friendly), by `id` (the
-upstream's GUID, rename-safe and usable as a forward reference), or both. KO Lite resolves each
+upstream's GUID, rename-safe and usable as a forward reference), or both. Kusto Slice Runner resolves each
 entry to the upstream's GUID and **stores the edge by `id`**, so renaming an upstream does not
 break downstream dependencies. Referencing an upstream by `activityId` requires that upstream to
 already exist (in the catalog or the same import batch); otherwise reference it by `id`. Exports
@@ -122,12 +122,12 @@ render each edge as `{ "id": ..., "activityId": ... }` for readability.
 "tags": ["prod", "daily", "security"]
 ```
 
-Tags are local UI/catalog metadata for organizing jobs. They are separate from Kusto ingestion tags and separate from the `folder` field. When present, `tags` must be an array of non-empty strings. KO Lite trims each tag, normalizes it to lowercase, and removes duplicates after normalization. Dashboard and catalog tag filters use AND semantics when multiple tags are selected.
+Tags are local UI/catalog metadata for organizing jobs. They are separate from Kusto ingestion tags and separate from the `folder` field. When present, `tags` must be an array of non-empty strings. Kusto Slice Runner trims each tag, normalizes it to lowercase, and removes duplicates after normalization. Dashboard and catalog tag filters use AND semantics when multiple tags are selected.
 
 ## Description
 
 `description` is optional freeform Markdown for explaining a job's purpose, ownership,
-runbook links, or other local catalog context. KO Lite preserves accepted text exactly,
+runbook links, or other local catalog context. Kusto Slice Runner preserves accepted text exactly,
 up to 65,536 characters, and renders it only on the job details page. Embedded raw HTML
 is displayed as text; generated Markdown HTML is sanitized before it reaches the DOM.
 The field is catalog metadata and is never included in Kusto function arguments or
@@ -138,7 +138,7 @@ request metadata.
 The import page accepts a single schedule object or an array of schedule objects. Imports are
 additive and update-only: an item matches an existing job by `id` when present (which is how a
 **rename** is applied — same `id`, new `activityId`), otherwise by `activityId`; unmatched items
-are created (a supplied `id` is preserved, else KO Lite mints one). Omitted jobs are left
+are created (a supplied `id` is preserved, else Kusto Slice Runner mints one). Omitted jobs are left
 untouched. `activityId` uniqueness is enforced across the catalog.
 
 Exports are import-compatible and always include `id`. Export all emits every non-soft-deleted

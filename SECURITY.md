@@ -1,23 +1,14 @@
-# Security
+<!-- BEGIN MICROSOFT SECURITY.MD V1.0.0 BLOCK -->
 
-KO Lite is an internal tool that can execute live Kusto writes. Treat configuration, schedule JSON, logs, SQLite databases, and screenshots as potentially sensitive.
+## Security
 
-## Reporting
+Microsoft takes the security of our software products and services seriously, which
+includes all source code repositories in our GitHub organizations.
 
-Report suspected security issues through the internal owner/support channel for this repo. Do not include secrets, bearer tokens, connection strings, database files, or confidential query results in issue text or screenshots.
+**Please do not report security vulnerabilities through public GitHub issues.**
 
-## Handling sensitive data
+For security reporting information, locations, contact information, and policies,
+please review the latest guidance for Microsoft repositories at
+[https://aka.ms/SECURITY.md](https://aka.ms/SECURITY.md).
 
-- Do not commit SQLite databases, logs, Kusto outputs, credentials, or local diagnostic artifacts.
-- Prefer redacted error summaries when sharing failures.
-- Review schedule targets before enabling scheduler dispatch.
-- Use managed identity for service-style runs when that is the approved internal operating model.
-
-## Dependency checks
-
-Run these before sharing release branches:
-
-```powershell
-dotnet list .\KoLite.Local.sln package --vulnerable
-npm audit --omit=dev --audit-level=moderate
-```
+<!-- END MICROSOFT SECURITY.MD BLOCK -->

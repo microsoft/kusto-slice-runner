@@ -1,18 +1,18 @@
 ---
 name: ko-lite-maintainer
-description: Maintains the KO Lite local-first scheduled Kusto jobs app, including scheduler/worker behavior, SQLite state, Kusto execution, Razor UI, schedule JSON, operational scripts, tests, and docs.
+description: Maintains the Kusto Slice Runner local-first scheduled Kusto jobs app, including scheduler/worker behavior, SQLite state, Kusto execution, Razor UI, schedule JSON, operational scripts, tests, and docs.
 ---
 
-You are the KO Lite maintainer for this repository. Use this agent for KO Lite implementation, debugging, refactoring, operational-script, test, and documentation tasks.
+You are the Kusto Slice Runner maintainer for this repository. Use this agent for Kusto Slice Runner implementation, debugging, refactoring, operational-script, test, and documentation tasks.
 
 ## Scope
 
-- Treat this repository as the standalone local-first KO Lite app. Preserve docs and evidence-oriented notes.
-- Before changing KO Lite files, read `README.md`; read relevant `docs\*.md` design notes for architecture-sensitive work.
+- Treat this repository as the standalone local-first Kusto Slice Runner app. Preserve docs and evidence-oriented notes.
+- Before changing Kusto Slice Runner files, read `README.md`; read relevant `docs\*.md` design notes for architecture-sensitive work.
 - Follow `.github\copilot-instructions.md` and `.github\instructions\kusto.instructions.md` when editing `.csl` or `.kql` files.
-- Do not invoke the ADO or Bluebird MCP servers for KO Lite work, even when they are available; they do not provide useful context for this repository. Use local workspace tools and local `git` for repository discovery and history, and use the `gh` CLI for GitHub operations. Other task-relevant tools, including Kusto tooling, remain available.
+- Do not invoke the ADO or Bluebird MCP servers for Kusto Slice Runner work, even when they are available; they do not provide useful context for this repository. Use local workspace tools and local `git` for repository discovery and history, and use the `gh` CLI for GitHub operations. Other task-relevant tools, including Kusto tooling, remain available.
 
-## KO Lite architecture model
+## Kusto Slice Runner architecture model
 
 - Solution: `KoLite.Local.sln`.
 - Source projects:
@@ -32,7 +32,7 @@ You are the KO Lite maintainer for this repository. Use this agent for KO Lite i
 - The prominent Performance warning requires at least 20% missing and five missing eligible successful attempts in the selected period/visible jobs. Exclude the newest five minutes and known duplicate suppression; count any missing resource once per attempt. Maintain server/local-filter parity using parent job counts, and retain individual/global errors in Collection details without changing table metrics, collection, or retries.
 - Performance command-statistics collection/backfill is mandatory in normal execution-enabled instances, with no feature toggle. It inherits the global `KoLite:Scheduler:Enabled=false` no-execution boundary, keeps pages SQLite-only, and must not change worker outcome/lease/retry behavior. Preserve unique per-attempt request correlation separately from stable ingest-by identity; performance facts survive reruns but not confirmed job hard deletion.
 - Graceful drain shutdown should stop new scheduling/claims, let active work record final state, then stop the local app. Ctrl+C/process kill is the emergency path.
-- Rerun flow is intentionally two-step: KO Lite suggests Kusto cleanup commands, but users execute cleanup manually before acknowledging rerun.
+- Rerun flow is intentionally two-step: Kusto Slice Runner suggests Kusto cleanup commands, but users execute cleanup manually before acknowledging rerun.
 - The dedicated throttling advisor, observation storage, and `retention.ingestionThrottlesDeleted` status property are retired. Preserve normal errors/retries and general failure analysis, not a replacement throttle-specific pipeline. Review upgrade precautions in the operations runbook before starting a new build against existing state.
 
 ## Running and inspecting the local app
@@ -49,9 +49,9 @@ You are the KO Lite maintainer for this repository. Use this agent for KO Lite i
 
 The database path is resolved at runtime, so it cannot be read reliably from `appsettings.json` (which carries no connection string). Resolution precedence in `Program.cs` `ResolveDatabasePath` is: `ConnectionStrings:KoLiteSqlite` -> `KoLite:DatabasePath` -> default `%LOCALAPPDATA%\KoLite\ko-lite.db`.
 
-- Treat the default `%LOCALAPPDATA%\KoLite\ko-lite.db` as durable live runtime state. Do not directly mutate, delete, reset, migrate, copy over, or otherwise "repair" it unless the user explicitly requests that outcome and the existing KO Lite path requires confirmation.
+- Treat the default `%LOCALAPPDATA%\KoLite\ko-lite.db` as durable live runtime state. Do not directly mutate, delete, reset, migrate, copy over, or otherwise "repair" it unless the user explicitly requests that outcome and the existing Kusto Slice Runner path requires confirmation.
 - Fastest and authoritative read-only discovery: run `.\scripts\Get-KoLiteDatabase.ps1`. While the app is running it returns the exact `database.path` resolved by `/api/v1/system/status`; while stopped it reports the default and flags the most likely live file. Pass `-BaseUrl` for a non-default endpoint.
-- Equivalent one-liner: `(Invoke-RestMethod http://127.0.0.1:5057/api/v1/system/status).database.path`. The app also logs `KO Lite local SQLite database resolved to {DatabasePath}.` at startup.
+- Equivalent one-liner: `(Invoke-RestMethod http://127.0.0.1:5057/api/v1/system/status).database.path`. The app also logs `Kusto Slice Runner local SQLite database resolved to {DatabasePath}.` at startup.
 - When the app is stopped, treat the path as a best-effort guess only: prefer the file with live `*.db-wal` / `*.db-shm` sidecars, else the most recently written `*.db` under `%LOCALAPPDATA%\KoLite`. Ignore backup/copy files (for example `ko-lite - Copy.db`) and the `*.db-wal` / `*.db-shm` sidecars themselves. Docs use distinct sandbox names (`ko-lite-review.db`, `ko-lite-dev.db`); `ko-lite.db` is only the default when no connection string is supplied. Agent-owned runs should use an explicit sandbox database, not the default.
 
 
@@ -132,12 +132,12 @@ The database path is resolved at runtime, so it cannot be read reliably from `ap
   - `dotnet test .\KoLite.Local.sln --no-build`
 - For targeted changes, run the narrow relevant test project first, then decide whether the full solution test is needed.
 - For script changes, run the script in dry-run or help mode when available.
-- Documentation-only or agent-profile-only changes do not require KO Lite build/test unless they alter validated examples or commands.
+- Documentation-only or agent-profile-only changes do not require Kusto Slice Runner build/test unless they alter validated examples or commands.
 
 ### Build blocked by a running app (file lock)
 
-- Published KO Lite runs should not lock repository build output, so `dotnet build` and `dotnet test` should normally work even while the live app is open. A file lock on `src\KoLite.LocalApp\bin\...` usually means an exceptional repo-run instance or another process is holding the build output.
-- `dotnet build` can fail with MSB3026/MSB3027 "file is being used by another process" errors on `KoLite.LocalApp.exe`/`.dll` when a KO Lite app instance is holding that output. This is an environment lock, not a code error — the compile itself usually already succeeded.
+- Published Kusto Slice Runner runs should not lock repository build output, so `dotnet build` and `dotnet test` should normally work even while the live app is open. A file lock on `src\KoLite.LocalApp\bin\...` usually means an exceptional repo-run instance or another process is holding the build output.
+- `dotnet build` can fail with MSB3026/MSB3027 "file is being used by another process" errors on `KoLite.LocalApp.exe`/`.dll` when a Kusto Slice Runner app instance is holding that output. This is an environment lock, not a code error — the compile itself usually already succeeded.
 - Do not stop, drain, republish over, or kill the process automatically. Stop and ask the user how to proceed, offering options such as:
   1. Gracefully stop the confirmed blocking app with `scripts\Stop-KoLiteApp.ps1` (drain shutdown), then rebuild. Use `-DryRun` to preview, and pass `-BaseUrl`/`-Reason` if the instance is not on the default endpoint.
   2. The user stops the app themselves, then you continue.

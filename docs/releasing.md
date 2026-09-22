@@ -1,13 +1,13 @@
-# Creating a KO Lite release
+# Creating a Kusto Slice Runner release
 
-KO Lite separates hosted release creation from optional local AI highlights.
+Kusto Slice Runner separates hosted release creation from optional local AI highlights.
 Pushes to `main` run CI but do not create releases.
 
 ## 1. Create the draft in GitHub Actions
 
 1. Make sure the intended commit is on `main` and its CI checks are green.
 2. Choose an unused `vMAJOR.MINOR.PATCH` version.
-3. Open **Actions**, select **KO Lite Release**, choose **Run workflow**, keep
+3. Open **Actions**, select **Kusto Slice Runner Release**, choose **Run workflow**, keep
    the branch set to `main`, and enter the version.
 
 The hosted workflow runs all quality gates, builds and smoke-tests both Windows
@@ -25,7 +25,7 @@ copilot login
 ```
 
 Invoke the `ko-lite-release-highlights` skill in GitHub Copilot CLI. When exactly
-one strict-SemVer draft carrying the KO Lite release-workflow marker exists, the
+one strict-SemVer draft carrying the Kusto Slice Runner release-workflow marker exists, the
 skill selects it automatically. If multiple eligible drafts exist, choose from
 the versions and URLs it presents. If none exist, run the release workflow
 first. An explicitly requested `vMAJOR.MINOR.PATCH` remains supported.

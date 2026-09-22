@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 using KoLite.Local.Core.Graph;
 
 namespace KoLite.Local.Core.Tests
@@ -122,7 +125,7 @@ namespace KoLite.Local.Core.Tests
         {
             // The job stores "_T" but Kusto returns the dependency as "_t".
             var result = KustoLineageEngine.ComputeConsumers(
-                new[] { Edge("efficiency", "LatestT", "Function", "efficiency", "_t", "Table") },
+                new[] { Edge("sampleanalytics", "LatestT", "Function", "sampleanalytics", "_t", "Table") },
                 new[] { Job("job1", "SampleAnalytics", "_T", "BuildT") });
 
             Assert.Single(result.Nodes);

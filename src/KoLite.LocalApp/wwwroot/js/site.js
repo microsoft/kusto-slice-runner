@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 (function () {
   var sliceTooltip;
   var successChartPalette = [

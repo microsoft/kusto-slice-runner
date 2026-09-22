@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 using KoLite.Local.Core.Graph;
 using KoLite.Local.Sqlite.Observability;
 
@@ -18,7 +21,7 @@ namespace KoLite.LocalApp.Ui
     // A laid-out node. Resolved is false for an id that is referenced as a dependency but is not in
     // the catalog (e.g. a deleted upstream), so the UI can render it as a muted placeholder. Focal
     // marks the jobs the user explicitly selected/opened, so they can be highlighted. Kind is "Job"
-    // for KO Lite jobs, or "KustoFunction" / "KustoMaterializedView" for resolved downstream Kusto
+    // for Kusto Slice Runner jobs, or "KustoFunction" / "KustoMaterializedView" for resolved downstream Kusto
     // consumers.
     public sealed record DependencyGraphNodeViewModel(
         string Id,

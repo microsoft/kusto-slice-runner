@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
@@ -527,7 +530,7 @@ namespace KoLite.LocalApp.Tests
                 }
                 current = current.Parent;
             }
-            throw new DirectoryNotFoundException("Could not find the KO Lite repository.");
+            throw new DirectoryNotFoundException("Could not find the Kusto Slice Runner repository.");
         }
 
         private sealed record ProcessResult(int ExitCode, string Output, string Error);

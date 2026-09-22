@@ -1,15 +1,18 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 <#
 .SYNOPSIS
-Reclaims free space in the KO Lite local SQLite database by running VACUUM.
+Reclaims free space in the Kusto Slice Runner local SQLite database by running VACUUM.
 
 .DESCRIPTION
-KO Lite's retention background service prunes old operational telemetry so the database stops
+Kusto Slice Runner's retention background service prunes old operational telemetry so the database stops
 growing without bound, but SQLite does not return freed pages to the operating system on its own:
 the file size plateaus and freed pages are reused for future growth. Run this script to physically
 shrink the file with a one-off VACUUM after retention has removed a large backlog.
 
 VACUUM rewrites the whole database and needs exclusive access plus enough free disk for a temporary
-copy, so the KO Lite app must be stopped first. The script:
+copy, so the Kusto Slice Runner app must be stopped first. The script:
 
 1. Resolves the in-use database path (from the running app's /api/v1/system/status, an explicit
    -DatabasePath, or the default %LOCALAPPDATA%\KoLite\ko-lite.db).
@@ -103,10 +106,10 @@ try {
     $health = $response.Content | ConvertFrom-Json -Depth 20
     $properties = @($health.PSObject.Properties | ForEach-Object Name)
     if ($properties -notcontains 'supportedApiVersions') {
-        throw "A service is responding at $statusUrl but did not advertise KO Lite agent API v1. Use the Invoke-KoLiteVacuum.ps1 version shipped with that app."
+        throw "A service is responding at $statusUrl but did not advertise Kusto Slice Runner agent API v1. Use the Invoke-KoLiteVacuum.ps1 version shipped with that app."
     }
     if (@($health.supportedApiVersions) -notcontains 'v1') {
-        throw "A service is responding at $statusUrl but did not advertise KO Lite agent API v1. Use the Invoke-KoLiteVacuum.ps1 version shipped with that app."
+        throw "A service is responding at $statusUrl but did not advertise Kusto Slice Runner agent API v1. Use the Invoke-KoLiteVacuum.ps1 version shipped with that app."
     }
     $isRunning = $true
 } catch [System.Net.Http.HttpRequestException] {
@@ -117,10 +120,10 @@ if ([string]::IsNullOrWhiteSpace($DatabasePath)) {
     if ($isRunning) {
         $properties = @($health.PSObject.Properties | ForEach-Object Name)
         if ($properties -notcontains 'database' -or $null -eq $health.database) {
-            throw "A service is responding at $statusUrl but did not return the expected KO Lite database path. Use the Invoke-KoLiteVacuum.ps1 version shipped with that app."
+            throw "A service is responding at $statusUrl but did not return the expected Kusto Slice Runner database path. Use the Invoke-KoLiteVacuum.ps1 version shipped with that app."
         }
         if ((@($health.database.PSObject.Properties | ForEach-Object Name) -notcontains 'path') -or ([string]::IsNullOrWhiteSpace($health.database.path))) {
-            throw "A service is responding at $statusUrl but did not return the expected KO Lite database path. Use the Invoke-KoLiteVacuum.ps1 version shipped with that app."
+            throw "A service is responding at $statusUrl but did not return the expected Kusto Slice Runner database path. Use the Invoke-KoLiteVacuum.ps1 version shipped with that app."
         }
         $DatabasePath = [string]$health.database.path
     } else {
@@ -128,7 +131,7 @@ if ([string]::IsNullOrWhiteSpace($DatabasePath)) {
     }
 }
 
-Write-Host "KO Lite database : $DatabasePath"
+Write-Host "Kusto Slice Runner database : $DatabasePath"
 Write-Host "App responding   : $isRunning ($BaseUrl)"
 
 if (-not (Test-Path -LiteralPath $DatabasePath)) {
@@ -146,7 +149,7 @@ if ($DryRun) {
 
 if ($isRunning -and -not $Force) {
     Write-Host ''
-    Write-Host 'The KO Lite app appears to be running. VACUUM needs exclusive access and will fail while the app holds a connection.' -ForegroundColor Yellow
+    Write-Host 'The Kusto Slice Runner app appears to be running. VACUUM needs exclusive access and will fail while the app holds a connection.' -ForegroundColor Yellow
     Write-Host 'Stop it first (graceful drain) and re-run:' -ForegroundColor Yellow
     Write-Host '  .\scripts\Stop-KoLiteApp.ps1'
     Write-Host '  .\scripts\Invoke-KoLiteVacuum.ps1'

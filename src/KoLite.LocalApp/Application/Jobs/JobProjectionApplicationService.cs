@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 using System.Text.Json;
 using KoLite.Local.Core.Orchestration;
 using KoLite.Local.Core.Scheduling;

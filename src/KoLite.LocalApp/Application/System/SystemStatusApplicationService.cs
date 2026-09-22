@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 using KoLite.Local.Core.Orchestration;
 using KoLite.Local.Core.Time;
 using KoLite.Local.Kusto.Execution;

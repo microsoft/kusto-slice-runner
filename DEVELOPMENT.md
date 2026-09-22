@@ -1,6 +1,6 @@
-# KO Lite development
+# Kusto Slice Runner development
 
-This guide covers repository layout and local validation commands for KO Lite contributors.
+This guide covers repository layout and local validation commands for Kusto Slice Runner contributors.
 
 ## Prerequisites
 
@@ -129,7 +129,7 @@ Windows visual acceptance check, not just a task-definition assertion.
 
 ## Create a GitHub Release
 
-Run the **KO Lite Release** workflow from GitHub Actions with an unused
+Run the **Kusto Slice Runner Release** workflow from GitHub Actions with an unused
 `vMAJOR.MINOR.PATCH` version. The hosted workflow runs the quality gates,
 publishes and smoke-tests both Windows x64 packages, generates checksums and
 complete release notes, and creates a draft.

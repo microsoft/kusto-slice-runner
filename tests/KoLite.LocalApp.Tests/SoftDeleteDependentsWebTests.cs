@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 using System.Net;
 using System.Text.RegularExpressions;
 using KoLite.Local.Sqlite.Catalog;

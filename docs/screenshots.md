@@ -1,6 +1,6 @@
 # Recreating the documentation screenshots
 
-The five README images show the real KO Lite UI with **entirely synthetic data**.
+The five README images show the real Kusto Slice Runner UI with **entirely synthetic data**.
 They are not redacted captures of a live catalog. Job identities, schedules, tags,
 workers, operational history, errors, and relationships all belong to a fictional
 retail example. Lineage and failure analysis are deterministic fixture responses;

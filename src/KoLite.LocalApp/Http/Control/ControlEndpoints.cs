@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 using System.Text.Json;
 using KoLite.Local.Core.Time;
 using KoLite.Local.Sqlite.Observability;
@@ -49,7 +52,7 @@ namespace KoLite.LocalApp.Http.Control
                             var observability = scope.ServiceProvider.GetRequiredService<SqliteOperationalReadModelRepository>();
                             observability.RecordLog(
                                 "Information",
-                                "Graceful drain completed; stopping KO Lite local app.",
+                                "Graceful drain completed; stopping Kusto Slice Runner local app.",
                                 "shutdown-drain",
                                 propertiesJson: JsonSerializer.Serialize(stoppingSnapshot));
                         }
@@ -58,7 +61,7 @@ namespace KoLite.LocalApp.Http.Control
                             logger.LogWarning(ex, "Failed to record graceful drain completion before stopping the app.");
                         }
 
-                        logger.LogInformation("Graceful drain completed; stopping KO Lite local app.");
+                        logger.LogInformation("Graceful drain completed; stopping Kusto Slice Runner local app.");
                         appLifetime.StopApplication();
                     });
                 }

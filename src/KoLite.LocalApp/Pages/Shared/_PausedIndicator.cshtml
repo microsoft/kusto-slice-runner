@@ -1,3 +1,5 @@
+@* Copyright (c) Microsoft Corporation.
+   Licensed under the MIT License. *@
 @model JobDetailsPageData
 
 @if (Model.Lifecycle?.IsSoftDeleted != true && (!Model.Job.IsEnabled || Model.Definition.IsPaused))

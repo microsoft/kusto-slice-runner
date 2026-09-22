@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 namespace KoLite.Local.Core.Graph
 {
     // A directed dependency edge. The downstream job declares the upstream job in its dependsOn,

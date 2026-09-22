@@ -1,6 +1,9 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 <#
 .SYNOPSIS
-Runs the KO Lite UI from repository source against an existing SQLite database with the
+Runs the Kusto Slice Runner UI from repository source against an existing SQLite database with the
 background scheduler and worker disabled, for validating code/UI changes before deploying.
 
 .DESCRIPTION
@@ -178,7 +181,7 @@ if (@($AppArguments).Count -gt 0) {
 
 $commandPreview = 'dotnet ' + ($dotnetArgs -join ' ')
 
-Write-Host 'KO Lite UI (source build, scheduler/worker disabled)'
+Write-Host 'Kusto Slice Runner UI (source build, scheduler/worker disabled)'
 Write-Host "Project       : $project"
 if ($UseCopy) {
     Write-Host "Database       : $effectiveDatabasePath (copy of $DatabasePath)"

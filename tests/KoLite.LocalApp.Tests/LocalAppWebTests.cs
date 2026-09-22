@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -307,7 +310,7 @@ namespace KoLite.LocalApp.Tests
             var script = await client.GetStringAsync("/js/site.js");
             var css = await client.GetStringAsync("/css/site.css");
 
-            Assert.Contains("KO Lite Local Dashboard", dashboard);
+            Assert.Contains("Kusto Slice Runner Local Dashboard", dashboard);
             Assert.Contains("job.web", dashboard);
             Assert.True(dashboard.IndexOf("Active jobs", StringComparison.Ordinal) < dashboard.IndexOf("Success Statistics", StringComparison.Ordinal));
             Assert.Contains("Next eligible", dashboard);
@@ -919,7 +922,7 @@ namespace KoLite.LocalApp.Tests
                 expectedFields,
                 field => Assert.Contains($"data-field-info=\"{field}\" role=\"img\" tabindex=\"0\"", html, StringComparison.Ordinal));
             Assert.Equal(expectedFields.Length, Regex.Matches(html, "data-field-info=\"").Count);
-            Assert.Contains("title=\"Permanent immutable GUID assigned by KO Lite.", html, StringComparison.Ordinal);
+            Assert.Contains("title=\"Permanent immutable GUID assigned by Kusto Slice Runner.", html, StringComparison.Ordinal);
             Assert.Contains("title=\"Concurrent execution units for this job: chunks for chunked jobs, otherwise slices.", html, StringComparison.Ordinal);
             Assert.Contains("title=\"Optional, 1-32. Adds chunkId and chunks arguments to every function call.", html, StringComparison.Ordinal);
             Assert.DoesNotContain("id=\"schedule-description-help\"", html, StringComparison.Ordinal);

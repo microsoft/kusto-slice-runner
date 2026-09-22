@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 using KoLite.Local.Sqlite.Catalog;
 using KoLite.LocalApp.Pages.Catalog;
 using KoLite.LocalApp.Ui;

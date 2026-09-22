@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 using System.Globalization;
 using KoLite.Local.Core.Orchestration;
 using KoLite.Local.Sqlite.Queue;

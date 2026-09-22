@@ -1,6 +1,6 @@
-# KO Lite operations runbook
+# Kusto Slice Runner operations runbook
 
-This runbook covers safe local operation for the internal standalone KO Lite repo.
+This runbook covers safe local operation for Kusto Slice Runner.
 
 ## Safe local review
 
@@ -53,7 +53,7 @@ dotnet run --project .\src\KoLite.LocalApp\KoLite.LocalApp.csproj -- --Connectio
 | `KoLite:WorkerPool:MaxDispatchStartsPerCycle` | `100` | Maximum execution units started in one dispatcher cycle. This controls start rate, not total in-flight concurrency; the default can launch all 32 chunks of one window in a cycle. |
 | `KoLite:Kusto:AuthMode` | `AzureCli` | Supported values: `AzureCli`, `ManagedIdentity`. |
 | `KoLite:Kusto:ManagedIdentityClientId` | Empty | Optional user-assigned managed identity client ID. |
-| `KoLite:UpdateCheck:Enabled` | `true` | Periodically checks GitHub for a newer published KO Lite release. Set `false` to disable. |
+| `KoLite:UpdateCheck:Enabled` | `true` | Periodically checks GitHub for a newer published Kusto Slice Runner release. Set `false` to disable. |
 | `KoLite:UpdateCheck:Interval` | `01:00:00` | How often to poll GitHub. Must be greater than zero. |
 | `KoLite:UpdateCheck:Repository` | `microsoft/kusto-slice-runner` | `owner/repo` whose latest published release is compared to the running build. |
 | `KoLite:Retention:Enabled` | `true` | Periodically prunes old operational telemetry so the local database stops growing without bound. Set `false` to disable (the database then grows unbounded). |
@@ -66,11 +66,11 @@ Compatibility aliases `KoLite:Scheduler:WorkerConcurrency` and `KoLite:Scheduler
 
 ### Console log verbosity
 
-Console verbosity uses per-category log-level filters. The default level is `Warning`, which keeps framework and host `info:` lines (for example `Microsoft.Hosting.Lifetime` "Now listening on…" / "Application started") out of the console. The `KoLite.LocalApp` category is raised to `Information`, so KO Lite's own progress lines — scheduler enqueue, per-slice worker start/finish, graceful-drain completion, and update-check transitions — remain visible. Warnings, errors, and dead-letter lines always remain visible. The two lower-value worker-dispatcher lines (dispatcher start and in-flight cancellation during shutdown) are emitted at `Debug`, so they stay quiet even at `Information`. To see everything, raise the level — for example set `Logging:LogLevel:Default` to `Debug` or `KoLite.LocalApp` to `Debug` in `appsettings.json`, or pass `--Logging:LogLevel:KoLite.LocalApp=Debug`. Durable scheduler/worker diagnostic rows are still controlled separately by `KoLite:Scheduler:LogEveryPass`.
+Console verbosity uses per-category log-level filters. The default level is `Warning`, which keeps framework and host `info:` lines (for example `Microsoft.Hosting.Lifetime` "Now listening on…" / "Application started") out of the console. The `KoLite.LocalApp` category is raised to `Information`, so Kusto Slice Runner's own progress lines — scheduler enqueue, per-slice worker start/finish, graceful-drain completion, and update-check transitions — remain visible. Warnings, errors, and dead-letter lines always remain visible. The two lower-value worker-dispatcher lines (dispatcher start and in-flight cancellation during shutdown) are emitted at `Debug`, so they stay quiet even at `Information`. To see everything, raise the level — for example set `Logging:LogLevel:Default` to `Debug` or `KoLite.LocalApp` to `Debug` in `appsettings.json`, or pass `--Logging:LogLevel:KoLite.LocalApp=Debug`. Durable scheduler/worker diagnostic rows are still controlled separately by `KoLite:Scheduler:LogEveryPass`.
 
 ## Update checks
 
-KO Lite stamps the git commit it was built from into the app at build time and, when
+Kusto Slice Runner stamps the git commit it was built from into the app at build time and, when
 update checks are enabled, periodically compares that commit against the remote branch
 HEAD. The check shells out to the **GitHub CLI (`gh`)**, so it reuses whatever GitHub
 account is already signed in on the machine — no token configuration is required.
@@ -85,7 +85,7 @@ A status badge on the right of the top bar shows one of:
 - **Diverged** — both the build and the remote branch have commits the other lacks.
 - **Updates: unavailable** — the check could not run. Opening the badge shows targeted
   guidance for the cause, for example:
-  - GitHub CLI not installed → install `gh` and restart KO Lite.
+  - GitHub CLI not installed → install `gh` and restart Kusto Slice Runner.
   - Not signed in → run `gh auth login` for github.com.
   - No access to the repository → request access to `microsoft/kusto-slice-runner`.
   - The build was produced without a git checkout, so it carries no commit to compare.
@@ -104,7 +104,7 @@ state events). A retention background service keeps that growth in check.
 ### What is pruned vs. preserved
 
 On each pass (every `KoLite:Retention:Interval`, after an initial `KoLite:Retention:InitialDelay`),
-KO Lite deletes **non-authoritative operational telemetry** older than `KoLite:Retention:WindowDays`:
+Kusto Slice Runner deletes **non-authoritative operational telemetry** older than `KoLite:Retention:WindowDays`:
 
 - `operational_logs` — routine scheduler/worker log rows.
 - `work_queue` — only **terminal** rows (`Completed`/`DeadLettered`); `Queued`/`Leased` rows are
@@ -208,7 +208,7 @@ attempts, durable logs, queue rows, recent failure summaries, and repair history
 
 ## Local management API
 
-KO Lite hosts a loopback-only `/api/v1` agent API with generated OpenAPI at `/api/v1/openapi/v1.json`. It provides first-class GUID-keyed job create/replace/pause/resume, ETag concurrency, batch import/export, safe soft-delete/restore, failed-work repair, cursor-paged operational reads, and opt-in read-only Kusto lineage. It never exposes hard delete, whole-slice rerun, Kusto cleanup, or arbitrary Kusto writes. See [local-api.md](local-api.md) for workflows and the generated document for exact schemas.
+Kusto Slice Runner hosts a loopback-only `/api/v1` agent API with generated OpenAPI at `/api/v1/openapi/v1.json`. It provides first-class GUID-keyed job create/replace/pause/resume, ETag concurrency, batch import/export, safe soft-delete/restore, failed-work repair, cursor-paged operational reads, and opt-in read-only Kusto lineage. It never exposes hard delete, whole-slice rerun, Kusto cleanup, or arbitrary Kusto writes. See [local-api.md](local-api.md) for workflows and the generated document for exact schemas.
 
 ## Dashboard success statistics
 
@@ -250,7 +250,7 @@ Open a job's **Dependencies** tab, or multi-select jobs on the dashboard and cho
 The graph's **Resolve Kusto lineage** button additionally fetches, from Kusto, both directions of each charted job's data lineage. This is the only graph action that contacts Kusto:
 
 - It runs a single read-only `.show databases entities with (resolveDependencies = true, resolveFunctionsSchema = true)` per distinct cluster in the chain, using the same Kusto auth (`KoLite:Kusto:AuthMode`) as live execution. It performs no writes and persists nothing — each click re-queries live.
-- **Downstream consumers.** The non-job **functions and materialized views** that read each job's output table are added. Consumers that are themselves KO Lite jobs map onto the existing job node (that link is already shown); pass-through tables (e.g. update-policy targets) are bridged through but not drawn.
+- **Downstream consumers.** The non-job **functions and materialized views** that read each job's output table are added. Consumers that are themselves Kusto Slice Runner jobs map onto the existing job node (that link is already shown); pass-through tables (e.g. update-policy targets) are bridged through but not drawn.
 - **Upstream sources.** The tables/functions each job's function **directly reads** are added as source nodes — **including cross-cluster sources**, which are named directly in the function's dependencies (and labelled `@cluster`), so no second cluster is queried.
 - **Implicit (undeclared) dependencies.** When a job's function reads **another KO job's output table that is not in its `dependsOn`**, a **dashed amber** edge is drawn (and noted in the legend). This is informational — it does **not** change scheduler readiness, which still uses the declared `dependsOn`. Consider adding the edge to `dependsOn` if the ordering matters.
 - Scope is the charted jobs' own cluster(s); one call returns lineage across every accessible database on that cluster. A downstream consumer hosted on a *different* cluster than the job is not discovered (cross-cluster *sources*, named directly, are). Failures (auth, permission, unreachable cluster, timeout) surface as an inline message beside the button and leave the job graph intact.
@@ -261,7 +261,7 @@ The home dashboard supports multi-select bulk actions only in the **Active jobs*
 
 Bulk Pause/Resume/Soft delete apply with no extra confirmation (soft delete is reversible from the Soft-deleted section via **Restore**). They honor the same optimistic-concurrency model as the single-row actions: each selected row carries the catalog version shown on the page, and any job that changed since the page loaded — or is already in the requested state, soft-deleted, or missing — is **skipped** rather than forced. After the action, a summary banner reports how many jobs changed and how many were skipped. Bulk **Export** downloads an import-compatible JSON array (`ko-lite-jobs.json`) containing only the selected jobs, sorted in ascending `activityId` (job id) order.
 
-Bulk **Hard delete** is intentionally isolated on **Manage soft-deleted jobs**, linked from the Soft-deleted jobs section header. That page contains only currently soft-deleted jobs and is the only surface with bulk hard-delete checkboxes. After selection it opens a separate review page that lists every selected activity ID and permanent GUID, explains which local rows will be removed, and requires the exact count phrase `DELETE 1 JOB` or `DELETE N JOBS`. Final submission revalidates every job's catalog version, soft-delete state, disabled state, and active leases/running slices inside one SQLite transaction. If any selected job is missing, changed, restored, enabled, or still executing, the entire batch is rejected and **no jobs are deleted**. A successful batch records one purge run and an audit event for each deleted job. Hard delete removes local KO Lite state only; it never deletes Kusto data.
+Bulk **Hard delete** is intentionally isolated on **Manage soft-deleted jobs**, linked from the Soft-deleted jobs section header. That page contains only currently soft-deleted jobs and is the only surface with bulk hard-delete checkboxes. After selection it opens a separate review page that lists every selected activity ID and permanent GUID, explains which local rows will be removed, and requires the exact count phrase `DELETE 1 JOB` or `DELETE N JOBS`. Final submission revalidates every job's catalog version, soft-delete state, disabled state, and active leases/running slices inside one SQLite transaction. If any selected job is missing, changed, restored, enabled, or still executing, the entire batch is rejected and **no jobs are deleted**. A successful batch records one purge run and an audit event for each deleted job. Hard delete removes local Kusto Slice Runner state only; it never deletes Kusto data.
 
 ## Soft-delete and downstream dependencies
 
@@ -339,8 +339,8 @@ Paused/deleted jobs stay paused/deleted; a disabled scheduler is not enabled by
 registration. Preserve custom database, URL, or other launch overrides explicitly:
 
 ```powershell
-.\Register-KoLiteStartup.ps1 -AppDirectory 'D:\KO Lite' -AppArguments @(
-    '--ConnectionStrings:KoLiteSqlite=D:\KO Lite data\catalog.db',
+.\Register-KoLiteStartup.ps1 -AppDirectory 'D:\Kusto Slice Runner' -AppArguments @(
+    '--ConnectionStrings:KoLiteSqlite=D:\Kusto Slice Runner data\catalog.db',
     '--KoLite:Urls=http://127.0.0.1:5058'
 )
 ```
@@ -409,13 +409,13 @@ live database from a new build.
 The **Job details** page (`/jobs/{jobId}`) shows a catch-up estimate card above the tabs **only when the estimate is useful**: the job must be enabled and not paused, and it must have a real *actionable* backlog — more than a couple of eligible-but-incomplete slices that the job can work off itself. Slices that are merely waiting on an upstream dependency are excluded, so a dependent job that is only blocked on upstream (for its most recent slices) shows no card. Once a real backlog exists the card stays visible until it is actually worked off; it is **not** hidden as the job nears its frontier. When there is a real backlog but not yet enough fresh data to project a rate (typically right after a definition change), the card stays visible in a **collecting data** state. A job running at its normal cadence, or one whose only lag is upstream-blocked, shows no card.
 
 - **Calculation.** The backlog is the eligible-but-incomplete slices (those whose window ends at or before `now - delayFromUtcNow`, capped by `endOn`), **minus any slices currently blocked on an upstream dependency**, multiplied by `queryWindowSize`. The processing rate `R` (data-time completed per wall-clock time) is measured from recent successful slice completions, then the projected catch-up time is `backlog / (R - 1)` — the `- 1` accounts for "now" continuing to advance while the job works. The card reports four metrics — **slices behind**, **data-time behind**, the **average processing rate** (slices per hour, also shown as a multiple of real time), and the **estimated time remaining** — plus the absolute ETA and the completed-through frontier. When recent slices are excluded because they are upstream-blocked, the note says how many. A job never catches up to the literal current time; it converges to its configured `delayFromUtcNow` lag.
-- **Throughput window.** Only completions since the last schedule change are sampled (capped at the last 6 hours), so editing a job's definition does not skew the rate with executions that ran under the previous definition. Right after a change there is briefly too little data to project a rate. Instead of hiding the card, KO Lite keeps the **Catching up** card in a *collecting data* state that still shows the current backlog (slices and data-time behind) plus a two-item **requirements checklist** beneath the explanation. The checklist tracks the two gates an estimate waits on, each with a green checkmark once it clears: **successful completions** (the sample gathered so far versus the required count, for example "2 of 3 completions") and **time collected** (the span between the first and last sampled completion versus the required minimum, with the remaining time shown while pending, for example "~4 min of ~10 min (~6 min to go)"). An estimate appears only once **both** clear — at least `MinThroughputSamples` (default 3) successful completions spanning at least `MinThroughputSpan` (default 10 minutes) — at which point the message and checklist are replaced by the projection. When the short sample is caused by a recent definition change the note says so; otherwise it gives a generic "collecting recent data" explanation.
+- **Throughput window.** Only completions since the last schedule change are sampled (capped at the last 6 hours), so editing a job's definition does not skew the rate with executions that ran under the previous definition. Right after a change there is briefly too little data to project a rate. Instead of hiding the card, Kusto Slice Runner keeps the **Catching up** card in a *collecting data* state that still shows the current backlog (slices and data-time behind) plus a two-item **requirements checklist** beneath the explanation. The checklist tracks the two gates an estimate waits on, each with a green checkmark once it clears: **successful completions** (the sample gathered so far versus the required count, for example "2 of 3 completions") and **time collected** (the span between the first and last sampled completion versus the required minimum, with the remaining time shown while pending, for example "~4 min of ~10 min (~6 min to go)"). An estimate appears only once **both** clear — at least `MinThroughputSamples` (default 3) successful completions spanning at least `MinThroughputSpan` (default 10 minutes) — at which point the message and checklist are replaced by the projection. When the short sample is caused by a recent definition change the note says so; otherwise it gives a generic "collecting recent data" explanation.
 - **Not keeping up.** If the backlog is real but the recent rate is at or below real time (`R ≤ 1`), the card switches to a **Not keeping up** warning instead of an ETA — at the current rate the job will not catch up, so investigate failures, throughput, or `maxParallelism`.
 
 ## Activity page
 
 The **Activity** page (`/activity`, linked in the top nav) answers "how much work is flowing through
-KO Lite right now and over time?". It distinguishes a logical **slice** (one time window) from an
+Kusto Slice Runner right now and over time?". It distinguishes a logical **slice** (one time window) from an
 **execution unit** (one chunk for a chunked job, or the slice itself for an unchunked job).
 The **Live** subview retains these operational counts and charts; **Performance** compares
 historical resource use and attempt reliability.
@@ -584,11 +584,11 @@ LIMIT 30;
 
 ## Analyze failures with Copilot
 
-From a job's **Operations** tab, **Analyze failures** asks Copilot to explain the job's recent failures. KO Lite sends secret-sanitized failure evidence (error codes and messages, attempts, and recent slice states) to **GitHub Copilot CLI** through a non-interactive `copilot -p` child process, then renders the returned Markdown in the panel. It writes nothing to Kusto and KO Lite does not persist the analysis.
+From a job's **Operations** tab, **Analyze failures** asks Copilot to explain the job's recent failures. Kusto Slice Runner sends secret-sanitized failure evidence (error codes and messages, attempts, and recent slice states) to **GitHub Copilot CLI** through a non-interactive `copilot -p` child process, then renders the returned Markdown in the panel. It writes nothing to Kusto and Kusto Slice Runner does not persist the analysis.
 
 Install GitHub Copilot CLI so the `copilot` command is on `PATH`, then run `copilot login` once. Failure analysis uses that CLI's Copilot subscription and sign-in; it does not reuse the separate GitHub CLI (`gh`) update-check token. When Copilot CLI is missing, signed out, or cannot access Copilot, the panel shows targeted install or login guidance.
 
-The child process is deliberately non-agentic: KO Lite disables all tools, built-in MCP servers, repository custom instructions, remote control/export, and automatic CLI updates for the invocation. Failure messages are treated as untrusted evidence, not instructions. Only the final text response is accepted.
+The child process is deliberately non-agentic: Kusto Slice Runner disables all tools, built-in MCP servers, repository custom instructions, remote control/export, and automatic CLI updates for the invocation. Failure messages are treated as untrusted evidence, not instructions. Only the final text response is accepted.
 
 Configure it under `KoLite:CopilotAnalysis`:
 
@@ -599,7 +599,7 @@ Configure it under `KoLite:CopilotAnalysis`:
 | `Model` | `auto` | Copilot model selection; `auto` lets Copilot choose, or set a supported model id. |
 | `TimeoutSeconds` | `120` | Per-request timeout. |
 
-GitHub Models and its inference API were retired on July 30, 2026, so KO Lite does not call `models.github.ai`.
+GitHub Models and its inference API were retired on July 30, 2026, so Kusto Slice Runner does not call `models.github.ai`.
 
 ## Rerun and cleanup
 
@@ -607,8 +607,8 @@ From a slice detail page, use **Rerun this slice** to open the rerun planner. Th
 
 Rerun execution is intentionally two-step:
 
-1. Review the affected slices and suggested Kusto cleanup commands. KO Lite suggests `.delete table ... records <|` commands that use `StartTime` and `EndTime`; edit them if a job's output table uses different columns.
-2. After manually handling Kusto cleanup, acknowledge it on the rerun batch page. KO Lite snapshots old local state, attempts, logs, queue rows, and events into the rerun report, deletes the current local rows for those slices, and lets the normal scheduler pick the missing work back up.
+1. Review the affected slices and suggested Kusto cleanup commands. Kusto Slice Runner suggests `.delete table ... records <|` commands that use `StartTime` and `EndTime`; edit them if a job's output table uses different columns.
+2. After manually handling Kusto cleanup, acknowledge it on the rerun batch page. Kusto Slice Runner snapshots old local state, attempts, logs, queue rows, and events into the rerun report, deletes the current local rows for those slices, and lets the normal scheduler pick the missing work back up.
 
 Rerun is blocked while any affected slice is queued, leased, or running.
 
@@ -622,7 +622,7 @@ Back up the SQLite database before service upgrades, hard deletes, repair experi
 
 ## Retry classification and dead-letters
 
-When a slice fails, KO Lite asks the Kusto .NET SDK whether the error was **permanent**
+When a slice fails, Kusto Slice Runner asks the Kusto .NET SDK whether the error was **permanent**
 (`KustoException.IsPermanent`) and normally uses that answer to decide whether to retry. Two
 narrow overrides handle cross-cluster failures: an explicit non-permanent signal in a recognized
 remote error envelope, and a specific remote-schema resolution failure reported as a semantic
@@ -641,12 +641,12 @@ error without that envelope. Both use the existing bounded retry budget.
 - **Remote-schema semantic failure** — a Kusto SDK `SemanticException` reporting
   `Errors occurred while resolving remote entities`, followed by the failed-name/scopes structure
   and an explicit HTTPS `$Cluster` scope, gets the same bounded retries. A temporary remote schema
-  lookup outage can produce this error even when the SDK marks it permanent. KO Lite also
+  lookup outage can produce this error even when the SDK marks it permanent. Kusto Slice Runner also
   recognizes the same typed semantic failure inside an exception chain, but does not use this
   text-only fallback to override a recognized remote error envelope. A genuinely missing remote
   entity can produce the same message and will consume the normal retry budget before
   dead-lettering. The original exception type, message, and failure codes remain unchanged;
-  `isPermanent` records KO Lite's effective classification.
+  `isPermanent` records Kusto Slice Runner's effective classification.
 - **No Kusto exception to inspect** (an unclassified fault or timeout) — treated as retryable and
   bounded by the same `MaxAttempts`.
 
@@ -661,7 +661,7 @@ The attempt's metrics JSON also records `isRetryable`, `isPermanent`, `kustoFail
 
 > Do not infer retryability from general error keywords. A Kusto low-memory failure
 > (`E_LOW_MEMORY_CONDITION`) may arrive inside a permanent cross-cluster wrapper while its structured
-> remote payload reports `"@permanent": false`. KO Lite recognizes that envelope and explicit field;
+> remote payload reports `"@permanent": false`. Kusto Slice Runner recognizes that envelope and explicit field;
 > ordinary messages that merely contain similar text remain permanent. Likewise, the remote-schema
 > override requires the specific SDK semantic failure and remote-scope structure, not just
 > "could not be resolved" or a cluster URL. It does not make all semantic errors retryable.
@@ -731,7 +731,7 @@ taking the lease, the row can stay `Leased`/`Running` with an already-expired lo
 lease**. The output may already be in Kusto (the `.set-or-append` ran) even though the slice never
 recorded a terminal result.
 
-How KO Lite handles this:
+How Kusto Slice Runner handles this:
 
 - **Bounded execution.** Each attempt has a client-side execution deadline (`queryTimeout` plus a
   small buffer), kept below the lease duration. A hung Kusto call is cancelled, released, and retried

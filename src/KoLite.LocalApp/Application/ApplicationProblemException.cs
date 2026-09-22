@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 namespace KoLite.LocalApp.Application
 {
     public sealed class ApplicationProblemException : Exception

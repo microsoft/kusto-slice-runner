@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 namespace KoLite.Local.Sqlite.Catalog
 {
     public sealed class CatalogVersionConflictException : InvalidOperationException

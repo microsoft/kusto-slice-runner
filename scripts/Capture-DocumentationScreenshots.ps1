@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 <#
 .SYNOPSIS
 Recreates documentation screenshots with an isolated, local-only synthetic fixture.

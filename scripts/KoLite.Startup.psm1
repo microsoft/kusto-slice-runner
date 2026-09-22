@@ -1,9 +1,12 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 function Get-KoLiteStartupContext {
     if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
-        throw 'KO Lite automatic startup requires Windows.'
+        throw 'Kusto Slice Runner automatic startup requires Windows.'
     }
 
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -14,14 +17,14 @@ function Get-KoLiteStartupContext {
     }
 
     if ([string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
-        throw 'LOCALAPPDATA is required to locate KO Lite startup logs.'
+        throw 'LOCALAPPDATA is required to locate Kusto Slice Runner startup logs.'
     }
 
     return [pscustomobject]@{
         OwnerSid = $sid
-        TaskName = "KO Lite Startup - $sid"
+        TaskName = "Kusto Slice Runner Startup - $sid"
         TaskPath = '\'
-        Description = "KO Lite automatic startup v1; owner=$sid"
+        Description = "Kusto Slice Runner automatic startup v1; owner=$sid"
         PowerShellPath = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
         LogDirectory = Join-Path $env:LOCALAPPDATA 'KoLite\startup'
     }
@@ -45,7 +48,7 @@ function Assert-KoLiteStartupConfiguration {
     $fields = @('schemaVersion', 'ownerSid', 'appDirectory', 'appArguments', 'windowMode')
     $actual = @($Configuration.PSObject.Properties.Name)
     if (@(Compare-Object $fields $actual).Count -ne 0) {
-        throw 'Invalid startup configuration fields. Re-register startup with the matching KO Lite scripts.'
+        throw 'Invalid startup configuration fields. Re-register startup with the matching Kusto Slice Runner scripts.'
     }
     if (($Configuration.schemaVersion -isnot [int] -and $Configuration.schemaVersion -isnot [long]) -or
         $Configuration.schemaVersion -ne 1) {
@@ -159,7 +162,7 @@ function Get-KoLiteStartupTask {
         $_.TaskName -eq $Context.TaskName -and $_.TaskPath -eq $Context.TaskPath
     })
     if ($tasks.Count -eq 0) { return $null }
-    if ($tasks.Count -ne 1) { throw 'Multiple tasks matched the KO Lite startup identity.' }
+    if ($tasks.Count -ne 1) { throw 'Multiple tasks matched the Kusto Slice Runner startup identity.' }
     $task = $tasks[0]
     if ($task.Description -cne $Context.Description) {
         throw "Refusing to modify an unrecognized task named '$($Context.TaskName)'."
@@ -207,7 +210,7 @@ function Get-KoLiteStartupEntrypoint {
     }
     $dll = Join-Path $AppDirectory 'KoLite.LocalApp.dll'
     if (-not (Test-Path -LiteralPath $dll -PathType Leaf)) {
-        throw "No published KO Lite executable or DLL exists in '$AppDirectory'."
+        throw "No published Kusto Slice Runner executable or DLL exists in '$AppDirectory'."
     }
     $dotnet = Get-Command dotnet.exe -CommandType Application -ErrorAction Stop
     return [pscustomobject]@{ FileName = $dotnet.Source; Arguments = @($dll) }
@@ -285,17 +288,17 @@ function Invoke-KoLiteStartup {
     $process = $null
     try {
         try { $acquired = $mutex.WaitOne(0) } catch [Threading.AbandonedMutexException] { $acquired = $true }
-        if (-not $acquired) { throw 'A KO Lite startup launcher is already running in this Windows session.' }
+        if (-not $acquired) { throw 'A Kusto Slice Runner startup launcher is already running in this Windows session.' }
         $log = New-KoLiteStartupLog $context
-        Write-KoLiteStartupLog $log 'Starting KO Lite from Windows sign-in.'
+        Write-KoLiteStartupLog $log 'Starting Kusto Slice Runner from Windows sign-in.'
         $configuration = ConvertFrom-KoLiteStartupConfiguration $Encoded $context
         $entrypoint = Get-KoLiteStartupEntrypoint $configuration.appDirectory
         Write-KoLiteStartupLog $log "AppDirectory=$($configuration.appDirectory); WindowMode=$($configuration.windowMode)."
         $console = $configuration.windowMode -eq 'Console'
         if ($console) {
-            Write-Host "KO Lite - $($configuration.appDirectory)"
+            Write-Host "Kusto Slice Runner - $($configuration.appDirectory)"
             Write-Host "Startup logs: $($log.Path)"
-            Write-Host 'Minimize this window to leave KO Lite running. Use Stop-KoLiteApp.ps1 for a graceful stop.'
+            Write-Host 'Minimize this window to leave Kusto Slice Runner running. Use Stop-KoLiteApp.ps1 for a graceful stop.'
         }
 
         $process = [Diagnostics.Process]::new()
@@ -327,7 +330,7 @@ function Invoke-KoLiteStartup {
                             Write-KoLiteStartupLog $log "[$channel] $line"
                         } catch [IO.IOException], [UnauthorizedAccessException] {
                             $loggingError = $_.Exception.Message
-                            Write-Warning "Startup logging failed: $loggingError. KO Lite will keep running; inspect its dashboard."
+                            Write-Warning "Startup logging failed: $loggingError. Kusto Slice Runner will keep running; inspect its dashboard."
                         }
                     }
                     $read = if ($channel -eq 'output') { $process.StandardOutput.ReadLineAsync() } else { $process.StandardError.ReadLineAsync() }
@@ -338,8 +341,8 @@ function Invoke-KoLiteStartup {
             }
         }
         $process.WaitForExit()
-        if ($null -ne $loggingError) { throw "KO Lite exited, but startup logging failed: $loggingError" }
-        Write-KoLiteStartupLog $log "KO Lite exited with code $($process.ExitCode). No automatic restart is configured."
+        if ($null -ne $loggingError) { throw "Kusto Slice Runner exited, but startup logging failed: $loggingError" }
+        Write-KoLiteStartupLog $log "Kusto Slice Runner exited with code $($process.ExitCode). No automatic restart is configured."
         return $process.ExitCode
     } catch [Management.Automation.RuntimeException], [IO.IOException], [UnauthorizedAccessException], [ComponentModel.Win32Exception], [ArgumentException] {
         if ($null -ne $log) {

@@ -1,8 +1,8 @@
-# Copilot instructions for KO Lite
+# Copilot instructions for Kusto Slice Runner
 
 ## Repository shape
 
-KO Lite is a standalone local-first dashboard and worker for running scheduled Kusto output jobs from a local SQLite catalog. The local app owns catalog, queue, slice state, operational logs, rerun reports, repair state, performance observations, and UI read models in SQLite. Normal execution-enabled instances contact Kusto for slice execution and mandatory background command-statistics collection; explicit lineage resolution is another read-only Kusto path. Performance page requests read SQLite only.
+Kusto Slice Runner is a standalone local-first dashboard and worker for running scheduled Kusto output jobs from a local SQLite catalog. The local app owns catalog, queue, slice state, operational logs, rerun reports, repair state, performance observations, and UI read models in SQLite. Normal execution-enabled instances contact Kusto for slice execution and mandatory background command-statistics collection; explicit lineage resolution is another read-only Kusto path. Performance page requests read SQLite only.
 
 Start with `README.md`. For architecture-sensitive work, read `docs\local-first-architecture.md` and `docs\operations-runbook.md`; for schedule JSON work, read `docs\schedule-json.md`; for validation commands, read `DEVELOPMENT.md`.
 
@@ -36,7 +36,7 @@ For targeted changes, run the narrow relevant test project first, then decide wh
 ## Key conventions
 
 - Keep `.github\copilot-instructions.md` as the single repo-level Copilot instruction file. Do not add duplicate root-level instruction files.
-- Do not invoke the ADO or Bluebird MCP servers for work in this repository, even when they are available; they do not provide useful KO Lite context. Use local workspace tools and local `git` for repository discovery and history, and use the `gh` CLI for GitHub operations. This restriction applies only to those two servers; use other task-relevant tooling, including Kusto tooling, when appropriate.
+- Do not invoke the ADO or Bluebird MCP servers for work in this repository, even when they are available; they do not provide useful Kusto Slice Runner context. Use local workspace tools and local `git` for repository discovery and history, and use the `gh` CLI for GitHub operations. This restriction applies only to those two servers; use other task-relevant tooling, including Kusto tooling, when appropriate.
 - For branch, worktree, and pull request conventions, see the "Git workflow (feature branches and worktrees)" section below. By default, commit on the current branch (normally `main`) and do not create a branch, worktree, or pull request unless the user explicitly asks for one.
 - Prefer Windows paths and PowerShell examples. Existing scripts use `Set-StrictMode -Version Latest` and `$ErrorActionPreference = 'Stop'`; preserve that style in new PowerShell scripts.
 - Use the .NET SDK from `global.json`. When writing C#, use block-scoped namespace declarations (`namespace Name { ... }`) instead of file-scoped namespaces, keep app entry points inside an explicit `Program` class instead of top-level statements, and use conventional class declarations with explicit constructors instead of class primary constructors.
@@ -60,21 +60,15 @@ For targeted changes, run the narrow relevant test project first, then decide wh
 
 ## External Kusto CLI skill
 
-KO Lite does not bundle a general Kusto CLI skill. When the external
+Kusto Slice Runner does not bundle a general Kusto CLI skill. When the external
 `kusto-cli` skill is available, use it for explicit Kusto CLI requests and
 control/management commands that read-only tools cannot perform. Run its
 bundled `scripts\Invoke-KustoCli.ps1` from the loaded skill's base directory.
 
-Always confirm and pass `-ClusterUri` and `-Database` explicitly. KO Lite jobs
+Always confirm and pass `-ClusterUri` and `-Database` explicitly. Kusto Slice Runner jobs
 can target different clusters and databases, so do not infer a target from the
-repository or app name. The only phrase-specific default is: when the user says
-“the KO Lite database” without another target, use:
-
-```text
-Cluster:  https://sample-data.centralus.kusto.windows.net
-Database: KoLite
-Auth:     Federated/Azure CLI auth (`Fed=True`)
-```
+repository or app name. There is no default Kusto target. If a target is
+unspecified, ask the user to provide it before running any Kusto command.
 
 Do not look for the removed `src\KoLite.Functions\local.settings.json` path or
 use the retired `__PREFIX__` preprocessing convention. If a checked-in command
@@ -100,4 +94,4 @@ By default, commit on the current branch (normally `main`); do **not** create a 
 
 ## Kusto safety
 
-KO Lite can write to Kusto through `.set-or-append`. Review every target cluster, database, function, output table, and permission before enabling scheduling or running Kusto commands. Prefer query validation patterns that avoid materializing large result sets: small limits, `| consume`, explicit timeouts, and saved artifacts when needed.
+Kusto Slice Runner can write to Kusto through `.set-or-append`. Review every target cluster, database, function, output table, and permission before enabling scheduling or running Kusto commands. Prefer query validation patterns that avoid materializing large result sets: small limits, `| consume`, explicit timeouts, and saved artifacts when needed.

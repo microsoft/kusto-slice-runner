@@ -1,14 +1,14 @@
 ---
 name: ko-lite-schedule-json
-description: "Use when the user wants to create, edit, or validate a KO Lite job-schedule JSON file (single object or an array of objects). Produces JSON-only output and validates it locally against the strict KO Lite schedule contract. Does NOT upload to KO Lite, write to Kusto, change schema, or run import tooling - uploading is the user's responsibility."
+description: "Use when the user wants to create, edit, or validate a Kusto Slice Runner job-schedule JSON file (single object or an array of objects). Produces JSON-only output and validates it locally against the strict Kusto Slice Runner schedule contract. Does NOT upload to Kusto Slice Runner, write to Kusto, change schema, or run import tooling - uploading is the user's responsibility."
 metadata:
   author: Azure Core Team
   version: "1.1.0"
 ---
 
-# KO Lite schedule JSON
+# Kusto Slice Runner schedule JSON
 
-Use this skill to author or edit a KO Lite job-schedule JSON file. The
+Use this skill to author or edit a Kusto Slice Runner job-schedule JSON file. The
 deliverable is **the JSON file only**. This skill never uploads, never writes
 to Kusto, never invokes import tooling, and never modifies the catalog. The
 user takes the file and submits it through the `/jobs` dashboard or the
@@ -23,9 +23,9 @@ and per-job concurrency bound are unchanged.
 
 Activate when the user asks to:
 
-- create a new KO Lite job schedule JSON file,
-- edit an existing KO Lite schedule JSON file (single object or array),
-- validate a KO Lite schedule JSON file against the strict KO Lite contract,
+- create a new Kusto Slice Runner job schedule JSON file,
+- edit an existing Kusto Slice Runner schedule JSON file (single object or array),
+- validate a Kusto Slice Runner schedule JSON file against the strict Kusto Slice Runner contract,
 - scaffold a starter file from a template.
 
 Do **not** activate for catalog operations such as listing, importing,
@@ -34,7 +34,7 @@ through the local dashboard or the versioned `/api/v1` job-manager workflow.
 
 ## Authoritative contract
 
-The KO Lite parser in `src\KoLite.Local.Core\Schedules\ScheduleParser.cs`
+The Kusto Slice Runner parser in `src\KoLite.Local.Core\Schedules\ScheduleParser.cs`
 strictly rejects unknown top-level fields, unknown `target` fields, and
 unknown `dependsOn` entry fields. Treat
 `docs\schedule-json.md` as the source of truth and this
@@ -43,7 +43,7 @@ skill as a tight mirror of that contract.
 ### Allowed file shapes
 
 - A single JSON object describing one job.
-- A JSON array of such objects (the shape that KO Lite accepts for upsert-only
+- A JSON array of such objects (the shape that Kusto Slice Runner accepts for upsert-only
   batches).
 
 Anything else is rejected by the validator.
@@ -52,7 +52,7 @@ Anything else is rejected by the validator.
 
 | Field | Required | Type | Rules |
 | --- | --- | --- | --- |
-| `id` | No | string (GUID) | Opaque, permanent job identity. **Omit when authoring a new job** — KO Lite mints it. Exports include it; preserve it when editing so the edit targets (and can rename) the same job. Immutable once assigned. When present it must be a valid GUID. |
+| `id` | No | string (GUID) | Opaque, permanent job identity. **Omit when authoring a new job** — Kusto Slice Runner mints it. Exports include it; preserve it when editing so the edit targets (and can rename) the same job. Immutable once assigned. When present it must be a valid GUID. |
 | `activityId` | Yes | string | Non-empty. **Mutable, unique** human-facing display label (a display name) — it can be renamed without changing the permanent `id`, slice history, dependency edges, or output idempotency. Repo convention: prefix with the logical job database name and a period (`<databaseName>.<activityName>`), for example `CopilotUsage.GhcpReportingUserDaily`. No longer the slice-key identity (the GUID `id` is). |
 | `functionName` | Yes | string | Non-empty. Kusto producer function the worker calls per slice. Without `chunks`, arguments are start/end and optional `jobSettings`. With `chunks`, arguments are start/end, 0-based `chunkId`, total `chunks`, then optional `jobSettings`. |
 | `outputTable` | Yes | string | Non-empty. Kusto table where worker output is committed. Convention in this repo: `outputTable` is `_` + `functionName` (leading underscore), so the producer function `Foo` writes to table `_Foo`. |
@@ -65,20 +65,20 @@ Anything else is rejected by the validator.
 | `endOn` | No | ISO-8601 UTC string | Same shape rules as `startFrom`. When present, the scheduler caps planning so only whole, grid-aligned slices ending at or before `endOn` are emitted (no partial trailing slice; no KO-style mid-window clip). Must be strictly greater than `startFrom`. Mutable across `DefinitionVersion`s (unlike KO's `EndOn`). |
 | `target` | Yes | object | `target.clusterUri` (absolute `https` URI, non-empty) and `target.database` (non-empty string). No other fields. |
 | `isPaused` | No | boolean | Default `false`. When `true`, the scheduler emits no work. |
-| `description` | No | string | Optional Markdown catalog metadata, up to 65,536 characters. KO Lite renders it on the job details page with raw HTML disabled. It is preserved by import/export and never passed to the Kusto function. |
-| `folder` | No | string | Informational only. KO Lite does not interpret. |
-| `tags` | No | array of strings | Optional local job organization tags. When present, must be an array of non-empty strings. KO Lite trims tags, normalizes them to lowercase, deduplicates after normalization, and uses them for dashboard/job filters. Tags are separate from Kusto ingestion tags and from `folder`. |
-| `dependsOn` | No | array of objects | Each entry references an upstream by `activityId` and/or `id` (the upstream's GUID): `{ "activityId": "<label>" }`, `{ "id": "<guid>" }`, or both. At least one is required per entry. No bare-string shorthand. No self-dependency. KO Lite resolves the reference to the upstream's GUID and stores the edge by `id`, so upstream renames don't break it; referencing by `activityId` requires the upstream to exist (in the catalog or same import batch). |
-| `jobSettings` | No | any JSON | Opaque pass-through for downstream code. KO Lite stores it but does not interpret it. |
+| `description` | No | string | Optional Markdown catalog metadata, up to 65,536 characters. Kusto Slice Runner renders it on the job details page with raw HTML disabled. It is preserved by import/export and never passed to the Kusto function. |
+| `folder` | No | string | Informational only. Kusto Slice Runner does not interpret. |
+| `tags` | No | array of strings | Optional local job organization tags. When present, must be an array of non-empty strings. Kusto Slice Runner trims tags, normalizes them to lowercase, deduplicates after normalization, and uses them for dashboard/job filters. Tags are separate from Kusto ingestion tags and from `folder`. |
+| `dependsOn` | No | array of objects | Each entry references an upstream by `activityId` and/or `id` (the upstream's GUID): `{ "activityId": "<label>" }`, `{ "id": "<guid>" }`, or both. At least one is required per entry. No bare-string shorthand. No self-dependency. Kusto Slice Runner resolves the reference to the upstream's GUID and stores the edge by `id`, so upstream renames don't break it; referencing by `activityId` requires the upstream to exist (in the catalog or same import batch). |
+| `jobSettings` | No | any JSON | Opaque pass-through for downstream code. Kusto Slice Runner stores it but does not interpret it. |
 | `healthPolicy` | No | string enum | `complete` (default) or `recent` (case-insensitive). Controls how the dashboard scores the job's health. `complete` (strict) also flags unaddressed historical gaps — terminal dead-lettered slices — as an amber half on the status pill; `recent` colors purely by the recent-slice trend and ignores old gaps. Absent means `complete`. |
 
 Unknown fields anywhere in the top level, in `target`, or in any `dependsOn`
 entry are **errors**, not warnings. Producing JSON with extra fields will fail
-the validator and will fail in KO Lite at import time.
+the validator and will fail in Kusto Slice Runner at import time.
 
 ### TimeSpan formatting
 
-KO Lite uses the .NET `c` (constant) format: `[d.]hh:mm:ss[.fffffff]`. Use
+Kusto Slice Runner uses the .NET `c` (constant) format: `[d.]hh:mm:ss[.fffffff]`. Use
 zero-padded components.
 
 | Intent | String |
@@ -102,14 +102,14 @@ Any other offset is rejected. Fractional seconds up to 7 digits are allowed.
 ### Bounded schedules (`endOn`)
 
 `endOn` is optional. Omitting it (the default) means the schedule runs
-indefinitely — same as KO Lite's existing behavior. When present, `endOn`
+indefinitely — same as Kusto Slice Runner's existing behavior. When present, `endOn`
 uses the same formatting rules as `startFrom` and must be strictly greater
 than `startFrom`.
 
-KO Lite enforces the bound at slice planning time: the scheduler caps
+Kusto Slice Runner enforces the bound at slice planning time: the scheduler caps
 enumeration at `endOn` and `SliceEnumerator` then drops any partial
 trailing window. A mid-window `endOn` is honored conservatively (the last
-planned slice ends at the largest aligned boundary `<= endOn`); KO Lite
+planned slice ends at the largest aligned boundary `<= endOn`); Kusto Slice Runner
 does **not** clip to a partial slice like KO does.
 
 Once an `endOn`-bounded activity has contiguously completed through
@@ -202,7 +202,7 @@ Use these as references for shape and style:
   to `JobDefinitions` or any other catalog/state surface.
 - **Strict fields only.** Never add fields outside the allowed set — the
   parser fails closed.
-- **Append-only mindset.** A KO Lite schedule update is a new
+- **Append-only mindset.** A Kusto Slice Runner schedule update is a new
   `DefinitionVersion` in Kusto; this skill produces the JSON that becomes the
   new version. Don't try to encode `DefinitionVersion`, `EventId`,
   `OperationId`, `IsDeleted`, or other catalog columns in the JSON — those are
@@ -229,6 +229,6 @@ Use these as references for shape and style:
 
 - `docs\schedule-json.md` - authoritative schedule contract and import/export
   behavior.
-- `README.md` - KO Lite overview.
+- `README.md` - Kusto Slice Runner overview.
 - `src\KoLite.Local.Core\Schedules\ScheduleParser.cs` - the parser whose
   rules this skill mirrors.

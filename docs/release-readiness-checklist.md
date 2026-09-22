@@ -1,6 +1,21 @@
 # Standalone repo readiness checklist
 
-Use this checklist before copying `ko-lite` into its own internal repository or before sharing a release branch with new users.
+Use this checklist before sharing a release with new users. Repository preparation
+does not authorize public visibility or release publication.
+
+## Public release gates
+
+- Confirm the registered business/OSS approval is complete before changing visibility.
+- Complete the division's current SDL/SFI, privacy, and applicable Responsible AI reviews.
+- Complete required naming, trademark/icon, and PoliCheck reviews.
+- Verify README purpose/state, third-party disclosure, trademark notice, and applicable telemetry notice.
+- Include `LICENSE.txt`, `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`, `SUPPORT.md`, and `NOTICE`.
+- Reconcile NOTICE with the exact dependency/runtime/native inventory and release SBOM.
+- Confirm Kusto SDK EULA redistribution terms and bundled Dagre/Graphlib attribution.
+- Review inherited icons and screenshot branding; remove or obtain approval for product icons.
+- Scan every published branch/tag's history, including old images, identities, and deleted files.
+- Verify public-account attribution and the private original-to-filtered commit map.
+- Repeat vulnerability checks when advisory feeds are reachable; cached restore is not an audit.
 
 ## Tree hygiene
 
@@ -37,7 +52,7 @@ Keep `dotnet format` at the default severity. Info-level analyzer cleanup is int
 - Confirm `package-lock.json` matches `package.json`.
 - Confirm Chart.js assets under `src\KoLite.LocalApp\wwwroot\lib\chartjs`, Cytoscape.js assets under `src\KoLite.LocalApp\wwwroot\lib\cytoscape`, and marked assets under `src\KoLite.LocalApp\wwwroot\lib\marked` match the restored npm packages when intentionally refreshed.
 - Confirm `THIRD-PARTY-NOTICES.md` includes Chart.js, `@kurkle/color`, Cytoscape.js, cytoscape-dagre, and marked.
-- Confirm internal owner/support/security metadata is present and current.
+- Confirm public support, contributor attribution, CLA, and security guidance are current.
 
 ## Publish smoke
 
@@ -57,7 +72,7 @@ Open `http://127.0.0.1:5057/healthz`, then inspect `http://127.0.0.1:5057/api/v1
 
 ## GitHub Release draft
 
-- Run **KO Lite Release** from the Actions UI with an explicit unused
+- Run **Kusto Slice Runner Release** from the Actions UI with an explicit unused
   `vMAJOR.MINOR.PATCH` version and the intended `main` commit.
 - Confirm all normal hosted quality gates passed.
 - Confirm both Windows x64 packages passed scheduler-disabled smoke tests:

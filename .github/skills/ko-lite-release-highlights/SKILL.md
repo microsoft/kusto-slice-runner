@@ -1,15 +1,15 @@
 ---
 name: ko-lite-release-highlights
-description: "Use when the user wants AI-written highlights for an existing KO Lite GitHub Release draft. Auto-selects one workflow-owned draft or asks the user to choose among multiple drafts, previews the exact highlights for approval, and can replace only the draft's Changes section. Never creates, publishes, deletes, tags, uploads assets, reruns, or repairs a release."
+description: "Use when the user wants AI-written highlights for an existing Kusto Slice Runner GitHub Release draft. Auto-selects one workflow-owned draft or asks the user to choose among multiple drafts, previews the exact highlights for approval, and can replace only the draft's Changes section. Never creates, publishes, deletes, tags, uploads assets, reruns, or repairs a release."
 metadata:
   author: Azure Core Team
   version: "2.0.0"
 ---
 
-# KO Lite release highlights
+# Kusto Slice Runner release highlights
 
 Use this skill to generate, review, and apply concise highlights to an existing
-workflow-owned KO Lite GitHub Release draft:
+workflow-owned Kusto Slice Runner GitHub Release draft:
 
 ```powershell
 pwsh -File .\scripts\New-KoLiteReleaseHighlights.ps1 -PrepareUpdate
@@ -18,7 +18,7 @@ pwsh -File .\scripts\New-KoLiteReleaseHighlights.ps1 -PrepareUpdate
 ## When to activate
 
 Activate when the user asks for AI release highlights or a summary for an
-existing KO Lite release draft.
+existing Kusto Slice Runner release draft.
 
 If the user supplies a version, require strict `vMAJOR.MINOR.PATCH` form and pass
 it explicitly. Never infer or increment a version.
@@ -30,7 +30,7 @@ it explicitly. Never infer or increment a version.
    7 (`pwsh`). Add `-Version vMAJOR.MINOR.PATCH` only when the user supplied or
    selected that version.
 3. If no workflow-owned draft exists, stop and tell the user to run the
-   **KO Lite Release** workflow first. Do not ask for or invent a version.
+   **Kusto Slice Runner Release** workflow first. Do not ask for or invent a version.
 4. If multiple workflow-owned drafts exist, use `ask_user` to present the exact
    versions and URLs printed by the script, then rerun `-PrepareUpdate` with the
    selected version.

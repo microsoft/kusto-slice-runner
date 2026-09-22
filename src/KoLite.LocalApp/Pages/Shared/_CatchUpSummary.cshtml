@@ -1,3 +1,5 @@
+@* Copyright (c) Microsoft Corporation.
+   Licensed under the MIT License. *@
 @using System.Globalization
 @using KoLite.Local.Core.Scheduling
 @model CatchUpProjection
@@ -63,8 +65,8 @@
     else if (collectingData)
     {
         var reason = Model.ThroughputWindowBoundedByDefinitionChange
-            ? "This job's definition changed recently, so KO Lite is collecting fresh execution data under the new definition"
-            : "KO Lite is collecting recent execution data";
+            ? "This job's definition changed recently, so Kusto Slice Runner is collecting fresh execution data under the new definition"
+            : "Kusto Slice Runner is collecting recent execution data";
         note = $"{reason} before it can project a catch-up time.";
     }
     else

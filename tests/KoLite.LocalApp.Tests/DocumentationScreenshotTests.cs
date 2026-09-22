@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 using System.Net.Http.Json;
 using System.Text.Json;
 using KoLite.Local.Core.FailureSummaries;
@@ -156,7 +159,7 @@ namespace KoLite.LocalApp.Tests
                 {
                     directory = directory.Parent;
                 }
-                Sandbox = ScreenshotSandbox.Create(directory?.FullName ?? throw new InvalidOperationException("KO Lite checkout not found."), Guid.NewGuid(), 5107);
+                Sandbox = ScreenshotSandbox.Create(directory?.FullName ?? throw new InvalidOperationException("Kusto Slice Runner checkout not found."), Guid.NewGuid(), 5107);
                 Connections = new KoLiteSqliteConnectionFactory(new KoLiteSqliteConnectionOptions(Sandbox.DatabasePath));
                 new KoLiteSqliteSchema(Connections).EnsureSchema();
                 ScreenshotDataset.Seed(Connections);

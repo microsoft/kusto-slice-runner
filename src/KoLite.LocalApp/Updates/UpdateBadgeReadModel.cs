@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 using System.Globalization;
 using KoLite.Local.Core.Time;
 
@@ -49,8 +52,8 @@ namespace KoLite.LocalApp.Updates
 
             var (statusKey, label, title) = snapshot.Status switch
             {
-                UpdateCheckStatus.UpToDate => ("uptodate", "Up to date", $"KO Lite is up to date with {releaseDescription}."),
-                UpdateCheckStatus.UpdateAvailable => ("update", BuildUpdateLabel(snapshot.LatestVersion, snapshot.CommitsBehind), $"A newer KO Lite release is available: {releaseDescription}."),
+                UpdateCheckStatus.UpToDate => ("uptodate", "Up to date", $"Kusto Slice Runner is up to date with {releaseDescription}."),
+                UpdateCheckStatus.UpdateAvailable => ("update", BuildUpdateLabel(snapshot.LatestVersion, snapshot.CommitsBehind), $"A newer Kusto Slice Runner release is available: {releaseDescription}."),
                 UpdateCheckStatus.Ahead => ("ahead", BuildAheadLabel(snapshot.CommitsAhead), $"This build is ahead of {releaseDescription}."),
                 UpdateCheckStatus.Diverged => ("diverged", BuildDivergedLabel(snapshot.CommitsAhead, snapshot.CommitsBehind), $"This build has diverged from {releaseDescription}."),
                 UpdateCheckStatus.Checking => ("checking", "Checking\u2026", "Checking for updates\u2026"),
@@ -179,7 +182,7 @@ namespace KoLite.LocalApp.Updates
                 UpdateCheckUnavailableReason.NoBuildSha => new List<string>
                 {
                     "This build wasn't stamped with a git commit, so it can't be compared.",
-                    "Build KO Lite from a git checkout to enable update checks."
+                    "Build Kusto Slice Runner from a git checkout to enable update checks."
                 },
                 UpdateCheckUnavailableReason.NoPublishedRelease => new List<string>
                 {
@@ -188,12 +191,12 @@ namespace KoLite.LocalApp.Updates
                 UpdateCheckUnavailableReason.GhMissing => new List<string>
                 {
                     "Install the GitHub CLI (gh) from https://cli.github.com.",
-                    "Restart KO Lite so it can reach GitHub."
+                    "Restart Kusto Slice Runner so it can reach GitHub."
                 },
                 UpdateCheckUnavailableReason.GhNotAuthenticated => new List<string>
                 {
                     "Run 'gh auth login' and sign in to github.com.",
-                    "KO Lite retries automatically on the next scheduled check."
+                    "Kusto Slice Runner retries automatically on the next scheduled check."
                 },
                 UpdateCheckUnavailableReason.RepoAccessDenied => new List<string>
                 {
@@ -203,7 +206,7 @@ namespace KoLite.LocalApp.Updates
                 UpdateCheckUnavailableReason.NetworkError => new List<string>
                 {
                     "Couldn't reach GitHub.",
-                    "Check your network connection; KO Lite will retry automatically."
+                    "Check your network connection; Kusto Slice Runner will retry automatically."
                 },
                 _ => new List<string>
                 {
