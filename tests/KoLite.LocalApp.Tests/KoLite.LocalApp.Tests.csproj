@@ -21,6 +21,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\KoLite.LocalApp\KoLite.LocalApp.csproj" />
+    <ProjectReference Include="..\KoLite.LocalApp.ScreenshotHost\KoLite.LocalApp.ScreenshotHost.csproj" />
   </ItemGroup>
 
 </Project>

@@ -10,6 +10,8 @@ KO Lite uses the following third-party JavaScript packages for dashboard assets.
 | cytoscape-dagre | 4.0.0 | MIT | `package-lock.json`, `src\KoLite.LocalApp\wwwroot\lib\cytoscape\cytoscape-dagre.js` (bundles dagre/graphlib, MIT) |
 | marked | 18.0.9 | MIT | `package-lock.json`, `src\KoLite.LocalApp\wwwroot\lib\marked\marked.umd.js` (renders the Copilot failure analysis) |
 | jsdom | 26.1.0 | MIT | Development-only DOM simulation for `npm run test:js` |
+| Playwright | 1.60.0 | Apache-2.0 | Development-only documentation screenshot capture; `package-lock.json` |
+| playwright-core | 1.60.0 | Apache-2.0 | Development-only Playwright browser driver; `package-lock.json` |
 
 The Chart.js, Cytoscape.js, and marked browser bundles (and the Chart.js source map) are tracked under `src\KoLite.LocalApp\wwwroot\lib` so the .NET app can run without requiring npm during every build. Refresh them with:
 
@@ -18,3 +20,8 @@ npm ci
 ```
 
 If additional third-party runtime assets are added, update this file and keep the dependency lock file in sync.
+
+The screenshot workflow separately downloads Chromium Headless Shell and its support
+tools into an ignored developer artifacts directory. These browser executables,
+Playwright packages, and the .NET screenshot host are not included in KO Lite release
+packages. See [the screenshot recipe](docs/screenshots.md).

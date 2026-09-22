@@ -103,6 +103,11 @@ You should be able to kill it at any point and it will restart without duplicati
 
 ## Screenshots
 
+These screenshots use fictional retail jobs and generated local history. The resolved
+lineage and failure analysis are illustrative fixture responses, not live Kusto or
+Copilot results. See [Recreating the screenshots](docs/screenshots.md) for the isolated
+capture workflow.
+
 Job overview:
 
 ![KO Lite job overview dashboard](docs/images/job-overview.png)

@@ -7,6 +7,7 @@
     "copy:chartjs": "node ./scripts/copy-chartjs.mjs",
     "copy:cytoscape": "node ./scripts/copy-cytoscape.mjs",
     "copy:marked": "node ./scripts/copy-marked.mjs",
+    "screenshots": "pwsh -NoProfile -File ./scripts/Capture-DocumentationScreenshots.ps1",
     "test:js": "node ./scripts/test-site-routes.mjs",
     "postinstall": "npm run copy:chartjs && npm run copy:cytoscape && npm run copy:marked"
   },
@@ -19,6 +20,7 @@
     "marked": "^18.0.12"
   },
   "devDependencies": {
-    "jsdom": "^30.0.1"
+    "jsdom": "^30.0.1",
+    "playwright": "1.60.0"
   }
 }

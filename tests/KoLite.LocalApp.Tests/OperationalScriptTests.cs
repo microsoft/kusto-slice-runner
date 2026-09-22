@@ -20,6 +20,21 @@ namespace KoLite.LocalApp.Tests
         }
 
         [Fact]
+        public void Screenshot_capture_dry_run_does_not_create_its_database_or_start_an_app()
+        {
+            var output = RunPowerShell(
+                Path.Combine(FindRepositoryRoot(), "scripts", "Capture-DocumentationScreenshots.ps1"),
+                "-DryRun");
+
+            Assert.Contains("DryRun: no files, processes, HTTP requests, or external service calls.", output, StringComparison.Ordinal);
+            Assert.Contains("http://127.0.0.1:5107", output, StringComparison.Ordinal);
+            var databaseLine = output.Split('\n').Single(line => line.StartsWith("Fresh fixture database:", StringComparison.Ordinal));
+            var databasePath = databaseLine["Fresh fixture database:".Length..].Trim();
+            Assert.False(File.Exists(databasePath));
+            Assert.False(Directory.Exists(Path.GetDirectoryName(databasePath)));
+        }
+
+        [Fact]
         public void Stop_script_defaults_to_dry_run_and_uses_graceful_drain_endpoint()
         {
             var script = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "scripts", "Stop-KoLiteApp.ps1"));
