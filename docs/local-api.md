@@ -22,7 +22,7 @@ addresses. `/healthz` is intentionally minimal and contains no database path or
 runtime configuration.
 
 Kusto Slice Runner still binds to `http://127.0.0.1:5057` by default. Do not widen
-`KoLite:Urls` as a substitute for authentication.
+`Ksr:Urls` as a substitute for authentication.
 
 ## Contract conventions
 
@@ -153,14 +153,14 @@ attribute and `site.js` does not hard-code it.
 - `POST /control/v1/shutdown/drain` accepts `{ "reason": "..." }`, stops new
   scheduling/claims, waits for active work to record final state, then stops the app.
 
-Use `scripts\Stop-KoLiteApp.ps1` instead of calling control routes by hand.
+Use `scripts\Stop-KsrApp.ps1` instead of calling control routes by hand.
 
 ## PowerShell helper
 
-The `ko-lite-job-manager` skill wraps the v1 API:
+The `ksr-job-manager` skill wraps the v1 API:
 
 ```powershell
-$helper = '.\.github\skills\ko-lite-job-manager\scripts\Invoke-KoLiteJobApi.ps1'
+$helper = '.\.github\skills\ksr-job-manager\scripts\Invoke-KsrJobApi.ps1'
 
 & $helper -Action System-Status
 & $helper -Action Get-Jobs

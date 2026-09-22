@@ -21,10 +21,10 @@ live catalog exports, runtime databases, or unredacted diagnostic evidence.
 
 ```powershell
 npm ci
-dotnet restore .\KoLite.Local.sln
-dotnet build .\KoLite.Local.sln --no-restore --nologo
-dotnet test .\KoLite.Local.sln --no-build --nologo
-dotnet format .\KoLite.Local.sln --verify-no-changes --no-restore --verbosity minimal
+dotnet restore .\Ksr.Local.sln
+dotnet build .\Ksr.Local.sln --no-restore --nologo
+dotnet test .\Ksr.Local.sln --no-build --nologo
+dotnet format .\Ksr.Local.sln --verify-no-changes --no-restore --verbosity minimal
 ```
 
 ## Contribution guidelines

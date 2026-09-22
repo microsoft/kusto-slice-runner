@@ -24,7 +24,7 @@ gh auth login
 copilot login
 ```
 
-Invoke the `ko-lite-release-highlights` skill in GitHub Copilot CLI. When exactly
+Invoke the `ksr-release-highlights` skill in GitHub Copilot CLI. When exactly
 one strict-SemVer draft carrying the Kusto Slice Runner release-workflow marker exists, the
 skill selects it automatically. If multiple eligible drafts exist, choose from
 the versions and URLs it presents. If none exist, run the release workflow
@@ -48,7 +48,7 @@ edit endpoint does not provide an atomic conditional-write precondition.
 For a read-only preflight:
 
 ```powershell
-pwsh -File .\scripts\New-KoLiteReleaseHighlights.ps1 -DryRun
+pwsh -File .\scripts\New-KsrReleaseHighlights.ps1 -DryRun
 ```
 
 The script's default mode still supports an explicit `-Version` and optional
@@ -65,8 +65,8 @@ sign-ins and requires no PAT, repository secret, or organization change.
    the skill's draft edit.
 2. Re-open the GitHub draft and confirm only `## Changes` changed.
 3. Confirm these assets are present:
-   - `ko-lite-<version>-win-x64-self-contained.zip`;
-   - `ko-lite-<version>-win-x64-framework-dependent.zip`;
+   - `kusto-slice-runner-<version>-win-x64-self-contained.zip`;
+   - `kusto-slice-runner-<version>-win-x64-framework-dependent.zip`;
    - `SHA256SUMS.txt`.
 4. Verify the ZIP hashes and smoke the self-contained package on clean Windows
    x64.
@@ -78,9 +78,9 @@ packages remain valid.
 
 ## Startup helpers in release packages
 
-Both Windows package types include `Start-KoLiteApp.ps1`, `Stop-KoLiteApp.ps1`,
-`KoLite.Startup.psm1`, `Register-KoLiteStartup.ps1`, `Get-KoLiteStartup.ps1`, and
-`Unregister-KoLiteStartup.ps1` at the package root. Archive validation checks
+Both Windows package types include `Start-KsrApp.ps1`, `Stop-KsrApp.ps1`,
+`Ksr.Startup.psm1`, `Register-KsrStartup.ps1`, `Get-KsrStartup.ps1`, and
+`Unregister-KsrStartup.ps1` at the package root. Archive validation checks
 that the startup helpers are present. Neither packaging nor extraction registers
 a startup task.
 

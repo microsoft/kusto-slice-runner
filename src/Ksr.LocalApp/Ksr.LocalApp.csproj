@@ -1,0 +1,60 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <ItemGroup>
+    <Content Include="..\..\LICENSE.txt" Link="LICENSE.txt" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\..\NOTICE" Link="NOTICE" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\..\THIRD-PARTY-NOTICES.md" Link="THIRD-PARTY-NOTICES.md" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Ksr.Local.Core\Ksr.Local.Core.csproj" />
+    <ProjectReference Include="..\Ksr.Local.Sqlite\Ksr.Local.Sqlite.csproj" />
+    <ProjectReference Include="..\Ksr.Local.Kusto\Ksr.Local.Kusto.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.12" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Tests construct the internal hosted background services to verify they survive transient
+         faults instead of stopping the host. -->
+    <InternalsVisibleTo Include="Ksr.LocalApp.Tests" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <!--
+    Stamp the git commit the app was built from into assembly metadata so the running
+    app can compare itself against the remote repository. Degrades gracefully to an
+    empty value when git or the .git directory is unavailable (e.g. published builds).
+  -->
+  <PropertyGroup>
+    <KsrGitCommitSha Condition="'$(KsrGitCommitSha)' == ''"></KsrGitCommitSha>
+  </PropertyGroup>
+
+  <Target Name="AddKsrGitCommitShaAttribute" BeforeTargets="GetAssemblyAttributes" Condition="'$(KsrGitCommitSha)' == ''">
+    <Exec Command="git -C &quot;$(MSBuildProjectDirectory)&quot; rev-parse HEAD"
+          ConsoleToMSBuild="true"
+          ContinueOnError="true"
+          StandardOutputImportance="low"
+          StandardErrorImportance="low">
+      <Output TaskParameter="ConsoleOutput" PropertyName="_KsrGitShaOutput" />
+      <Output TaskParameter="ExitCode" PropertyName="_KsrGitExitCode" />
+    </Exec>
+    <PropertyGroup>
+      <KsrGitCommitSha Condition="'$(_KsrGitExitCode)' == '0'">$(_KsrGitShaOutput.Trim())</KsrGitCommitSha>
+    </PropertyGroup>
+    <ItemGroup>
+      <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+        <_Parameter1>KsrGitCommitSha</_Parameter1>
+        <_Parameter2>$(KsrGitCommitSha)</_Parameter2>
+      </AssemblyAttribute>
+    </ItemGroup>
+  </Target>
+
+</Project>

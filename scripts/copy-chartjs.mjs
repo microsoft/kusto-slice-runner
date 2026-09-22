@@ -11,7 +11,7 @@ const sourceDirectory = path.join(repositoryRoot, "node_modules", "chart.js", "d
 const targetDirectory = path.join(
   repositoryRoot,
   "src",
-  "KoLite.LocalApp",
+  "Ksr.LocalApp",
   "wwwroot",
   "lib",
   "chartjs",

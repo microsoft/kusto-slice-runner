@@ -10,7 +10,7 @@ const repositoryRoot = path.resolve(scriptDirectory, "..");
 const targetDirectory = path.join(
   repositoryRoot,
   "src",
-  "KoLite.LocalApp",
+  "Ksr.LocalApp",
   "wwwroot",
   "lib",
   "cytoscape",

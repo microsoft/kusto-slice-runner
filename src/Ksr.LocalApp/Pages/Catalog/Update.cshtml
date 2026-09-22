@@ -1,0 +1,43 @@
+@* Copyright (c) Microsoft Corporation.
+   Licensed under the MIT License. *@
+@page "/jobs/{jobId:guid}/edit"
+@model Ksr.LocalApp.Pages.Catalog.UpdateModel
+@{
+    ViewData["Title"] = string.IsNullOrWhiteSpace(Model.ErrorMessage) ? "Edit job" : "Update job";
+}
+
+@if (Model.Editor is null)
+{
+    <section class="card"><h1>Job not found</h1></section>
+}
+else
+{
+    @if (string.IsNullOrWhiteSpace(Model.ErrorMessage))
+    {
+        <div class="page-heading">
+            <div>
+                <h1>Edit @Model.Editor.Input.ActivityId</h1>
+                <p class="muted">Catalog version @Model.ExpectedVersion</p>
+            </div>
+            <a class="btn" href="/jobs/@Uri.EscapeDataString(Model.JobId)">Open details</a>
+        </div>
+    }
+    else
+    {
+        <div class="page-heading">
+            <div>
+                <h1>Edit @Model.Input.ActivityId</h1>
+                <p class="muted">Fix validation errors and submit again.</p>
+            </div>
+            <a class="btn" href="/">Back to jobs</a>
+        </div>
+        <div class="alert danger">@Model.ErrorMessage</div>
+    }
+
+    @if (!string.IsNullOrWhiteSpace(Model.CatalogConflictMessage))
+    {
+        <div class="alert warning" role="alert">@Model.CatalogConflictMessage</div>
+    }
+
+    <partial name="_ScheduleEditor" model="Model.Editor" />
+}

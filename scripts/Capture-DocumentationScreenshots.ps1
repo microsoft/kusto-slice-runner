@@ -38,7 +38,7 @@ $runId = [Guid]::NewGuid().ToString('N')
 $runDirectory = Join-Path $artifactRoot "runs\$runId"
 $manifestPath = Join-Path $runDirectory 'manifest.json'
 $baseUrl = "http://127.0.0.1:$Port"
-$project = Join-Path $workspace 'tests\KoLite.LocalApp.ScreenshotHost\KoLite.LocalApp.ScreenshotHost.csproj'
+$project = Join-Path $workspace 'tests\Ksr.LocalApp.ScreenshotHost\Ksr.LocalApp.ScreenshotHost.csproj'
 $imageNames = @('job-overview.png', 'job-detail.png', 'dependency-graph-lineage.png', 'activity.png', 'copilot-failure-analysis.png')
 
 Write-Host "Screenshot deployment: $publishDirectory"
@@ -76,7 +76,7 @@ $process.StartInfo.WorkingDirectory = $publishDirectory
 $process.StartInfo.UseShellExecute = $false
 $process.StartInfo.RedirectStandardOutput = $true
 $process.StartInfo.RedirectStandardError = $true
-$process.StartInfo.ArgumentList.Add((Join-Path $publishDirectory 'KoLite.LocalApp.ScreenshotHost.dll'))
+$process.StartInfo.ArgumentList.Add((Join-Path $publishDirectory 'Ksr.LocalApp.ScreenshotHost.dll'))
 $process.StartInfo.ArgumentList.Add($workspace)
 $process.StartInfo.ArgumentList.Add($runId)
 $process.StartInfo.ArgumentList.Add([string]$Port)
@@ -102,7 +102,7 @@ try {
     }
     $response = Invoke-WebRequest -Uri "$baseUrl/api/v1/system/status" -TimeoutSec 10
     $status = $response.Content | ConvertFrom-Json
-    if ($response.Headers['X-KoLite-Screenshot-Fixture'] -ne $runId -or
+    if ($response.Headers['X-Ksr-Screenshot-Fixture'] -ne $runId -or
         $status.database.path -ne (Join-Path $runDirectory 'screenshots.db') -or
         $status.database.jobCount -ne 10 -or
         $status.scheduler.enabled -or $status.workerPool.enabled -or
@@ -119,10 +119,10 @@ try {
         if (-not $process.HasExited -and $verified) {
             try {
                 $identity = Invoke-WebRequest -Uri "$baseUrl/healthz" -TimeoutSec 5
-                if ($identity.Headers['X-KoLite-Screenshot-Fixture'] -ne $runId) {
+                if ($identity.Headers['X-Ksr-Screenshot-Fixture'] -ne $runId) {
                     throw 'Endpoint ownership changed; refusing to send an HTTP shutdown request.'
                 }
-                & (Join-Path $PSScriptRoot 'Stop-KoLiteApp.ps1') -BaseUrl $baseUrl `
+                & (Join-Path $PSScriptRoot 'Stop-KsrApp.ps1') -BaseUrl $baseUrl `
                     -Reason 'documentation-screenshot-capture' -Timeout ([TimeSpan]::FromSeconds(20)) -PollIntervalSeconds 1
             } catch {
                 Write-Warning "Owned fixture drain failed: $($_.Exception.Message)"

@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\Ksr.Local.Core\Ksr.Local.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.12" />
+    <!-- Override the vulnerable native SQLite that Microsoft.Data.Sqlite pulls in transitively
+         (SQLitePCLRaw.lib.e_sqlite3 2.1.11 - CVE-2025-6965 / GHSA-2m69-gcr7-jv3q). The 3.0.x bundle
+         ships SQLite >= 3.50.2. Drop this once Microsoft.Data.Sqlite references a fixed SQLitePCLRaw. -->
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.5" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The LocalApp chart queries reuse the SqliteStorage UTC helpers so there is a single
+         SQL formatting/parsing helper rather than a duplicated UI-side copy. -->
+    <InternalsVisibleTo Include="Ksr.LocalApp" />
+    <!-- Unit tests exercise internal infrastructure helpers such as SqliteTransientRetry. -->
+    <InternalsVisibleTo Include="Ksr.Local.Sqlite.Tests" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+</Project>

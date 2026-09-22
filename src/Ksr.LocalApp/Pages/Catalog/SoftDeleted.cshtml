@@ -1,0 +1,65 @@
+@* Copyright (c) Microsoft Corporation.
+   Licensed under the MIT License. *@
+@page "/jobs/soft-deleted"
+@model Ksr.LocalApp.Pages.Catalog.SoftDeletedModel
+@{
+    ViewData["Title"] = "Manage soft-deleted jobs";
+    var jobs = new JobTableViewModel(
+        "Soft-deleted jobs",
+        Model.Jobs,
+        SoftDeletedSection: true,
+        SectionCssClass: null,
+        ShowDefinitionColumns: false,
+        ShowUpdatedColumn: false,
+        ShowNextEligibleColumn: true,
+        ShowRunningProgressCount: false,
+        ShowProgressColumn: false,
+        ShowHistoryAction: false,
+        ShowFolderLine: false,
+        EnableClientFilter: true,
+        EnableColumnResize: true,
+        EnableBulkSelect: true,
+        TableKey: "managed-soft-deleted");
+}
+
+<div class="page-heading">
+    <div>
+        <h1>Manage soft-deleted jobs</h1>
+        <p class="muted">Jobs must be soft-deleted from the dashboard before they can be permanently deleted here.</p>
+    </div>
+    <a class="btn" href="/">Back to jobs</a>
+</div>
+
+<div class="alert danger" role="alert">
+    <strong>Hard delete is permanent.</strong>
+    It removes the selected jobs and their local Kusto Slice Runner history. It does not delete data from Kusto.
+</div>
+
+@if (Model.Jobs.Count > 0)
+{
+    <div class="bulk-action-bar" data-bulk-bar hidden>
+        <span class="bulk-action-count" data-bulk-count role="status" aria-live="polite">0 selected</span>
+        <form method="post" class="bulk-action-form">
+            @Html.AntiForgeryToken()
+            <span class="bulk-action-inputs" data-bulk-inputs></span>
+            <div class="button-row">
+                <button class="btn small danger" type="submit" formaction="/jobs/soft-deleted/hard-delete">@UiIcons.IconText("hard-delete", "Hard delete")</button>
+                <button class="btn small" type="button" data-bulk-clear>@UiIcons.IconText("x", "Clear")</button>
+            </div>
+        </form>
+    </div>
+}
+
+<div data-dashboard-filter-root="true">
+    @if (Model.Jobs.Count > 0)
+    {
+        <section class="card dashboard-find-jobs">
+            <div class="dashboard-text-filter">
+                <h2>Find soft-deleted jobs</h2>
+                <input id="soft-deleted-job-filter" class="dashboard-filter-input" type="search" placeholder="Type to filter jobs" autocomplete="off" data-dashboard-filter-input="true" aria-label="Text filter" aria-describedby="soft-deleted-job-filter-status" />
+                <p id="soft-deleted-job-filter-status" class="muted dashboard-filter-status" data-dashboard-filter-status="true" data-dashboard-total-count="@Model.Jobs.Count" role="status" aria-live="polite">Showing @Model.Jobs.Count job(s).</p>
+            </div>
+        </section>
+    }
+    <partial name="_JobTable" model="jobs" />
+</div>

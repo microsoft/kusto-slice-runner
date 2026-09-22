@@ -1,0 +1,38 @@
+@* Copyright (c) Microsoft Corporation.
+   Licensed under the MIT License. *@
+@page "/jobs"
+@model Ksr.LocalApp.Pages.Catalog.IndexModel
+@{
+    ViewData["Title"] = "Catalog";
+    var tagFilter = new TagFilterViewModel("/jobs", null, Model.Data.AvailableTags, Model.Data.SelectedTags);
+}
+
+<div class="page-heading">
+    <div>
+        <h1>Job Catalog</h1>
+        <p class="muted">Catalog definitions, lifecycle state, and local execution progress.</p>
+    </div>
+    <div class="button-row">
+        <a class="btn primary" href="/jobs/new">New job</a>
+        <a class="btn" href="/jobs/import">Import</a>
+    </div>
+</div>
+
+@{
+    var activeJobs = new JobTableViewModel("Active jobs", Model.Data.ActiveJobs, false);
+    var completedJobs = new JobTableViewModel("Completed jobs", Model.Data.CompletedJobs, false);
+    var softDeletedJobs = new JobTableViewModel("Soft-deleted jobs", Model.Data.SoftDeletedJobs, true);
+}
+<div class="jobs-with-tags">
+    <div class="jobs-main">
+        <partial name="_JobTable" model="activeJobs" />
+        <partial name="_JobTable" model="completedJobs" />
+        <partial name="_JobTable" model="softDeletedJobs" />
+    </div>
+    @if (tagFilter.HasTags)
+    {
+        <aside class="tag-filter-pane">
+            <partial name="_TagFilter" model="tagFilter" />
+        </aside>
+    }
+</div>

@@ -1,0 +1,92 @@
+@* Copyright (c) Microsoft Corporation.
+   Licensed under the MIT License. *@
+@page "/jobs/soft-deleted/hard-delete"
+@model Ksr.LocalApp.Pages.Catalog.BulkHardDeleteModel
+@{
+    ViewData["Title"] = "Bulk hard delete";
+}
+
+<div class="page-heading">
+    <div>
+        <h1>Bulk hard delete</h1>
+        <p class="muted">Permanently purge the selected jobs and all of their local Kusto Slice Runner history.</p>
+    </div>
+    <a class="btn" href="/">Back to jobs</a>
+</div>
+
+@if (Model.Result is not null)
+{
+    <section class="card">
+        <h2>Bulk hard delete completed</h2>
+        <p>Purge run <code>@Model.Result.PurgeRunId</code> deleted @Model.Result.DeletedJobs job row(s), @Model.Result.DeletedQueueRows queue row(s), @Model.Result.DeletedStateRows state row(s), and @Model.Result.DeletedRepairBatches repair batch row(s).</p>
+        <a class="btn primary" href="/">Back to jobs</a>
+    </section>
+}
+else
+{
+    @if (!string.IsNullOrWhiteSpace(Model.ErrorMessage))
+    {
+        <div class="alert danger" role="alert">@Model.ErrorMessage</div>
+    }
+
+    @if (Model.Issues.Count > 0)
+    {
+        <section class="card">
+            <h2>Selected jobs are not eligible</h2>
+            <ul>
+                @foreach (var issue in Model.Issues)
+                {
+                    <li><strong>@issue.DisplayName</strong> <span class="muted mono">@issue.JobId</span>: @issue.Message</li>
+                }
+            </ul>
+        </section>
+    }
+
+    @if (Model.ReviewJobs.Count > 0)
+    {
+        <section class="card form-card">
+            <div class="alert danger">
+                <h2>Review permanent deletion</h2>
+                <p>This deletes the local catalog rows, queue rows, slice state, attempts, logs, lifecycle history, and repair records for every job below. It cannot be undone.</p>
+                <p>This does not delete data from Kusto.</p>
+            </div>
+
+            <table class="ksr-table">
+                <thead>
+                    <tr>
+                        <th>Activity</th>
+                        <th>Permanent id</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var job in Model.ReviewJobs)
+                    {
+                        <tr>
+                            <td>@job.DisplayName</td>
+                            <td class="mono">@job.JobId</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+
+            @if (Model.Issues.Count == 0)
+            {
+                <form method="post" action="/jobs/soft-deleted/hard-delete">
+                    @Html.AntiForgeryToken()
+                    @foreach (var job in Model.ReviewJobs)
+                    {
+                        <input type="hidden" name="jobIds" value="@job.JobId" />
+                        <input type="hidden" name="expectedVersions" value="@job.CatalogVersion" />
+                    }
+                    <input type="hidden" name="execute" value="true" />
+                    <label>Type <code>@Model.ConfirmationPhrase</code><input name="confirmation" autocomplete="off" /></label>
+                    <label>Reason<textarea name="reason" rows="3">@Model.Reason</textarea></label>
+                    <div class="button-row">
+                        <button class="btn danger" type="submit" data-confirm-text="@Model.ConfirmationPhrase">Hard delete @Model.ReviewJobs.Count job(s) permanently</button>
+                        <a class="btn" href="/">Cancel</a>
+                    </div>
+                </form>
+            }
+        </section>
+    }
+}

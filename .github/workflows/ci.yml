@@ -43,22 +43,22 @@ jobs:
         run: npm run test:js
 
       - name: Restore .NET packages
-        run: dotnet restore .\KoLite.Local.sln
+        run: dotnet restore .\Ksr.Local.sln
 
       - name: Verify formatting
-        run: dotnet format .\KoLite.Local.sln --verify-no-changes --no-restore --verbosity minimal
+        run: dotnet format .\Ksr.Local.sln --verify-no-changes --no-restore --verbosity minimal
 
       - name: Build
-        run: dotnet build .\KoLite.Local.sln --no-restore --nologo
+        run: dotnet build .\Ksr.Local.sln --no-restore --nologo
 
       - name: Test
-        run: dotnet test .\KoLite.Local.sln --no-build --nologo --logger "console;verbosity=normal" -- xUnit.ShowLiveOutput=true
+        run: dotnet test .\Ksr.Local.sln --no-build --nologo --logger "console;verbosity=normal" -- xUnit.ShowLiveOutput=true
 
       - name: Check NuGet vulnerabilities
-        run: dotnet list .\KoLite.Local.sln package --vulnerable
+        run: dotnet list .\Ksr.Local.sln package --vulnerable
 
       - name: Check npm vulnerabilities
         run: npm audit --omit=dev --audit-level=moderate
 
       - name: Publish smoke
-        run: dotnet publish .\src\KoLite.LocalApp\KoLite.LocalApp.csproj --configuration Release --output "$env:RUNNER_TEMP\ko-lite-publish" --nologo
+        run: dotnet publish .\src\Ksr.LocalApp\Ksr.LocalApp.csproj --configuration Release --output "$env:RUNNER_TEMP\ksr-publish" --nologo

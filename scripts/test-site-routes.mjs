@@ -8,6 +8,12 @@ import { JSDOM } from "jsdom";
 const html = `<!doctype html>
 <html>
 <body>
+  <div class="table-wrap">
+    <table class="ksr-table job-table-dashboard" data-dashboard-resizable="true">
+      <colgroup><col data-column-key="activity" data-default-width="200" data-min-width="72" /></colgroup>
+      <thead><tr><th>Activity<span class="column-resize-handle" data-column-key="activity"></span></th></tr></thead>
+    </table>
+  </div>
   <figure data-chartjs-throttle="retired-throttle-chart">
     <canvas id="retired-throttle-chart"></canvas>
     <script type="application/json" id="retired-throttle-chart-data">{"points":[]}</script>
@@ -68,9 +74,21 @@ dom.window.fetch = async (url, options = {}) => {
 };
 
 const siteScript = await readFile(
-  new URL("../src/KoLite.LocalApp/wwwroot/js/site.js", import.meta.url),
+  new URL("../src/Ksr.LocalApp/wwwroot/js/site.js", import.meta.url),
   "utf8");
+const columnStorageKey = "ksr.dashboard.job-table.column-widths.v1";
+dom.window.localStorage.setItem(columnStorageKey, JSON.stringify({ activity: 240 }));
 dom.window.eval(siteScript);
+
+const activityColumn = dom.window.document.querySelector("col[data-column-key='activity']");
+assert.equal(activityColumn.style.width, "240px");
+const resizeHandle = dom.window.document.querySelector(".column-resize-handle");
+resizeHandle.setPointerCapture = () => {};
+resizeHandle.dispatchEvent(new dom.window.MouseEvent("pointerdown", { clientX: 100 }));
+resizeHandle.dispatchEvent(new dom.window.MouseEvent("pointermove", { clientX: 160 }));
+resizeHandle.dispatchEvent(new dom.window.MouseEvent("pointerup", { clientX: 160 }));
+assert.equal(activityColumn.style.width, "300px");
+assert.deepEqual(JSON.parse(dom.window.localStorage.getItem(columnStorageKey)), { activity: 300 });
 
 assert.equal(charts.length, 1);
 assert.equal(charts[0].canvas.id, "executions-processed-chart");

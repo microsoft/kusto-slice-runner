@@ -84,7 +84,7 @@ Concurrency is counted per execution unit. For example, `chunks: 32` with
 `maxParallelism: 32`, all 32 chunks of one window can run together when at least 32
 global worker slots are free. `maxParallelism` values above 32 are valid and can overlap
 chunks from later windows. Kusto Slice Runner's global worker pool is unbounded by default, but an
-operator-configured `KoLite:WorkerPool:MaxConcurrency` may impose a lower all-up limit.
+operator-configured `Ksr:WorkerPool:MaxConcurrency` may impose a lower all-up limit.
 
 Pause is immediate: already-running chunks finish, while unstarted chunks and retries wait for
 resume. `chunks` cannot be added, removed, or changed after the job has any scheduling history;

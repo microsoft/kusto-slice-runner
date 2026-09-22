@@ -36,13 +36,13 @@ for questions and feedback.
 - Imports and exports strict schedule JSON for Kusto output jobs, including optional Markdown descriptions and job organization tags.
 - Shows active, completed, and soft-deleted jobs in a local dashboard.
 - Summarizes each job with a compact **color-only status pill** (hover to learn more): a left half for **recent health** — green (healthy), amber (warning), red (attention) — that answers "is it working now?", plus, for strict jobs, a right half that flags **historical completeness** (red when unaddressed dead-lettered gaps exist, green when whole). The per-job `healthPolicy` (`complete` default, or `recent`) chooses whether old gaps are surfaced; `recent` jobs show a single solid capsule. See [docs/operations-runbook.md](docs/operations-runbook.md#dashboard-status-model).
-- Visualizes job dependencies as a graph (colored by current job status) from a job's details page or by multi-selecting jobs on the dashboard and choosing "Dependencies". On demand, the graph can also resolve each job's Kusto lineage — the downstream functions/materialized views that consume its output, the upstream tables/functions it reads (including cross-cluster sources), and **implicit** (undeclared) dependencies where a job reads another KO job's output without declaring it.
+- Visualizes job dependencies as a graph (colored by current job status) from a job's details page or by multi-selecting jobs on the dashboard and choosing "Dependencies". On demand, the graph can also resolve each job's Kusto lineage — the downstream functions/materialized views that consume its output, the upstream tables/functions it reads (including cross-cluster sources), and **implicit** (undeclared) dependencies where a job reads another KSR job's output without declaring it.
 - Shows an **Activity** page (`/activity`) with separate logical-slice and execution-unit counts. Chunked windows stay one table row while showing completed/total progress and every running chunk/worker; ETAs use recent whole-window durations, and processed totals/charts count each chunk or unchunked slice as one execution.
 - Adds an **Activity -> Performance** comparison of job and chunk CPU, server command duration, and peak-memory P50/P90/P95, plus completed-attempt counts, success rates, and metric coverage. Job rows pool successful attempts and expand into raw chunk IDs; the default period is seven days. Statistics are collected automatically into SQLite, including a best-effort recent-history backfill.
 - Bounds local database growth: a retention service prunes old operational telemetry (logs, terminal queue rows, old attempts) on a schedule while preserving the full slice window-history, so reruns and scheduling stay intact.
 - Plans historical reruns and local state repair while leaving destructive Kusto cleanup to the operator.
 - Exposes a versioned localhost-only JSON API under `/api/v1` with generated OpenAPI, first-class job create/update/pause/resume, ETag concurrency, safe soft-delete/restore and failed-work repair, plus cursor-paged operational diagnostics. Hard delete, whole-slice rerun, and Kusto cleanup remain browser/operator-only.
-- Ships **Copilot skills** in `.github/skills`: `ko-lite-job-manager` drives that API (import/upsert, pause/resume, soft-delete/restore, diagnostics), [`ko-lite-gap-repair`](.github/skills/ko-lite-gap-repair/SKILL.md) fills terminal gaps after recent job health recovers and follows downstream completion (report-only for `healthPolicy: "recent"` unless explicitly overridden), `ko-lite-schedule-json` authors and validates schedule JSON locally, and `ko-lite-release-highlights` writes AI highlights for an existing release draft to a local Markdown file.
+- Ships **Copilot skills** in `.github/skills`: `ksr-job-manager` drives that API (import/upsert, pause/resume, soft-delete/restore, diagnostics), [`ksr-gap-repair`](.github/skills/ksr-gap-repair/SKILL.md) fills terminal gaps after recent job health recovers and follows downstream completion (report-only for `healthPolicy: "recent"` unless explicitly overridden), `ksr-schedule-json` authors and validates schedule JSON locally, and `ksr-release-highlights` writes AI highlights for an existing release draft to a local Markdown file.
 - Periodically checks GitHub (via the `gh` CLI) for a newer published Kusto Slice Runner release and shows an update badge in the top bar.
 
 ## Quick start from a release
@@ -51,17 +51,17 @@ After a public release is approved and published, open
 [GitHub Releases](https://github.com/microsoft/kusto-slice-runner/releases)
 and download one of these Windows x64 packages:
 
-- `ko-lite-<version>-win-x64-self-contained.zip` includes the .NET runtime and is the easiest option.
-- `ko-lite-<version>-win-x64-framework-dependent.zip` is smaller but requires the .NET 10 runtime.
+- `kusto-slice-runner-<version>-win-x64-self-contained.zip` includes the .NET runtime and is the easiest option.
+- `kusto-slice-runner-<version>-win-x64-framework-dependent.zip` is smaller but requires the .NET 10 runtime.
 
 Extract the ZIP to a stable folder. Sign in with Azure CLI for Kusto access, then make the first start with scheduling disabled:
 
 ```powershell
 az login
-.\Start-KoLiteApp.ps1 -AppArguments '--KoLite:Scheduler:Enabled=false'
+.\Start-KsrApp.ps1 -AppArguments '--Ksr:Scheduler:Enabled=false'
 ```
 
-Open `http://127.0.0.1:5057` and check `http://127.0.0.1:5057/healthz`. Detailed local status is at `http://127.0.0.1:5057/api/v1/system/status`. Review the configured jobs and Kusto targets before restarting without the scheduler override. The local catalog and execution history remain in `%LOCALAPPDATA%\KoLite\ko-lite.db`, outside the extracted application folder, so replacing the application folder does not replace your runtime state.
+Open `http://127.0.0.1:5057` and check `http://127.0.0.1:5057/healthz`. Detailed local status is at `http://127.0.0.1:5057/api/v1/system/status`. Review the configured jobs and Kusto targets before restarting without the scheduler override. The local catalog and execution history remain in `%LOCALAPPDATA%\Ksr\ksr.db`, outside the extracted application folder, so replacing the application folder does not replace your runtime state.
 
 Before upgrading an existing database, review the [throttling-advisor retirement precautions](docs/operations-runbook.md#upgrading-after-throttling-advisor-retirement): startup removes obsolete observation storage while preserving ordinary execution history.
 
@@ -78,10 +78,10 @@ After reviewing your jobs, opt in from the published folder to resume Kusto Slic
 automatically when you sign in after a reboot:
 
 ```powershell
-.\Register-KoLiteStartup.ps1                         # visible PowerShell console
-.\Register-KoLiteStartup.ps1 -WindowMode Background  # alternatively, no visible window
-.\Get-KoLiteStartup.ps1                              # inspect settings and last result
-.\Unregister-KoLiteStartup.ps1                       # disable startup; leave the app running
+.\Register-KsrStartup.ps1                         # visible PowerShell console
+.\Register-KsrStartup.ps1 -WindowMode Background  # alternatively, no visible window
+.\Get-KsrStartup.ps1                              # inspect settings and last result
+.\Unregister-KsrStartup.ps1                       # disable startup; leave the app running
 ```
 
 Registration does not start or stop the app now. It reuses your Windows user,
@@ -102,7 +102,7 @@ From the repository root:
 ```powershell
 npm ci
 
-dotnet run --project .\src\KoLite.LocalApp\KoLite.LocalApp.csproj -- --KoLite:Scheduler:Enabled=false
+dotnet run --project .\src\Ksr.LocalApp\Ksr.LocalApp.csproj -- --Ksr:Scheduler:Enabled=false
 ```
 
 Open `http://127.0.0.1:5057` and check `http://127.0.0.1:5057/healthz`.
@@ -110,7 +110,7 @@ Open `http://127.0.0.1:5057` and check `http://127.0.0.1:5057/healthz`.
 Review every job's cluster, database, function, output table, and permissions
 before restarting with execution enabled.
 
-You should be able to kill it at any point and it will restart without duplicating data (thanks to ingest-by tags) but to avoid any chance of issues, execute `scripts\Stop-KoLiteApp.ps1`. It will wait for the workers to drain and then shut down gracefully.
+You should be able to kill it at any point and it will restart without duplicating data (thanks to ingest-by tags) but to avoid any chance of issues, execute `scripts\Stop-KsrApp.ps1`. It will wait for the workers to drain and then shut down gracefully.
 
 ## Screenshots
 
@@ -155,31 +155,26 @@ Analyze failures with Copilot:
 
 See [SUPPORT.md](SUPPORT.md), [SECURITY.md](SECURITY.md), [CONTRIBUTING.md](CONTRIBUTING.md), and [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
-## Compatibility and history
+## Development history
 
 The development history was imported with original dates, public contributor
 identities, and sensitive historical assets removed. Some internal-only commits
 were omitted. Commit hashes differ from the original history.
 
-For compatibility, this preparation retains the existing `KoLite` project and
-configuration names, `ko-lite-*` agent skill names, PowerShell entry points, local
-database paths, and Kusto ingestion identities. Do not run two instances against
-the same database or assume a renamed product uses a separate catalog.
-
 ## Data and external services
 
 The catalog, logs, and execution history are stored locally in SQLite. Execution
 contacts the configured Kusto targets and collects command statistics into the
-local database. Disabling `KoLite:Scheduler:Enabled` disables execution and its
+local database. Disabling `Ksr:Scheduler:Enabled` disables execution and its
 background statistics collection; explicitly requested lineage resolution is a
 separate Kusto read.
 
 Optional update checks contact GitHub through `gh`; disable them with
-`KoLite:UpdateCheck:Enabled=false`. User-triggered failure analysis sends job
+`Ksr:UpdateCheck:Enabled=false`. User-triggered failure analysis sends job
 identifiers, target/function/table names, timestamps, and secret-sanitized error
 evidence to GitHub Copilot CLI. Secret redaction is not anonymization. Review your
 organization's data-sharing policy before using it, or disable the feature with
-`KoLite:CopilotAnalysis:Enabled=false`.
+`Ksr:CopilotAnalysis:Enabled=false`.
 
 ## License and third-party code
 

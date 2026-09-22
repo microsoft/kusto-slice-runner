@@ -19,7 +19,7 @@ assert.equal(await realpath(path.dirname(manifestPath)), await realpath(runDirec
 assert.equal(manifest.databasePath, path.join(runDirectory, "screenshots.db"));
 assert.equal(manifest.imagesDirectory, path.join(runDirectory, "images"));
 const owner = JSON.parse(await readFile(path.join(runDirectory, "owner.json"), "utf8"));
-assert.equal(owner.purpose, "ko-lite-documentation-screenshots");
+assert.equal(owner.purpose, "ksr-documentation-screenshots");
 assert.equal(owner.runId, manifest.runId);
 const baseUrl = new URL(manifest.baseUrl);
 assert.equal(baseUrl.protocol, "http:");
@@ -34,7 +34,7 @@ assert.ok(age >= 0 && age < 15 * 60 * 1000, "Create a fresh fixture before captu
 async function verifyFixture() {
   const response = await fetch(new URL("/api/v1/system/status", baseUrl), { signal: AbortSignal.timeout(10000) });
   assert.equal(response.status, 200);
-  assert.equal(response.headers.get("x-kolite-screenshot-fixture"), manifest.runId);
+  assert.equal(response.headers.get("x-ksr-screenshot-fixture"), manifest.runId);
   const status = await response.json();
   assert.equal(status.database.path, manifest.databasePath);
   assert.equal(status.database.jobCount, manifest.activityIds.length);
@@ -100,7 +100,7 @@ try {
       const url = new URL(href);
       if (url.origin !== baseUrl.origin) {
         assert.equal(url.hostname, "dataexplorer.azure.com", "Only synthetic ADX deep links may appear.");
-        assert.ok(decodeURIComponent(href).includes("kolite-example.invalid"), "ADX links must target the reserved fixture host.");
+        assert.ok(decodeURIComponent(href).includes("ksr-example.invalid"), "ADX links must target the reserved fixture host.");
       }
     }
     assert.deepEqual(errors, [], "Capture must have no page, network, or console errors.");
@@ -109,7 +109,7 @@ try {
   async function navigate(route) {
     const response = await page.goto(new URL(route, baseUrl).href, { waitUntil: "networkidle" });
     assert.equal(response.status(), 200);
-    assert.equal(response.headers()["x-kolite-screenshot-fixture"], manifest.runId);
+    assert.equal(response.headers()["x-ksr-screenshot-fixture"], manifest.runId);
     await page.mouse.move(0, 0);
     await ready();
   }

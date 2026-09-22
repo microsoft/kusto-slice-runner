@@ -1,0 +1,147 @@
+@* Copyright (c) Microsoft Corporation.
+   Licensed under the MIT License. *@
+@page "/jobs/{jobId}/rerun"
+@model Ksr.LocalApp.Pages.Jobs.RerunModel
+@using Ksr.Local.Core.Repair
+@{
+    ViewData["Title"] = "Repair or rerun";
+}
+
+<div class="page-heading">
+    <div>
+        <h1>Repair or rerun: @Model.ActivityId</h1>
+        <p class="muted">Repair only terminal failed work without cleanup, or rerun whole logical slices after manual Kusto cleanup.</p>
+    </div>
+    <a class="btn" href="/jobs/@Uri.EscapeDataString(Model.JobId)">Back to details</a>
+</div>
+
+<section class="card form-card">
+    @if (Model.ErrorMessage is not null)
+    {
+        <div class="alert danger">@Model.ErrorMessage</div>
+    }
+    <form method="get" action="/jobs/@Uri.EscapeDataString(Model.JobId)/rerun">
+        <div class="button-row">
+            <label class="checkbox-row"><input type="radio" name="mode" value="repair" checked="@(Model.IsRepairMode ? "checked" : null)" /> Repair failed chunks</label>
+            <label class="checkbox-row"><input type="radio" name="mode" value="rerun" checked="@(Model.IsRepairMode ? null : "checked")" /> Rerun whole slice</label>
+        </div>
+        <div class="form-grid">
+            <label>Start (UTC)<input type="datetime-local" name="start" value="@Model.StartInput" /></label>
+            <label>End (UTC)<input type="datetime-local" name="end" value="@Model.EndInput" /></label>
+            <label>Requested by<input type="text" name="requestedBy" value="@Model.RequestedBy" /></label>
+            <label>Reason<input type="text" name="reason" value="@Model.Reason" /></label>
+        </div>
+        <button class="btn primary" type="submit">Preview selected mode</button>
+    </form>
+</section>
+
+@if (Model.RepairPreview is not null)
+{
+    <section class="card">
+        <div class="card-header">
+            <h2>Repair failed chunks</h2>
+            <span class="badge">@Model.RepairPreview.RepairableExecutions execution(s)</span>
+        </div>
+        <p class="muted">No Kusto cleanup is required. Repair reuses each chunk's stable ingest-by identity and leaves successful chunks untouched.</p>
+        @if (Model.RepairPreview.RepairableExecutions == 0)
+        {
+            <div class="alert warning">No terminal failed chunks are repairable. Work with an automatic retry already queued or running is intentionally excluded.</div>
+        }
+        else
+        {
+            @if (Model.RepairChunks.Count > 0)
+            {
+                <div class="table-wrap">
+                    <table class="ksr-table compact">
+                        <thead><tr><th>Slice</th><th>Chunk ID</th><th>Status</th><th>Attempt</th><th>Error</th></tr></thead>
+                        <tbody>
+                        @foreach (var chunk in Model.RepairChunks)
+                        {
+                            <tr>
+                                <td>@AppFormatting.Iso(chunk.SliceStartUtc) - @AppFormatting.Iso(chunk.SliceEndUtc)</td>
+                                <td>Chunk @chunk.ChunkId/@chunk.TotalChunks</td>
+                                <td><span class="badge @AppFormatting.BadgeCss(chunk.Status.ToString())">@chunk.Status</span></td>
+                                <td>@chunk.Attempt</td>
+                                <td>@chunk.LastErrorMessage</td>
+                            </tr>
+                        }
+                        </tbody>
+                    </table>
+                </div>
+            }
+            else
+            {
+                <ul class="plain-list">
+                @foreach (var slice in Model.RepairPreview.Slices.Where(slice => slice.Outcome == Ksr.Local.Sqlite.Repair.RepairSliceOutcome.Repairable))
+                {
+                    <li>@AppFormatting.Iso(slice.StartUtc) - @AppFormatting.Iso(slice.EndUtc): @slice.CurrentStatus</li>
+                }
+                </ul>
+            }
+            <form method="post" action="/jobs/@Uri.EscapeDataString(Model.JobId)/rerun">
+                @Html.AntiForgeryToken()
+                <input type="hidden" name="mode" value="repair" />
+                <input type="hidden" name="start" value="@Model.StartInput" />
+                <input type="hidden" name="end" value="@Model.EndInput" />
+                <input type="hidden" name="requestedBy" value="@Model.RequestedBy" />
+                <input type="hidden" name="reason" value="@Model.Reason" />
+                <input type="hidden" name="expectedSliceCount" value="@Model.RepairPreview.Repairable" />
+                <input type="hidden" name="expectedExecutionCount" value="@Model.RepairPreview.RepairableExecutions" />
+                <input type="hidden" name="previewToken" value="@Model.RepairPreview.PreviewToken" />
+                <button class="btn primary" type="submit">Repair failed chunks</button>
+            </form>
+        }
+    </section>
+}
+
+@if (Model.Plan is not null)
+{
+    <section class="card">
+        <div class="card-header">
+            <h2>Rerun whole slice</h2>
+            <span class="badge @AppFormatting.BadgeCss(Model.Plan.Status.ToString())">@Model.Plan.Status</span>
+        </div>
+        @if (!Model.Plan.CanExecute)
+        {
+            <div class="alert warning">This plan has active queued or running slices. Wait for them to finish before executing the rerun.</div>
+        }
+        <p class="muted">@Model.Plan.Slices.Count affected slice(s), including downstream jobs.</p>
+        <p class="muted">For chunked jobs, rerun resets every chunk in each affected logical slice. It does not target only the failed chunk IDs.</p>
+        <div class="table-wrap">
+            <table class="ksr-table compact">
+                <thead><tr><th>Role</th><th>Job</th><th>Slice</th><th>Previous</th><th>Local rows</th><th>Blocker</th></tr></thead>
+                <tbody>
+                @foreach (var slice in Model.Plan.Slices)
+                {
+                    <tr>
+                        <td>@slice.Role</td>
+                        <td>@slice.JobId</td>
+                        <td>@AppFormatting.Iso(slice.Slice.StartUtc) - @AppFormatting.Iso(slice.Slice.EndUtc)</td>
+                        <td>@(slice.PreviousState ?? "Missing") attempt @(slice.PreviousAttempt ?? 0)</td>
+                        <td>queue @slice.QueueRows, attempts @slice.AttemptRows, events @slice.EventRows, logs @slice.LogRows</td>
+                        <td>@slice.BlockerReason</td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    </section>
+
+    <section class="card">
+        <div class="card-header"><h2>Suggested Kusto cleanup</h2></div>
+        <p class="muted">Run or adapt these commands before executing the rerun. Kusto Slice Runner will ask you to acknowledge cleanup, but it will not run these commands for you.</p>
+        <pre class="code-block">@Model.Plan.KustoCleanupCommands</pre>
+    </section>
+
+    <section class="card">
+        <form method="post" action="/jobs/@Uri.EscapeDataString(Model.JobId)/rerun">
+            @Html.AntiForgeryToken()
+            <input type="hidden" name="mode" value="rerun" />
+            <input type="hidden" name="start" value="@Model.StartInput" />
+            <input type="hidden" name="end" value="@Model.EndInput" />
+            <input type="hidden" name="requestedBy" value="@Model.RequestedBy" />
+            <input type="hidden" name="reason" value="@Model.Reason" />
+            <button class="btn primary" type="submit">Create rerun batch</button>
+        </form>
+    </section>
+}

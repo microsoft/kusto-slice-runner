@@ -1,0 +1,150 @@
+@* Copyright (c) Microsoft Corporation.
+   Licensed under the MIT License. *@
+@page "/"
+@model Ksr.LocalApp.Pages.IndexModel
+@{
+    ViewData["Title"] = "Jobs";
+    var tagFilter = new TagFilterViewModel("/", Model.Range, Model.Data.AvailableTags, Model.Data.SelectedTags, Sort: Model.Sort);
+}
+
+<div class="page-heading">
+    <div>
+        <h1>Kusto Slice Runner Local Dashboard</h1>
+    </div>
+    <div class="button-row">
+        <a class="btn primary" href="/jobs/new">@UiIcons.IconText("plus", "New job")</a>
+        <a class="btn" href="/jobs/import">@UiIcons.IconText("upload", "Import")</a>
+        <form method="post" action="/jobs/actions/pause-all" class="inline-form">
+            @Html.AntiForgeryToken()
+            <button class="btn" type="submit">@UiIcons.IconText("pause", "Pause all")</button>
+        </form>
+        <form method="post" action="/jobs/actions/resume-all" class="inline-form">
+            @Html.AntiForgeryToken()
+            <button class="btn" type="submit">@UiIcons.IconText("play", "Resume all")</button>
+        </form>
+    </div>
+</div>
+
+@if (!string.IsNullOrEmpty(Model.BulkOperationSummary))
+{
+    <div class="bulk-summary-banner" role="status">@Model.BulkOperationSummary</div>
+}
+
+@{
+    var sortBaseParts = new List<string> { "range=" + Uri.EscapeDataString(Model.Range) };
+    sortBaseParts.AddRange(Model.Data.SelectedTags.Select(tag => "tag=" + Uri.EscapeDataString(tag)));
+    var sortBaseQuery = string.Join("&", sortBaseParts);
+    var activeJobs = new JobTableViewModel("Active jobs", Model.Data.ActiveJobs, false, ShowSoftDeleteAction: false, ShowDefinitionColumns: false, ShowUpdatedColumn: false, ShowNextEligibleColumn: true, ShowRunningProgressCount: false, ShowProgressColumn: false, ShowHistoryAction: false, ShowFolderLine: false, EnableClientFilter: true, EnableColumnResize: true, EnableInlineToggle: true, EnableBulkSelect: true, EnableSort: true, Sort: Model.Sort, SortBaseQuery: sortBaseQuery, TableKey: "active");
+    var completedJobs = new JobTableViewModel("Completed jobs", Model.Data.CompletedJobs, false, ShowSoftDeleteAction: false, SectionCssClass: "nested-card", ShowDefinitionColumns: false, ShowUpdatedColumn: false, ShowNextEligibleColumn: true, ShowRunningProgressCount: false, ShowProgressColumn: false, ShowHistoryAction: false, ShowFolderLine: false, EnableClientFilter: true, EnableColumnResize: true, EnableInlineToggle: true, EnableBulkSelect: true, EnableSort: true, Sort: Model.Sort, SortBaseQuery: sortBaseQuery, TableKey: "completed");
+    var softDeletedJobs = new JobTableViewModel("Soft-deleted jobs", Model.Data.SoftDeletedJobs, true, SectionCssClass: "nested-card", ShowDefinitionColumns: false, ShowUpdatedColumn: false, ShowNextEligibleColumn: true, ShowRunningProgressCount: false, ShowProgressColumn: false, ShowHistoryAction: false, ShowFolderLine: false, EnableClientFilter: true, EnableColumnResize: true, EnableSort: true, Sort: Model.Sort, SortBaseQuery: sortBaseQuery, TableKey: "soft-deleted", HeaderActionHref: "/jobs/soft-deleted", HeaderActionText: "Manage soft-deleted jobs");
+    var inactiveCount = Model.Data.CompletedJobs.Count + Model.Data.SoftDeletedJobs.Count;
+    var dashboardJobCount = Model.Data.ActiveJobs.Count + inactiveCount;
+}
+
+<div class="bulk-action-bar" data-bulk-bar hidden>
+    <span class="bulk-action-count" data-bulk-count role="status" aria-live="polite">0 selected</span>
+    <form method="post" class="bulk-action-form">
+        @Html.AntiForgeryToken()
+        <span class="bulk-action-inputs" data-bulk-inputs></span>
+        <div class="button-row">
+            <button class="btn small" type="button" data-bulk-dependencies>@UiIcons.IconText("graph", "Dependencies")</button>
+            <button class="btn small" type="submit" formaction="/jobs/actions/bulk/pause">@UiIcons.IconText("pause", "Pause")</button>
+            <button class="btn small" type="submit" formaction="/jobs/actions/bulk/resume">@UiIcons.IconText("play", "Resume")</button>
+            <button class="btn small danger" type="submit" formaction="/jobs/actions/bulk/soft-delete">@UiIcons.IconText("trash", "Soft delete")</button>
+            <button class="btn small" type="submit" formaction="/jobs/actions/bulk/export">@UiIcons.IconText("download", "Export")</button>
+            <button class="btn small" type="button" data-bulk-clear>@UiIcons.IconText("x", "Clear")</button>
+        </div>
+    </form>
+</div>
+<div class="jobs-with-tags" data-dashboard-filter-root="true">
+    <div class="jobs-main">
+        <partial name="_JobTable" model="activeJobs" />
+        <details class="card disclosure-card inactive-jobs">
+            <summary>
+                <span class="summary-title">Inactive jobs</span>
+                <span class="muted" data-dashboard-inactive-summary="true" data-dashboard-original-text="@inactiveCount job(s): @Model.Data.CompletedJobs.Count completed, @Model.Data.SoftDeletedJobs.Count soft-deleted">@inactiveCount job(s): @Model.Data.CompletedJobs.Count completed, @Model.Data.SoftDeletedJobs.Count soft-deleted</span>
+            </summary>
+            <div class="inactive-job-groups">
+                <partial name="_JobTable" model="completedJobs" />
+                <partial name="_JobTable" model="softDeletedJobs" />
+            </div>
+        </details>
+    </div>
+    <aside class="tag-filter-pane" data-dashboard-filter-pane="true" aria-label="Dashboard filters">
+        <section class="card dashboard-find-jobs">
+            <div class="dashboard-filter-header">
+                <div>
+                    <h2>Find jobs</h2>
+                    <p class="muted">Combine the text filter and tags to narrow the jobs shown — they work together.</p>
+                </div>
+            </div>
+            <div class="find-jobs-section dashboard-text-filter">
+                <h3>Text filter</h3>
+                <input id="dashboard-job-filter" class="dashboard-filter-input" type="search" placeholder="Type to filter jobs" autocomplete="off" data-dashboard-filter-input="true" aria-label="Text filter" aria-describedby="dashboard-job-filter-status" />
+                <p id="dashboard-job-filter-status" class="muted dashboard-filter-status" data-dashboard-filter-status="true" data-dashboard-total-count="@dashboardJobCount" role="status" aria-live="polite">Showing @dashboardJobCount job(s).</p>
+            </div>
+            @if (tagFilter.HasTags)
+            {
+                <partial name="_TagFilter" model="@(tagFilter with { Bare = true })" />
+            }
+            else
+            {
+                <div class="find-jobs-section tag-filter-section">
+                    <h3>Tags</h3>
+                    <p class="muted">No schedule tags are available yet.</p>
+                </div>
+            }
+        </section>
+    </aside>
+</div>
+
+<section class="card success-statistics">
+    <div class="card-header">
+        <div>
+            <h2>Success Statistics</h2>
+            <p class="muted chart-help">
+                The first chart counts every completed execution-unit attempt, including chunk retries. The second chart scores whether each logical slice eventually succeeded after retries.
+                Charts show complete UTC-aligned buckets through <span class="mono">@AppFormatting.Iso(Model.Data.Charts.AttemptSuccess.RangeEndUtc)</span>; the current incomplete bucket is omitted.
+            </p>
+        </div>
+        <div class="range-picker">
+            @foreach (var range in Model.RangeLinks)
+            {
+                var rangeTagFilter = new TagFilterViewModel("/", range.Key, Model.Data.AvailableTags, Model.Data.SelectedTags, Sort: Model.Sort);
+                <a class="btn small @(range.Key == Model.Range ? "primary" : null)" href="@rangeTagFilter.SelectedHref">@range.Label</a>
+            }
+        </div>
+    </div>
+    <div class="chart-grid">
+        <div>
+            <h3>Execution Attempt Success Rate by Function</h3>
+            <partial name="_SuccessRateChart" model="Model.Data.Charts.AttemptSuccess" />
+        </div>
+        <div>
+            <h3>Logical Slice Success Rate After Retries by Function</h3>
+            <partial name="_SuccessRateChart" model="Model.Data.Charts.SuccessAfterRetries" />
+        </div>
+    </div>
+</section>
+
+<section class="card">
+    <div class="card-header"><h2>Recent failures</h2></div>
+    @if (Model.Data.RecentFailures.Count == 0)
+    {
+        <p class="empty">No recent failures.</p>
+    }
+    else
+    {
+        <ul class="plain-list">
+            @foreach (var failure in Model.Data.RecentFailures)
+            {
+                <li>
+                    <a href="/jobs/@Uri.EscapeDataString(failure.JobId)/slices?start=@Uri.EscapeDataString(AppFormatting.Iso(failure.SliceStartUtc))&end=@Uri.EscapeDataString(AppFormatting.Iso(failure.SliceEndUtc))">@failure.JobId</a>
+                    <span class="badge @AppFormatting.BadgeCss(failure.Status)">@failure.Status</span>
+                    <span class="muted">@AppFormatting.Iso(failure.UpdatedAtUtc)</span>
+                    <div>@failure.Reason</div>
+                </li>
+            }
+        </ul>
+    }
+</section>

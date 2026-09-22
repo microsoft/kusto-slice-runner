@@ -14,12 +14,12 @@ This guide covers repository layout and local validation commands for Kusto Slic
 
 | Path | Purpose |
 | --- | --- |
-| `KoLite.Local.sln` | Standalone local-first solution. |
-| `src\KoLite.Local.Core` | Schedule parsing, scheduling models, mutation policy, dependency readiness, rerun/repair contracts. |
-| `src\KoLite.Local.Sqlite` | Local SQLite persistence, schema, queue, catalog, state, observability, repair, and rerun services. |
-| `src\KoLite.Local.Kusto` | Live Kusto request building, authentication, execution, and error classification. |
-| `src\KoLite.LocalApp` | Razor Pages dashboard, versioned Minimal API/application handlers, local hosted scheduler/worker services, health/control endpoints, and static assets. |
-| `tests\KoLite.Local.*` | Unit, integration, web, and local end-to-end tests for the active solution. |
+| `Ksr.Local.sln` | Standalone local-first solution. |
+| `src\Ksr.Local.Core` | Schedule parsing, scheduling models, mutation policy, dependency readiness, rerun/repair contracts. |
+| `src\Ksr.Local.Sqlite` | Local SQLite persistence, schema, queue, catalog, state, observability, repair, and rerun services. |
+| `src\Ksr.Local.Kusto` | Live Kusto request building, authentication, execution, and error classification. |
+| `src\Ksr.LocalApp` | Razor Pages dashboard, versioned Minimal API/application handlers, local hosted scheduler/worker services, health/control endpoints, and static assets. |
+| `tests\Ksr.Local.*` | Unit, integration, web, and local end-to-end tests for the active solution. |
 | `docs` | Architecture, schedule contract, operations, development, and release-readiness notes. |
 
 ## Restore, build, and test
@@ -29,11 +29,11 @@ From the repository root:
 ```powershell
 npm ci
 npm run test:js
-dotnet restore .\KoLite.Local.sln
-dotnet format .\KoLite.Local.sln --verify-no-changes --no-restore --verbosity minimal
-dotnet build .\KoLite.Local.sln --no-restore --nologo
-dotnet test .\KoLite.Local.sln --no-build --nologo
-dotnet list .\KoLite.Local.sln package --vulnerable
+dotnet restore .\Ksr.Local.sln
+dotnet format .\Ksr.Local.sln --verify-no-changes --no-restore --verbosity minimal
+dotnet build .\Ksr.Local.sln --no-restore --nologo
+dotnet test .\Ksr.Local.sln --no-build --nologo
+dotnet list .\Ksr.Local.sln package --vulnerable
 npm audit --omit=dev --audit-level=moderate
 ```
 
@@ -51,7 +51,7 @@ CI and release validation display the timing through xUnit live output. After th
 steps above, run the focused test with the same output settings:
 
 ```powershell
-dotnet test .\tests\KoLite.Local.Sqlite.Tests\KoLite.Local.Sqlite.Tests.csproj --no-build --nologo --filter "FullyQualifiedName~One_hundred_thousand_attempts_have_exact_uncapped_aggregates_in_one_pipeline" --logger "console;verbosity=normal" -- xUnit.ShowLiveOutput=true
+dotnet test .\tests\Ksr.Local.Sqlite.Tests\Ksr.Local.Sqlite.Tests.csproj --no-build --nologo --filter "FullyQualifiedName~One_hundred_thousand_attempts_have_exact_uncapped_aggregates_in_one_pipeline" --logger "console;verbosity=normal" -- xUnit.ShowLiveOutput=true
 ```
 
 ## Local development run
@@ -59,8 +59,8 @@ dotnet test .\tests\KoLite.Local.Sqlite.Tests\KoLite.Local.Sqlite.Tests.csproj -
 For UI review, run with scheduler dispatch disabled and an explicit local SQLite path:
 
 ```powershell
-$db = "$env:LOCALAPPDATA\KoLite\ko-lite-dev.db"
-dotnet run --project .\src\KoLite.LocalApp\KoLite.LocalApp.csproj -- --ConnectionStrings:KoLiteSqlite="$db" --KoLite:Scheduler:Enabled=false --KoLite:Kusto:AuthMode=AzureCli
+$db = "$env:LOCALAPPDATA\Ksr\ksr-dev.db"
+dotnet run --project .\src\Ksr.LocalApp\Ksr.LocalApp.csproj -- --ConnectionStrings:KsrSqlite="$db" --Ksr:Scheduler:Enabled=false --Ksr:Kusto:AuthMode=AzureCli
 ```
 
 Use the [operations runbook](operations-runbook.md) for live scheduling, configuration, diagnostics, and rerun guidance.
@@ -69,21 +69,21 @@ For public-shareable documentation images, use the [synthetic screenshot workflo
 It runs a developer-only host with a fresh database and a separate loopback port; it
 never copies the live database or contacts Kusto or Copilot.
 
-The example above uses a `ko-lite-dev.db` sandbox; `ko-lite-review.db` is the runbook's review sandbox. These distinct names are intentional — `ko-lite.db` is only the default path used when no connection string is supplied. To find which database an instance is actually using, run `.\scripts\Get-KoLiteDatabase.ps1` (or read `database.path` from `/api/v1/system/status`).
+The example above uses a `ksr-dev.db` sandbox; `ksr-review.db` is the runbook's review sandbox. These distinct names are intentional — `ksr.db` is only the default path used when no connection string is supplied. To find which database an instance is actually using, run `.\scripts\Get-KsrDatabase.ps1` (or read `database.path` from `/api/v1/system/status`).
 
 ### View the live database while the app is running
 
-To browse the **live** default database (`%LOCALAPPDATA%\KoLite\ko-lite.db`) while your published app keeps running, start a second UI-only instance on a different port:
+To browse the **live** default database (`%LOCALAPPDATA%\Ksr\ksr.db`) while your published app keeps running, start a second UI-only instance on a different port:
 
 ```powershell
-.\scripts\Start-KoLiteUi.ps1            # live DB on port 5099, scheduler + retention disabled
+.\scripts\Start-KsrUi.ps1            # live DB on port 5099, scheduler + retention disabled
 ```
 
-A second instance on the same database is normally refused by the single-instance guard. `Start-KoLiteUi.ps1` bypasses it with `--KoLite:AllowMultipleInstances=true` while keeping the scheduler, worker, performance collection/backfill, and retention disabled, so the viewer performs no background writes. Performance displays already stored statistics without contacting Kusto. The manual equivalent is:
+A second instance on the same database is normally refused by the single-instance guard. `Start-KsrUi.ps1` bypasses it with `--Ksr:AllowMultipleInstances=true` while keeping the scheduler, worker, performance collection/backfill, and retention disabled, so the viewer performs no background writes. Performance displays already stored statistics without contacting Kusto. The manual equivalent is:
 
 ```powershell
-$db = "$env:LOCALAPPDATA\KoLite\ko-lite.db"
-dotnet run --project .\src\KoLite.LocalApp\KoLite.LocalApp.csproj -- --ConnectionStrings:KoLiteSqlite="$db" --KoLite:Scheduler:Enabled=false --KoLite:Retention:Enabled=false --KoLite:AllowMultipleInstances=true --KoLite:Kusto:AuthMode=AzureCli --KoLite:Urls=http://127.0.0.1:5099
+$db = "$env:LOCALAPPDATA\Ksr\ksr.db"
+dotnet run --project .\src\Ksr.LocalApp\Ksr.LocalApp.csproj -- --ConnectionStrings:KsrSqlite="$db" --Ksr:Scheduler:Enabled=false --Ksr:Retention:Enabled=false --Ksr:AllowMultipleInstances=true --Ksr:Kusto:AuthMode=AzureCli --Ksr:Urls=http://127.0.0.1:5099
 ```
 
 Startup still applies the current schema to the live database, so when your branch changes the schema use `-UseCopy` (or a sandbox `-DatabasePath`) instead. Mutating UI actions also write to the live database.
@@ -92,24 +92,24 @@ Performance collection is mandatory in a normal execution-enabled host. Tests th
 scheduler must replace `IKustoCommandStatisticsReader` (or the collection-pass seam) as well as any
 fake output executor; replacing `ILocalSliceOutputExecutor` alone does not intercept telemetry reads.
 There is no separate performance enable/off configuration. UI-only tests inherit the existing
-`KoLite:Scheduler:Enabled=false` boundary.
+`Ksr:Scheduler:Enabled=false` boundary.
 
 ## Run from a deployed copy (avoid the build file lock)
 
-`dotnet run` from the repository locks `src\KoLite.LocalApp\bin\...\KoLite.LocalApp.dll`, so a running app makes `dotnet build` / `dotnet test` fail with MSB3026/MSB3027 file-in-use errors. To iterate on changes while an app keeps running, deploy the build to an isolated folder and run it from there:
+`dotnet run` from the repository locks `src\Ksr.LocalApp\bin\...\Ksr.LocalApp.dll`, so a running app makes `dotnet build` / `dotnet test` fail with MSB3026/MSB3027 file-in-use errors. To iterate on changes while an app keeps running, deploy the build to an isolated folder and run it from there:
 
 ```powershell
-.\scripts\Publish-KoLiteApp.ps1            # dotnet publish (Release) to %LOCALAPPDATA%\KoLite\run-app
-.\scripts\Start-KoLiteApp.ps1              # run that deployed copy in the foreground (Ctrl+C to stop)
+.\scripts\Publish-KsrApp.ps1            # dotnet publish (Release) to %LOCALAPPDATA%\Ksr\run-app
+.\scripts\Start-KsrApp.ps1              # run that deployed copy in the foreground (Ctrl+C to stop)
 ```
 
-`Start-KoLiteApp.ps1` can be invoked from the repository as shown above or from inside the deployed folder after `Publish-KoLiteApp.ps1` copies it there. In both cases it starts the process with the deployed folder as the working directory so published static assets resolve correctly. Pass `-StopRunning` to gracefully drain an instance already running from the target folder before re-publishing. See the [operations runbook](operations-runbook.md#published-output) for all options.
+`Start-KsrApp.ps1` can be invoked from the repository as shown above or from inside the deployed folder after `Publish-KsrApp.ps1` copies it there. In both cases it starts the process with the deployed folder as the working directory so published static assets resolve correctly. Pass `-StopRunning` to gracefully drain an instance already running from the target folder before re-publishing. See the [operations runbook](operations-runbook.md#published-output) for all options.
 
 Publishing also includes the optional Windows sign-in startup helpers and their
-shared `KoLite.Startup.psm1` module. Publishing does not register a task. From
-the deployed folder, `.\Register-KoLiteStartup.ps1` opts into a visible console
+shared `Ksr.Startup.psm1` module. Publishing does not register a task. From
+the deployed folder, `.\Register-KsrStartup.ps1` opts into a visible console
 on sign-in; `-WindowMode Background` selects no visible window.
-`Get-KoLiteStartup.ps1` inspects the registration and `Unregister-KoLiteStartup.ps1`
+`Get-KsrStartup.ps1` inspects the registration and `Unregister-KsrStartup.ps1`
 removes it without stopping the app. See the
 [startup runbook](docs/operations-runbook.md#automatic-startup-at-windows-sign-in).
 
@@ -118,12 +118,12 @@ probes, and mocked task registration; in-memory task-definition checks never
 register a real task. Run the focused coverage with:
 
 ```powershell
-dotnet test .\tests\KoLite.LocalApp.Tests\KoLite.LocalApp.Tests.csproj --no-restore --filter "FullyQualifiedName~StartupScriptTests|FullyQualifiedName~OperationalScriptTests" --nologo
+dotnet test .\tests\Ksr.LocalApp.Tests\Ksr.LocalApp.Tests.csproj --no-restore --filter "FullyQualifiedName~StartupScriptTests|FullyQualifiedName~OperationalScriptTests" --nologo
 ```
 
 Do not test startup by rebooting/signing out, registering against the live app,
 or publishing over its files. Any manual startup smoke test must use a sandbox
-database, a separate port, and `KoLite:Scheduler:Enabled=false` (which also
+database, a separate port, and `Ksr:Scheduler:Enabled=false` (which also
 disables performance collection/backfill). Actual console visibility is a
 Windows visual acceptance check, not just a task-definition assertion.
 
@@ -134,7 +134,7 @@ Run the **Kusto Slice Runner Release** workflow from GitHub Actions with an unus
 publishes and smoke-tests both Windows x64 packages, generates checksums and
 complete release notes, and creates a draft.
 
-After the draft exists, invoke the `ko-lite-release-highlights` skill. It
+After the draft exists, invoke the `ksr-release-highlights` skill. It
 auto-selects a single workflow-owned draft, asks when multiple eligible drafts
 exist, previews the exact generated bullets, and edits only `## Changes` after
 explicit approval. Replacing existing non-placeholder Changes content requires
@@ -144,7 +144,7 @@ the interaction, and publishing remains manual.
 For a read-only script preflight, run:
 
 ```powershell
-pwsh -File .\scripts\New-KoLiteReleaseHighlights.ps1 -DryRun
+pwsh -File .\scripts\New-KsrReleaseHighlights.ps1 -DryRun
 ```
 
 See the [release guide](docs/releasing.md).

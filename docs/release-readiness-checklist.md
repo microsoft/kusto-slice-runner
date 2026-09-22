@@ -28,11 +28,11 @@ does not authorize public visibility or release publication.
 
 ```powershell
 npm ci
-dotnet restore .\KoLite.Local.sln
-dotnet format .\KoLite.Local.sln --verify-no-changes --no-restore --verbosity minimal
-dotnet build .\KoLite.Local.sln --no-restore --nologo
-dotnet test .\KoLite.Local.sln --no-build --nologo
-dotnet list .\KoLite.Local.sln package --vulnerable
+dotnet restore .\Ksr.Local.sln
+dotnet format .\Ksr.Local.sln --verify-no-changes --no-restore --verbosity minimal
+dotnet build .\Ksr.Local.sln --no-restore --nologo
+dotnet test .\Ksr.Local.sln --no-build --nologo
+dotnet list .\Ksr.Local.sln package --vulnerable
 npm audit --omit=dev --audit-level=moderate
 ```
 
@@ -50,22 +50,22 @@ Keep `dotnet format` at the default severity. Info-level analyzer cleanup is int
 ## Dependency and notice validation
 
 - Confirm `package-lock.json` matches `package.json`.
-- Confirm Chart.js assets under `src\KoLite.LocalApp\wwwroot\lib\chartjs`, Cytoscape.js assets under `src\KoLite.LocalApp\wwwroot\lib\cytoscape`, and marked assets under `src\KoLite.LocalApp\wwwroot\lib\marked` match the restored npm packages when intentionally refreshed.
+- Confirm Chart.js assets under `src\Ksr.LocalApp\wwwroot\lib\chartjs`, Cytoscape.js assets under `src\Ksr.LocalApp\wwwroot\lib\cytoscape`, and marked assets under `src\Ksr.LocalApp\wwwroot\lib\marked` match the restored npm packages when intentionally refreshed.
 - Confirm `THIRD-PARTY-NOTICES.md` includes Chart.js, `@kurkle/color`, Cytoscape.js, cytoscape-dagre, and marked.
 - Confirm public support, contributor attribution, CLA, and security guidance are current.
 
 ## Publish smoke
 
 ```powershell
-$publishDir = "$env:TEMP\ko-lite-publish"
-dotnet publish .\src\KoLite.LocalApp\KoLite.LocalApp.csproj --configuration Release --output "$publishDir" --nologo
+$publishDir = "$env:TEMP\ksr-publish"
+dotnet publish .\src\Ksr.LocalApp\Ksr.LocalApp.csproj --configuration Release --output "$publishDir" --nologo
 ```
 
 For a live smoke test, use a disposable SQLite database and start with scheduler disabled:
 
 ```powershell
-$db = "$env:LOCALAPPDATA\KoLite\ko-lite-smoke.db"
-dotnet "$publishDir\KoLite.LocalApp.dll" --ConnectionStrings:KoLiteSqlite="$db" --KoLite:Scheduler:Enabled=false --KoLite:Kusto:AuthMode=AzureCli
+$db = "$env:LOCALAPPDATA\Ksr\ksr-smoke.db"
+dotnet "$publishDir\Ksr.LocalApp.dll" --ConnectionStrings:KsrSqlite="$db" --Ksr:Scheduler:Enabled=false --Ksr:Kusto:AuthMode=AzureCli
 ```
 
 Open `http://127.0.0.1:5057/healthz`, then inspect `http://127.0.0.1:5057/api/v1/system/status` to confirm the database path and scheduler-disabled state. Stop the process before deleting the disposable database.
@@ -80,7 +80,7 @@ Open `http://127.0.0.1:5057/healthz`, then inspect `http://127.0.0.1:5057/api/v1
   - framework-dependent DLL through .NET 10.
 - Confirm both ZIPs contain the start/stop scripts, required notices/docs, and `.github\skills`, but no SQLite databases, logs, credentials, `bin`, or `obj` directories.
 - Download `SHA256SUMS.txt` and verify both ZIP hashes.
-- Optionally invoke the `ko-lite-release-highlights` skill. It auto-selects one
+- Optionally invoke the `ksr-release-highlights` skill. It auto-selects one
   workflow-owned draft or asks you to choose among multiple eligible drafts.
 - Review every generated bullet against the complete GitHub-generated notes,
   then explicitly approve the Changes-section edit. If Changes already contains

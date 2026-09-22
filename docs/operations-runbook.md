@@ -7,8 +7,8 @@ This runbook covers safe local operation for Kusto Slice Runner.
 Run with scheduler dispatch disabled when inspecting the UI or reviewing imported jobs:
 
 ```powershell
-$db = "$env:LOCALAPPDATA\KoLite\ko-lite-review.db"
-dotnet run --project .\src\KoLite.LocalApp\KoLite.LocalApp.csproj -- --ConnectionStrings:KoLiteSqlite="$db" --KoLite:Scheduler:Enabled=false --KoLite:Kusto:AuthMode=AzureCli
+$db = "$env:LOCALAPPDATA\Ksr\ksr-review.db"
+dotnet run --project .\src\Ksr.LocalApp\Ksr.LocalApp.csproj -- --ConnectionStrings:KsrSqlite="$db" --Ksr:Scheduler:Enabled=false --Ksr:Kusto:AuthMode=AzureCli
 ```
 
 Open `http://127.0.0.1:5057/healthz`, then inspect `http://127.0.0.1:5057/api/v1/system/status` to confirm the database path, scheduler settings, Kusto auth mode, shutdown state, and worker-pool snapshot.
@@ -16,10 +16,10 @@ Open `http://127.0.0.1:5057/healthz`, then inspect `http://127.0.0.1:5057/api/v1
 If port `5057` is busy, add an explicit URL:
 
 ```powershell
---KoLite:Urls=http://127.0.0.1:5058
+--Ksr:Urls=http://127.0.0.1:5058
 ```
 
-To view the **live** database (`%LOCALAPPDATA%\KoLite\ko-lite.db`) while your app keeps running, start a second UI-only instance with `.\scripts\Start-KoLiteUi.ps1` (defaults to the live database on port 5099). A second instance on the same database is otherwise refused by the single-instance guard; the script bypasses it with `KoLite:AllowMultipleInstances=true` and keeps the scheduler, worker, and retention disabled so the viewer makes no background writes. Startup still applies the current schema to whatever database it opens, so pass `-UseCopy` when your branch changes the schema.
+To view the **live** database (`%LOCALAPPDATA%\Ksr\ksr.db`) while your app keeps running, start a second UI-only instance with `.\scripts\Start-KsrUi.ps1` (defaults to the live database on port 5099). A second instance on the same database is otherwise refused by the single-instance guard; the script bypasses it with `Ksr:AllowMultipleInstances=true` and keeps the scheduler, worker, and retention disabled so the viewer makes no background writes. Startup still applies the current schema to whatever database it opens, so pass `-UseCopy` when your branch changes the schema.
 
 ## Live local execution
 
@@ -34,39 +34,39 @@ Before enabling scheduler dispatch:
 Then run with scheduler dispatch enabled:
 
 ```powershell
-dotnet run --project .\src\KoLite.LocalApp\KoLite.LocalApp.csproj -- --ConnectionStrings:KoLiteSqlite="$db" --KoLite:Scheduler:Enabled=true --KoLite:Kusto:AuthMode=AzureCli
+dotnet run --project .\src\Ksr.LocalApp\Ksr.LocalApp.csproj -- --ConnectionStrings:KsrSqlite="$db" --Ksr:Scheduler:Enabled=true --Ksr:Kusto:AuthMode=AzureCli
 ```
 
 ## Configuration
 
 | Setting | Default | Notes |
 | --- | --- | --- |
-| `ConnectionStrings:KoLiteSqlite` | Empty | Preferred explicit local SQLite path. |
-| `KoLite:DatabasePath` | `%LOCALAPPDATA%\KoLite\ko-lite.db` | Fallback database path when no connection string is supplied. |
-| `KoLite:Urls` | `http://127.0.0.1:5057` | Local bind URL. |
-| `KoLite:AllowMultipleInstances` | `false` | Bypasses the single-instance guard so a UI-only viewer can run alongside the live app against the same database. Only for that intentional case: keep `KoLite:Scheduler:Enabled=false` and `KoLite:Retention:Enabled=false`, and note startup still applies the current schema to whatever database it opens. See [Safe local review](#safe-local-review). |
-| `KoLite:Scheduler:Enabled` | `true` | Disable for UI-only or safe first-run review. |
-| `KoLite:Scheduler:TickInterval` | `00:00:10` | Scheduler cadence. Must be greater than zero. |
-| `KoLite:Scheduler:LogEveryPass` | `false` | Writes durable scheduler/worker diagnostic rows when enabled. |
-| `KoLite:WorkerPool:MaxConcurrency` | `Unbounded` | Global execution-unit concurrency cap across all jobs. Unbounded by default (`int.MaxValue` internally), so total concurrency is governed by the sum of each job's `maxParallelism`; set any positive integer to impose a global cap. There is no hard product maximum. |
-| `KoLite:WorkerPool:IdleDelay` | `00:00:00.250` | Delay between idle dispatcher cycles. |
-| `KoLite:WorkerPool:MaxDispatchStartsPerCycle` | `100` | Maximum execution units started in one dispatcher cycle. This controls start rate, not total in-flight concurrency; the default can launch all 32 chunks of one window in a cycle. |
-| `KoLite:Kusto:AuthMode` | `AzureCli` | Supported values: `AzureCli`, `ManagedIdentity`. |
-| `KoLite:Kusto:ManagedIdentityClientId` | Empty | Optional user-assigned managed identity client ID. |
-| `KoLite:UpdateCheck:Enabled` | `true` | Periodically checks GitHub for a newer published Kusto Slice Runner release. Set `false` to disable. |
-| `KoLite:UpdateCheck:Interval` | `01:00:00` | How often to poll GitHub. Must be greater than zero. |
-| `KoLite:UpdateCheck:Repository` | `microsoft/kusto-slice-runner` | `owner/repo` whose latest published release is compared to the running build. |
-| `KoLite:Retention:Enabled` | `true` | Periodically prunes old operational telemetry so the local database stops growing without bound. Set `false` to disable (the database then grows unbounded). |
-| `KoLite:Retention:WindowDays` | `30` | Operational telemetry older than this is eligible for pruning. Must be greater than zero. The slice window-history is never pruned. |
-| `KoLite:Retention:Interval` | `06:00:00` | How often the retention pass runs. Must be greater than zero. |
-| `KoLite:Retention:InitialDelay` | `00:02:00` | Delay after startup before the first retention pass. |
-| `KoLite:Retention:BatchSize` | `2000` | Rows deleted per batch; each batch commits separately to keep write locks short on the live database. |
+| `ConnectionStrings:KsrSqlite` | Empty | Preferred explicit local SQLite path. |
+| `Ksr:DatabasePath` | `%LOCALAPPDATA%\Ksr\ksr.db` | Fallback database path when no connection string is supplied. |
+| `Ksr:Urls` | `http://127.0.0.1:5057` | Local bind URL. |
+| `Ksr:AllowMultipleInstances` | `false` | Bypasses the single-instance guard so a UI-only viewer can run alongside the live app against the same database. Only for that intentional case: keep `Ksr:Scheduler:Enabled=false` and `Ksr:Retention:Enabled=false`, and note startup still applies the current schema to whatever database it opens. See [Safe local review](#safe-local-review). |
+| `Ksr:Scheduler:Enabled` | `true` | Disable for UI-only or safe first-run review. |
+| `Ksr:Scheduler:TickInterval` | `00:00:10` | Scheduler cadence. Must be greater than zero. |
+| `Ksr:Scheduler:LogEveryPass` | `false` | Writes durable scheduler/worker diagnostic rows when enabled. |
+| `Ksr:WorkerPool:MaxConcurrency` | `Unbounded` | Global execution-unit concurrency cap across all jobs. Unbounded by default (`int.MaxValue` internally), so total concurrency is governed by the sum of each job's `maxParallelism`; set any positive integer to impose a global cap. There is no hard product maximum. |
+| `Ksr:WorkerPool:IdleDelay` | `00:00:00.250` | Delay between idle dispatcher cycles. |
+| `Ksr:WorkerPool:MaxDispatchStartsPerCycle` | `100` | Maximum execution units started in one dispatcher cycle. This controls start rate, not total in-flight concurrency; the default can launch all 32 chunks of one window in a cycle. |
+| `Ksr:Kusto:AuthMode` | `AzureCli` | Supported values: `AzureCli`, `ManagedIdentity`. |
+| `Ksr:Kusto:ManagedIdentityClientId` | Empty | Optional user-assigned managed identity client ID. |
+| `Ksr:UpdateCheck:Enabled` | `true` | Periodically checks GitHub for a newer published Kusto Slice Runner release. Set `false` to disable. |
+| `Ksr:UpdateCheck:Interval` | `01:00:00` | How often to poll GitHub. Must be greater than zero. |
+| `Ksr:UpdateCheck:Repository` | `microsoft/kusto-slice-runner` | `owner/repo` whose latest published release is compared to the running build. |
+| `Ksr:Retention:Enabled` | `true` | Periodically prunes old operational telemetry so the local database stops growing without bound. Set `false` to disable (the database then grows unbounded). |
+| `Ksr:Retention:WindowDays` | `30` | Operational telemetry older than this is eligible for pruning. Must be greater than zero. The slice window-history is never pruned. |
+| `Ksr:Retention:Interval` | `06:00:00` | How often the retention pass runs. Must be greater than zero. |
+| `Ksr:Retention:InitialDelay` | `00:02:00` | Delay after startup before the first retention pass. |
+| `Ksr:Retention:BatchSize` | `2000` | Rows deleted per batch; each batch commits separately to keep write locks short on the live database. |
 
-Compatibility aliases `KoLite:Scheduler:WorkerConcurrency` and `KoLite:Scheduler:MaxWorkerIterations` are still accepted by the worker-pool options.
+Compatibility aliases `Ksr:Scheduler:WorkerConcurrency` and `Ksr:Scheduler:MaxWorkerIterations` are still accepted by the worker-pool options.
 
 ### Console log verbosity
 
-Console verbosity uses per-category log-level filters. The default level is `Warning`, which keeps framework and host `info:` lines (for example `Microsoft.Hosting.Lifetime` "Now listening on…" / "Application started") out of the console. The `KoLite.LocalApp` category is raised to `Information`, so Kusto Slice Runner's own progress lines — scheduler enqueue, per-slice worker start/finish, graceful-drain completion, and update-check transitions — remain visible. Warnings, errors, and dead-letter lines always remain visible. The two lower-value worker-dispatcher lines (dispatcher start and in-flight cancellation during shutdown) are emitted at `Debug`, so they stay quiet even at `Information`. To see everything, raise the level — for example set `Logging:LogLevel:Default` to `Debug` or `KoLite.LocalApp` to `Debug` in `appsettings.json`, or pass `--Logging:LogLevel:KoLite.LocalApp=Debug`. Durable scheduler/worker diagnostic rows are still controlled separately by `KoLite:Scheduler:LogEveryPass`.
+Console verbosity uses per-category log-level filters. The default level is `Warning`, which keeps framework and host `info:` lines (for example `Microsoft.Hosting.Lifetime` "Now listening on…" / "Application started") out of the console. The `Ksr.LocalApp` category is raised to `Information`, so Kusto Slice Runner's own progress lines — scheduler enqueue, per-slice worker start/finish, graceful-drain completion, and update-check transitions — remain visible. Warnings, errors, and dead-letter lines always remain visible. The two lower-value worker-dispatcher lines (dispatcher start and in-flight cancellation during shutdown) are emitted at `Debug`, so they stay quiet even at `Information`. To see everything, raise the level — for example set `Logging:LogLevel:Default` to `Debug` or `Ksr.LocalApp` to `Debug` in `appsettings.json`, or pass `--Logging:LogLevel:Ksr.LocalApp=Debug`. Durable scheduler/worker diagnostic rows are still controlled separately by `Ksr:Scheduler:LogEveryPass`.
 
 ## Update checks
 
@@ -103,8 +103,8 @@ state events). A retention background service keeps that growth in check.
 
 ### What is pruned vs. preserved
 
-On each pass (every `KoLite:Retention:Interval`, after an initial `KoLite:Retention:InitialDelay`),
-Kusto Slice Runner deletes **non-authoritative operational telemetry** older than `KoLite:Retention:WindowDays`:
+On each pass (every `Ksr:Retention:Interval`, after an initial `Ksr:Retention:InitialDelay`),
+Kusto Slice Runner deletes **non-authoritative operational telemetry** older than `Ksr:Retention:WindowDays`:
 
 - `operational_logs` — routine scheduler/worker log rows.
 - `work_queue` — only **terminal** rows (`Completed`/`DeadLettered`); `Queued`/`Leased` rows are
@@ -149,9 +149,9 @@ physically reclaim space after a large backlog has been pruned, stop the app and
 VACUUM:
 
 ```powershell
-.\scripts\Invoke-KoLiteVacuum.ps1 -DryRun     # report the in-use database path and current size
-.\scripts\Stop-KoLiteApp.ps1                  # VACUUM needs exclusive access
-.\scripts\Invoke-KoLiteVacuum.ps1             # rewrite the database and report reclaimed space
+.\scripts\Invoke-KsrVacuum.ps1 -DryRun     # report the in-use database path and current size
+.\scripts\Stop-KsrApp.ps1                  # VACUUM needs exclusive access
+.\scripts\Invoke-KsrVacuum.ps1             # rewrite the database and report reclaimed space
 ```
 
 VACUUM rewrites the whole database and needs free disk for a temporary copy. The script refuses to
@@ -187,7 +187,7 @@ Hover or focus a chunked job's slice-history cell to see **Chunks: completed/tot
 `maxParallelism` counts execution units, not parent windows: each chunk consumes one slot, while
 an unchunked slice consumes one slot. It has no upper limit beyond the minimum of 1. Full fan-out
 of a 32-chunk window requires `maxParallelism >= 32` and at least 32 free global worker slots.
-The global pool is unbounded by default; if `KoLite:WorkerPool:MaxConcurrency` is configured, all
+The global pool is unbounded by default; if `Ksr:WorkerPool:MaxConcurrency` is configured, all
 jobs share that finite cap. `MaxDispatchStartsPerCycle` is separate and defaults to 100.
 
 Repair requeues only failed/dead-lettered chunks and reuses their stable ingest-by identities.
@@ -249,17 +249,17 @@ Open a job's **Dependencies** tab, or multi-select jobs on the dashboard and cho
 
 The graph's **Resolve Kusto lineage** button additionally fetches, from Kusto, both directions of each charted job's data lineage. This is the only graph action that contacts Kusto:
 
-- It runs a single read-only `.show databases entities with (resolveDependencies = true, resolveFunctionsSchema = true)` per distinct cluster in the chain, using the same Kusto auth (`KoLite:Kusto:AuthMode`) as live execution. It performs no writes and persists nothing — each click re-queries live.
+- It runs a single read-only `.show databases entities with (resolveDependencies = true, resolveFunctionsSchema = true)` per distinct cluster in the chain, using the same Kusto auth (`Ksr:Kusto:AuthMode`) as live execution. It performs no writes and persists nothing — each click re-queries live.
 - **Downstream consumers.** The non-job **functions and materialized views** that read each job's output table are added. Consumers that are themselves Kusto Slice Runner jobs map onto the existing job node (that link is already shown); pass-through tables (e.g. update-policy targets) are bridged through but not drawn.
 - **Upstream sources.** The tables/functions each job's function **directly reads** are added as source nodes — **including cross-cluster sources**, which are named directly in the function's dependencies (and labelled `@cluster`), so no second cluster is queried.
-- **Implicit (undeclared) dependencies.** When a job's function reads **another KO job's output table that is not in its `dependsOn`**, a **dashed amber** edge is drawn (and noted in the legend). This is informational — it does **not** change scheduler readiness, which still uses the declared `dependsOn`. Consider adding the edge to `dependsOn` if the ordering matters.
+- **Implicit (undeclared) dependencies.** When a job's function reads **another KSR job's output table that is not in its `dependsOn`**, a **dashed amber** edge is drawn (and noted in the legend). This is informational — it does **not** change scheduler readiness, which still uses the declared `dependsOn`. Consider adding the edge to `dependsOn` if the ordering matters.
 - Scope is the charted jobs' own cluster(s); one call returns lineage across every accessible database on that cluster. A downstream consumer hosted on a *different* cluster than the job is not discovered (cross-cluster *sources*, named directly, are). Failures (auth, permission, unreachable cluster, timeout) surface as an inline message beside the button and leave the job graph intact.
 
 ## Bulk actions on the dashboard
 
 The home dashboard supports multi-select bulk actions only in the **Active jobs** and **Completed jobs** sections. Use the per-row checkboxes or a section's header checkbox to select jobs; the contextual action bar offers **Pause**, **Resume**, **Soft delete**, and **Export**. The **Soft-deleted jobs** section is not selectable, so permanent deletion cannot be reached from the dashboard's normal bulk-action flow. Selection respects the dashboard text filter — filtered-out rows are excluded — and collapsing the Inactive jobs group keeps the current selection.
 
-Bulk Pause/Resume/Soft delete apply with no extra confirmation (soft delete is reversible from the Soft-deleted section via **Restore**). They honor the same optimistic-concurrency model as the single-row actions: each selected row carries the catalog version shown on the page, and any job that changed since the page loaded — or is already in the requested state, soft-deleted, or missing — is **skipped** rather than forced. After the action, a summary banner reports how many jobs changed and how many were skipped. Bulk **Export** downloads an import-compatible JSON array (`ko-lite-jobs.json`) containing only the selected jobs, sorted in ascending `activityId` (job id) order.
+Bulk Pause/Resume/Soft delete apply with no extra confirmation (soft delete is reversible from the Soft-deleted section via **Restore**). They honor the same optimistic-concurrency model as the single-row actions: each selected row carries the catalog version shown on the page, and any job that changed since the page loaded — or is already in the requested state, soft-deleted, or missing — is **skipped** rather than forced. After the action, a summary banner reports how many jobs changed and how many were skipped. Bulk **Export** downloads an import-compatible JSON array (`ksr-jobs.json`) containing only the selected jobs, sorted in ascending `activityId` (job id) order.
 
 Bulk **Hard delete** is intentionally isolated on **Manage soft-deleted jobs**, linked from the Soft-deleted jobs section header. That page contains only currently soft-deleted jobs and is the only surface with bulk hard-delete checkboxes. After selection it opens a separate review page that lists every selected activity ID and permanent GUID, explains which local rows will be removed, and requires the exact count phrase `DELETE 1 JOB` or `DELETE N JOBS`. Final submission revalidates every job's catalog version, soft-delete state, disabled state, and active leases/running slices inside one SQLite transaction. If any selected job is missing, changed, restored, enabled, or still executing, the entire batch is rejected and **no jobs are deleted**. A successful batch records one purge run and an audit event for each deleted job. Hard delete removes local Kusto Slice Runner state only; it never deletes Kusto data.
 
@@ -279,31 +279,31 @@ Running `dotnet run` from the repository locks the build output, so `dotnet buil
 Use the helper scripts (recommended):
 
 ```powershell
-.\scripts\Publish-KoLiteApp.ps1            # dotnet publish (Release) to %LOCALAPPDATA%\KoLite\run-app,
-                                           # then copy Start-/Stop-KoLiteApp.ps1 into that folder
-.\scripts\Start-KoLiteApp.ps1              # run the deployed copy in the foreground (Ctrl+C to stop)
+.\scripts\Publish-KsrApp.ps1            # dotnet publish (Release) to %LOCALAPPDATA%\Ksr\run-app,
+                                           # then copy Start-/Stop-KsrApp.ps1 into that folder
+.\scripts\Start-KsrApp.ps1              # run the deployed copy in the foreground (Ctrl+C to stop)
 ```
 
-`Publish-KoLiteApp.ps1` prints the full deployed path when it finishes. Pass `-OutputDirectory` to deploy elsewhere, `-Clean` to clear the target first, and `-StopRunning` to gracefully drain a running instance (via `Stop-KoLiteApp.ps1`) before re-publishing — a published DLL cannot be overwritten while an instance is running from the same folder.
+`Publish-KsrApp.ps1` prints the full deployed path when it finishes. Pass `-OutputDirectory` to deploy elsewhere, `-Clean` to clear the target first, and `-StopRunning` to gracefully drain a running instance (via `Stop-KsrApp.ps1`) before re-publishing — a published DLL cannot be overwritten while an instance is running from the same folder.
 
-`Start-KoLiteApp.ps1` can be invoked from the repository or from inside the deployed folder. It changes the child process working directory to the deployed folder so ASP.NET Core can resolve the published `wwwroot` assets in either case. It runs with no extra flags by default, matching a no-parameters run (scheduler enabled/live, Kusto `AzureCli`, default database `%LOCALAPPDATA%\KoLite\ko-lite.db`). Pass overrides through `-AppArguments`, for example a disposable database with the scheduler disabled:
+`Start-KsrApp.ps1` can be invoked from the repository or from inside the deployed folder. It changes the child process working directory to the deployed folder so ASP.NET Core can resolve the published `wwwroot` assets in either case. It runs with no extra flags by default, matching a no-parameters run (scheduler enabled/live, Kusto `AzureCli`, default database `%LOCALAPPDATA%\Ksr\ksr.db`). Pass overrides through `-AppArguments`, for example a disposable database with the scheduler disabled:
 
 ```powershell
-.\Start-KoLiteApp.ps1 -AppArguments '--ConnectionStrings:KoLiteSqlite=...','--KoLite:Scheduler:Enabled=false','--KoLite:Kusto:AuthMode=AzureCli'
+.\Start-KsrApp.ps1 -AppArguments '--ConnectionStrings:KsrSqlite=...','--Ksr:Scheduler:Enabled=false','--Ksr:Kusto:AuthMode=AzureCli'
 ```
 
-The same script is included in GitHub Release downloads. It prefers `KoLite.LocalApp.exe` in the self-contained Windows x64 package and falls back to `dotnet KoLite.LocalApp.dll` in the framework-dependent package. The framework-dependent package requires the .NET 10 runtime.
+The same script is included in GitHub Release downloads. It prefers `Ksr.LocalApp.exe` in the self-contained Windows x64 package and falls back to `dotnet Ksr.LocalApp.dll` in the framework-dependent package. The framework-dependent package requires the .NET 10 runtime.
 
-Release ZIPs are replaceable application files; the default durable SQLite database remains at `%LOCALAPPDATA%\KoLite\ko-lite.db`. Extract a new release to a new or cleaned application folder rather than copying it over a running version. Gracefully drain the old instance first, then start the new release with scheduling disabled to inspect `/healthz`, `/api/v1/system/status`, and the configured targets before enabling live scheduling.
+Release ZIPs are replaceable application files; the default durable SQLite database remains at `%LOCALAPPDATA%\Ksr\ksr.db`. Extract a new release to a new or cleaned application folder rather than copying it over a running version. Gracefully drain the old instance first, then start the new release with scheduling disabled to inspect `/healthz`, `/api/v1/system/status`, and the configured targets before enabling live scheduling.
 
 The equivalent manual commands are:
 
 ```powershell
-$publishDir = "$env:LOCALAPPDATA\KoLite\run-app"
-dotnet publish .\src\KoLite.LocalApp\KoLite.LocalApp.csproj --configuration Release --output "$publishDir" --nologo
+$publishDir = "$env:LOCALAPPDATA\Ksr\run-app"
+dotnet publish .\src\Ksr.LocalApp\Ksr.LocalApp.csproj --configuration Release --output "$publishDir" --nologo
 Push-Location $publishDir
 try {
-    dotnet .\KoLite.LocalApp.dll --ConnectionStrings:KoLiteSqlite="$db" --KoLite:Scheduler:Enabled=false --KoLite:Kusto:AuthMode=AzureCli
+    dotnet .\Ksr.LocalApp.dll --ConnectionStrings:KsrSqlite="$db" --Ksr:Scheduler:Enabled=false --Ksr:Kusto:AuthMode=AzureCli
 } finally {
     Pop-Location
 }
@@ -317,13 +317,13 @@ Automatic startup is opt-in and Windows-only. From a **stable published folder**
 register a per-user Task Scheduler task:
 
 ```powershell
-.\Register-KoLiteStartup.ps1 -DryRun
-.\Register-KoLiteStartup.ps1                         # first registration: visible console
-.\Register-KoLiteStartup.ps1 -WindowMode Background  # change the next start to background
-.\Register-KoLiteStartup.ps1 -WindowMode Console     # change back to a visible console
-.\Get-KoLiteStartup.ps1
-.\Unregister-KoLiteStartup.ps1 -DryRun
-.\Unregister-KoLiteStartup.ps1
+.\Register-KsrStartup.ps1 -DryRun
+.\Register-KsrStartup.ps1                         # first registration: visible console
+.\Register-KsrStartup.ps1 -WindowMode Background  # change the next start to background
+.\Register-KsrStartup.ps1 -WindowMode Console     # change back to a visible console
+.\Get-KsrStartup.ps1
+.\Unregister-KsrStartup.ps1 -DryRun
+.\Unregister-KsrStartup.ps1
 ```
 
 The task runs as the registering user at limited privileges, only after that user
@@ -339,16 +339,16 @@ Paused/deleted jobs stay paused/deleted; a disabled scheduler is not enabled by
 registration. Preserve custom database, URL, or other launch overrides explicitly:
 
 ```powershell
-.\Register-KoLiteStartup.ps1 -AppDirectory 'D:\Kusto Slice Runner' -AppArguments @(
-    '--ConnectionStrings:KoLiteSqlite=D:\Kusto Slice Runner data\catalog.db',
-    '--KoLite:Urls=http://127.0.0.1:5058'
+.\Register-KsrStartup.ps1 -AppDirectory 'D:\Kusto Slice Runner' -AppArguments @(
+    '--ConnectionStrings:KsrSqlite=D:\Kusto Slice Runner data\catalog.db',
+    '--Ksr:Urls=http://127.0.0.1:5058'
 )
 ```
 
 On updates, omitted arguments and window mode retain their previous values.
 Use `-AppArguments @()` to clear saved overrides. The app directory is resolved
 from an explicit `-AppDirectory`, an app adjacent to the registration script,
-the existing registration, or `%LOCALAPPDATA%\KoLite\run-app`, in that order.
+the existing registration, or `%LOCALAPPDATA%\Ksr\run-app`, in that order.
 Settings are encoded **data, not executable commands**, in the task definition.
 Encoding is not encryption: never put credentials or secrets in `-AppArguments`.
 The task and settings are replaced together, avoiding separate settings-file
@@ -356,7 +356,7 @@ updates. The scripts refuse unrelated tasks with the same name.
 
 **Lifecycle.** Console mode shows live app output; background mode displays no
 console. Minimize the console to leave the app running. Closing it is not a
-hide-to-background action and can interrupt work; use `Stop-KoLiteApp.ps1` for
+hide-to-background action and can interrupt work; use `Stop-KsrApp.ps1` for
 a graceful drain. The startup console closes when the app exits. A deliberate
 stop or crash stays stopped until another sign-in or an explicit manual start;
 there is no crash watchdog or periodic restart. Removing startup removes the
@@ -379,9 +379,9 @@ operator action (`az login` in a separate terminal). Successful app startup is
 not proof of Kusto access. Pre-login hosting would require a separate unattended
 identity/hosting design; the desktop task does not implement it.
 
-**Diagnostics.** `Get-KoLiteStartup.ps1` reports the task name, enabled/state
+**Diagnostics.** `Get-KsrStartup.ps1` reports the task name, enabled/state
 values, selected mode, arguments, last run/result, and log directory.
-`%LOCALAPPDATA%\KoLite\startup\startup.log` records startup, stdout/stderr, and
+`%LOCALAPPDATA%\Ksr\startup\startup.log` records startup, stdout/stderr, and
 exit codes in either mode. It keeps three rotated files (`startup.log.1` through
 `.3`), each at most 1 MiB; individual messages are truncated after 4,096
 characters. Registration itself does not create these logs. A nonzero task
@@ -398,7 +398,7 @@ policy for allowing them to run.
 
 **Upgrades.** Replacing application files at the same stable path preserves the
 task; moving to another folder requires re-registration from the new folder or
-with `-AppDirectory`. Keep `Start-KoLiteApp.ps1`, `KoLite.Startup.psm1`, and the
+with `-AppDirectory`. Keep `Start-KsrApp.ps1`, `Ksr.Startup.psm1`, and the
 registration helpers from the same release. Follow the existing backup, drain,
 and schema-upgrade precautions before replacing a deployed version. Startup
 registration is not permission to upgrade a running app or open an older app's
@@ -515,16 +515,16 @@ identity's permissions. Older reused client request IDs require unambiguous targ
 inaccessible, expired, or ambiguous history stays unavailable rather than being guessed. Whole-slice
 rerun does not erase earlier attempts from Performance; hard deletion of the job does.
 
-**UI-only mode.** `KoLite:Scheduler:Enabled=false` suppresses collection and backfill as well as
+**UI-only mode.** `Ksr:Scheduler:Enabled=false` suppresses collection and backfill as well as
 scheduling/worker dispatch. The Performance view still displays already stored statistics. An
 alternate port/database, Development environment, `AllowMultipleInstances`, or disabling retention
-alone is not a no-execution mode. `Start-KoLiteUi.ps1` supplies the required scheduler override.
+alone is not a no-execution mode. `Start-KsrUi.ps1` supplies the required scheduler override.
 
 ## Upgrading after throttling-advisor retirement
 
 The standalone advisor, recommendations/apply workflow, banner, chart, dedicated
 detection, and observation statistics have been removed. `/throttling` and
-`/throttling/apply` return 404. Remove unused `KoLite:Throttling:*` configuration;
+`/throttling/apply` return 404. Remove unused `Ksr:Throttling:*` configuration;
 those settings no longer have any effect.
 
 The first upgraded startup drops `ingestion_throttle_observations` and its
@@ -548,14 +548,14 @@ There is no replacement counter or zero-valued compatibility property.
 
 ## Diagnostics
 
-Run `.\scripts\Get-KoLiteDatabase.ps1` to print the in-use SQLite database path. While the app is running it reports the authoritative `database.path` from `/api/v1/system/status`; while the app is stopped it reports the default and flags the most likely live file. Pass `-BaseUrl` for a non-default endpoint.
+Run `.\scripts\Get-KsrDatabase.ps1` to print the in-use SQLite database path. While the app is running it reports the authoritative `database.path` from `/api/v1/system/status`; while the app is stopped it reports the default and flags the most likely live file. Pass `-BaseUrl` for a non-default endpoint.
 
 Use `/api/v1/system/status` to confirm the database path, scheduler options, Kusto auth mode, worker-pool state, supported API versions, and shutdown state.
 
 Enable per-pass scheduler/worker diagnostics temporarily with:
 
 ```powershell
---KoLite:Scheduler:LogEveryPass=true
+--Ksr:Scheduler:LogEveryPass=true
 ```
 
 Inspect recent scheduler pass gaps with:
@@ -590,7 +590,7 @@ Install GitHub Copilot CLI so the `copilot` command is on `PATH`, then run `copi
 
 The child process is deliberately non-agentic: Kusto Slice Runner disables all tools, built-in MCP servers, repository custom instructions, remote control/export, and automatic CLI updates for the invocation. Failure messages are treated as untrusted evidence, not instructions. Only the final text response is accepted.
 
-Configure it under `KoLite:CopilotAnalysis`:
+Configure it under `Ksr:CopilotAnalysis`:
 
 | Key | Default | Purpose |
 | --- | --- | --- |
@@ -673,7 +673,7 @@ dead letters.
 ### Requeuing slices that already dead-lettered
 
 For agent-guided historical cleanup, use the
-[`ko-lite-gap-repair` skill](../.github/skills/ko-lite-gap-repair/SKILL.md).
+[`ksr-gap-repair` skill](../.github/skills/ksr-gap-repair/SKILL.md).
 It requires the newest three resolved logical slices to be Completed for
 windows up to and including one hour, or the newest one for longer windows.
 Recovered retries are allowed; a newer terminal failure is not skipped to
@@ -758,8 +758,8 @@ ORDER BY slice_start_utc;
 
 ## Troubleshooting
 
-- **Port in use:** add `--KoLite:Urls=http://127.0.0.1:5058`.
-- **Unexpected live work:** restart with `--KoLite:Scheduler:Enabled=false`, pause jobs, or stop the local process and wait for active work to drain.
+- **Port in use:** add `--Ksr:Urls=http://127.0.0.1:5058`.
+- **Unexpected live work:** restart with `--Ksr:Scheduler:Enabled=false`, pause jobs, or stop the local process and wait for active work to drain.
 - **Kusto auth failures:** verify Azure CLI sign-in, managed identity settings, target cluster/database, and Kusto permissions.
 - **Locked publish output:** stop the published app before republishing.
 - **SQLite inspection:** use `database.path` from `/api/v1/system/status`; runtime sidecar files such as `*.db-wal` and `*.db-shm` are local artifacts.

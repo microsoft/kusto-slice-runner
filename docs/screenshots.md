@@ -44,7 +44,7 @@ From the checkout root:
 .\scripts\Capture-DocumentationScreenshots.ps1
 ```
 
-The script publishes `tests\KoLite.LocalApp.ScreenshotHost` into
+The script publishes `tests\Ksr.LocalApp.ScreenshotHost` into
 `artifacts\documentation-screenshots\app`, then starts it at
 `http://127.0.0.1:5107`. If that port is occupied, nothing is stopped; specify an
 unused port with `-Port`. Port 5057 is refused.
@@ -80,7 +80,7 @@ Do not use the ordinary app-start script on the screenshot deployment.
 | `activity.png` | Two running logical windows and three running executions, including two active chunks of a four-chunk window; two queued windows and three queued executions. |
 | `copilot-failure-analysis.png` | Three deliberately dead-lettered daily refund windows, a consistent schema-mismatch explanation, and an explicit illustrative-analysis notice. |
 
-The fixture targets `https://kolite-example.invalid` / `RetailDemo`, a reserved,
+The fixture targets `https://ksr-example.invalid` / `RetailDemo`, a reserved,
 non-routable example host. Do not substitute a real cluster or import the fixtures
 into the live app. ADX deep links are displayed but never followed during capture.
 
@@ -126,7 +126,7 @@ or sanitization service.
 Focused fixture coverage runs without installing a browser:
 
 ```powershell
-dotnet test .\tests\KoLite.LocalApp.Tests\KoLite.LocalApp.Tests.csproj --filter "FullyQualifiedName~DocumentationScreenshotTests" --nologo
+dotnet test .\tests\Ksr.LocalApp.Tests\Ksr.LocalApp.Tests.csproj --filter "FullyQualifiedName~DocumentationScreenshotTests" --nologo
 ```
 
 The normal app's project, runtime registrations, HTTP contracts, and release

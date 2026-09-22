@@ -65,7 +65,7 @@ window.fetch = async (...args) => {
   requests.push(args);
   throw new Error("Performance UI must not fetch data while filtering or expanding.");
 };
-const script = await readFile(new URL("../src/KoLite.LocalApp/wwwroot/js/site.js", import.meta.url), "utf8");
+const script = await readFile(new URL("../src/Ksr.LocalApp/wwwroot/js/site.js", import.meta.url), "utf8");
 window.eval(script);
 
 const document = window.document;

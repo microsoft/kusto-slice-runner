@@ -12,7 +12,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: ko-lite-release
+  group: ksr-release
   cancel-in-progress: false
 
 jobs:
@@ -71,7 +71,7 @@ jobs:
               }
           }
 
-          $releaseMarker = "ko-lite-release-workflow:$version@$env:GITHUB_SHA"
+          $releaseMarker = "ksr-release-workflow:$version@$env:GITHUB_SHA"
           $releaseFilter = '.[] | select(.tag_name == "' + $version + '") | [.id, .draft, (.body // "" | contains("' + $releaseMarker + '")), .target_commitish] | @tsv'
           $releaseStates = @(
               @(
@@ -140,19 +140,19 @@ jobs:
         run: npm run test:js
 
       - name: Restore .NET packages
-        run: dotnet restore .\KoLite.Local.sln
+        run: dotnet restore .\Ksr.Local.sln
 
       - name: Verify formatting
-        run: dotnet format .\KoLite.Local.sln --verify-no-changes --no-restore --verbosity minimal
+        run: dotnet format .\Ksr.Local.sln --verify-no-changes --no-restore --verbosity minimal
 
       - name: Build
-        run: dotnet build .\KoLite.Local.sln --no-restore --nologo
+        run: dotnet build .\Ksr.Local.sln --no-restore --nologo
 
       - name: Test
-        run: dotnet test .\KoLite.Local.sln --no-build --nologo --logger "console;verbosity=normal" -- xUnit.ShowLiveOutput=true
+        run: dotnet test .\Ksr.Local.sln --no-build --nologo --logger "console;verbosity=normal" -- xUnit.ShowLiveOutput=true
 
       - name: Check NuGet vulnerabilities
-        run: dotnet list .\KoLite.Local.sln package --vulnerable
+        run: dotnet list .\Ksr.Local.sln package --vulnerable
 
       - name: Check npm vulnerabilities
         run: npm audit --omit=dev --audit-level=moderate
@@ -168,30 +168,30 @@ jobs:
           Set-StrictMode -Version Latest
           $ErrorActionPreference = 'Stop'
 
-          $releaseRoot = Join-Path $env:RUNNER_TEMP "ko-lite-release-$env:RELEASE_VERSION"
+          $releaseRoot = Join-Path $env:RUNNER_TEMP "ksr-release-$env:RELEASE_VERSION"
           if (Test-Path -LiteralPath $releaseRoot) {
               Remove-Item -LiteralPath $releaseRoot -Recurse -Force
           }
           New-Item -ItemType Directory -Path $releaseRoot -Force | Out-Null
 
-          $selfContainedName = "ko-lite-$env:RELEASE_VERSION-win-x64-self-contained"
-          $frameworkDependentName = "ko-lite-$env:RELEASE_VERSION-win-x64-framework-dependent"
+          $selfContainedName = "kusto-slice-runner-$env:RELEASE_VERSION-win-x64-self-contained"
+          $frameworkDependentName = "kusto-slice-runner-$env:RELEASE_VERSION-win-x64-framework-dependent"
           $selfContainedPackage = Join-Path $releaseRoot $selfContainedName
           $frameworkDependentPackage = Join-Path $releaseRoot $frameworkDependentName
-          $stampTargets = Join-Path $releaseRoot 'KoLite.ReleaseStamp.targets'
+          $stampTargets = Join-Path $releaseRoot 'Ksr.ReleaseStamp.targets'
 
-          # KoLite.LocalApp's normal target discovers the SHA from git only when the property is
-          # empty. This release-only import makes the explicit KoLiteGitCommitSha property an
+          # Ksr.LocalApp's normal target discovers the SHA from git only when the property is
+          # empty. This release-only import makes the explicit KsrGitCommitSha property an
           # AssemblyMetadataAttribute without changing the application project.
           $stampTargetsXml = @'
           <Project>
-            <Target Name="AddReleaseKoLiteGitCommitShaAttribute"
+            <Target Name="AddReleaseKsrGitCommitShaAttribute"
                     BeforeTargets="GetAssemblyAttributes"
-                    Condition="'$(MSBuildProjectName)' == 'KoLite.LocalApp'">
+                    Condition="'$(MSBuildProjectName)' == 'Ksr.LocalApp'">
               <ItemGroup>
                 <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
-                  <_Parameter1>KoLiteGitCommitSha</_Parameter1>
-                  <_Parameter2>$(KoLiteGitCommitSha)</_Parameter2>
+                  <_Parameter1>KsrGitCommitSha</_Parameter1>
+                  <_Parameter2>$(KsrGitCommitSha)</_Parameter2>
                 </AssemblyAttribute>
               </ItemGroup>
             </Target>
@@ -202,14 +202,14 @@ jobs:
               $stampTargetsXml,
               [System.Text.UTF8Encoding]::new($false))
 
-          $project = '.\src\KoLite.LocalApp\KoLite.LocalApp.csproj'
+          $project = '.\src\Ksr.LocalApp\Ksr.LocalApp.csproj'
           $commonArguments = @(
               $project,
               '--configuration', 'Release',
               '--runtime', 'win-x64',
               '--nologo',
               "-p:Version=$env:PACKAGE_VERSION",
-              "-p:KoLiteGitCommitSha=$env:RELEASE_SHA",
+              "-p:KsrGitCommitSha=$env:RELEASE_SHA",
               "-p:DirectoryBuildTargetsPath=$stampTargets",
               '-p:ContinuousIntegrationBuild=true'
           )
@@ -232,12 +232,12 @@ jobs:
           }
 
           $packageFiles = @(
-              '.\scripts\Start-KoLiteApp.ps1',
-              '.\scripts\Stop-KoLiteApp.ps1',
-              '.\scripts\KoLite.Startup.psm1',
-              '.\scripts\Register-KoLiteStartup.ps1',
-              '.\scripts\Get-KoLiteStartup.ps1',
-              '.\scripts\Unregister-KoLiteStartup.ps1',
+              '.\scripts\Start-KsrApp.ps1',
+              '.\scripts\Stop-KsrApp.ps1',
+              '.\scripts\Ksr.Startup.psm1',
+              '.\scripts\Register-KsrStartup.ps1',
+              '.\scripts\Get-KsrStartup.ps1',
+              '.\scripts\Unregister-KsrStartup.ps1',
               '.\README.md',
               '.\DEVELOPMENT.md',
               '.\CONTRIBUTING.md',
@@ -249,7 +249,7 @@ jobs:
               '.\THIRD-PARTY-NOTICES.md'
           )
           $skillsSource = '.\.github\skills'
-          $releaseHighlightsScript = '.\scripts\New-KoLiteReleaseHighlights.ps1'
+          $releaseHighlightsScript = '.\scripts\New-KsrReleaseHighlights.ps1'
           $releasePrompt = '.\.github\prompts\release-notes-system.txt'
 
           foreach ($packageDirectory in @($selfContainedPackage, $frameworkDependentPackage)) {
@@ -305,7 +305,7 @@ jobs:
           Set-StrictMode -Version Latest
           $ErrorActionPreference = 'Stop'
 
-          function Invoke-KoLiteSmokeTest {
+          function Invoke-KsrSmokeTest {
               param(
                   [Parameter(Mandatory)][string]$Name,
                   [Parameter(Mandatory)][string]$FileName,
@@ -338,12 +338,12 @@ jobs:
                       $startInfo.ArgumentList.Add($argument)
                   }
                   foreach ($argument in @(
-                      "--ConnectionStrings:KoLiteSqlite=$DatabasePath",
-                      '--KoLite:Scheduler:Enabled=false',
-                      '--KoLite:Retention:Enabled=false',
-                      '--KoLite:UpdateCheck:Enabled=false',
-                      '--KoLite:Kusto:AuthMode=AzureCli',
-                      "--KoLite:Urls=$BaseUrl"
+                      "--ConnectionStrings:KsrSqlite=$DatabasePath",
+                      '--Ksr:Scheduler:Enabled=false',
+                      '--Ksr:Retention:Enabled=false',
+                      '--Ksr:UpdateCheck:Enabled=false',
+                      '--Ksr:Kusto:AuthMode=AzureCli',
+                      "--Ksr:Urls=$BaseUrl"
                   )) {
                       $startInfo.ArgumentList.Add($argument)
                   }
@@ -405,7 +405,7 @@ jobs:
                       $builtSha,
                       $env:RELEASE_SHA,
                       [System.StringComparison]::OrdinalIgnoreCase)) {
-                      throw "$Name reported KoLiteGitCommitSha '$builtSha' instead of '$env:RELEASE_SHA'."
+                      throw "$Name reported KsrGitCommitSha '$builtSha' instead of '$env:RELEASE_SHA'."
                   }
 
                   & $StopScript `
@@ -445,21 +445,21 @@ jobs:
               }
           }
 
-          $selfContainedStop = Join-Path $env:SELF_CONTAINED_PACKAGE 'Stop-KoLiteApp.ps1'
-          Invoke-KoLiteSmokeTest `
+          $selfContainedStop = Join-Path $env:SELF_CONTAINED_PACKAGE 'Stop-KsrApp.ps1'
+          Invoke-KsrSmokeTest `
               -Name 'self-contained' `
-              -FileName (Join-Path $env:SELF_CONTAINED_PACKAGE 'KoLite.LocalApp.exe') `
+              -FileName (Join-Path $env:SELF_CONTAINED_PACKAGE 'Ksr.LocalApp.exe') `
               -WorkingDirectory $env:SELF_CONTAINED_PACKAGE `
               -DatabasePath (Join-Path $env:RELEASE_ROOT 'smoke-self-contained.db') `
               -BaseUrl 'http://127.0.0.1:5097' `
               -StopScript $selfContainedStop
 
           $dotnetPath = (Get-Command dotnet -ErrorAction Stop).Source
-          $frameworkDependentStop = Join-Path $env:FRAMEWORK_DEPENDENT_PACKAGE 'Stop-KoLiteApp.ps1'
-          Invoke-KoLiteSmokeTest `
+          $frameworkDependentStop = Join-Path $env:FRAMEWORK_DEPENDENT_PACKAGE 'Stop-KsrApp.ps1'
+          Invoke-KsrSmokeTest `
               -Name 'framework-dependent' `
               -FileName $dotnetPath `
-              -EntryArguments @((Join-Path $env:FRAMEWORK_DEPENDENT_PACKAGE 'KoLite.LocalApp.dll')) `
+              -EntryArguments @((Join-Path $env:FRAMEWORK_DEPENDENT_PACKAGE 'Ksr.LocalApp.dll')) `
               -WorkingDirectory $env:FRAMEWORK_DEPENDENT_PACKAGE `
               -DatabasePath (Join-Path $env:RELEASE_ROOT 'smoke-framework-dependent.db') `
               -BaseUrl 'http://127.0.0.1:5098' `
@@ -538,13 +538,13 @@ jobs:
               $zip = [System.IO.Compression.ZipFile]::OpenRead($archive)
               try {
                   $entryNames = @($zip.Entries | ForEach-Object FullName)
-                  if ($entryNames -notcontains 'Start-KoLiteApp.ps1') {
-                      throw "Archive '$archive' does not have Start-KoLiteApp.ps1 at its package root."
+                  if ($entryNames -notcontains 'Start-KsrApp.ps1') {
+                      throw "Archive '$archive' does not have Start-KsrApp.ps1 at its package root."
                   }
-                  if ($entryNames -notcontains 'Stop-KoLiteApp.ps1') {
-                      throw "Archive '$archive' does not have Stop-KoLiteApp.ps1 at its package root."
+                  if ($entryNames -notcontains 'Stop-KsrApp.ps1') {
+                      throw "Archive '$archive' does not have Stop-KsrApp.ps1 at its package root."
                   }
-                  foreach ($helper in @('KoLite.Startup.psm1', 'Register-KoLiteStartup.ps1', 'Get-KoLiteStartup.ps1', 'Unregister-KoLiteStartup.ps1')) {
+                  foreach ($helper in @('Ksr.Startup.psm1', 'Register-KsrStartup.ps1', 'Get-KsrStartup.ps1', 'Unregister-KsrStartup.ps1')) {
                       if ($entryNames -notcontains $helper) {
                           throw "Archive '$archive' does not have $helper at its package root."
                       }
@@ -708,7 +708,7 @@ jobs:
 
           $aiStatus = @'
           Actions AI was not attempted.
-          Local Copilot post-processing is supported by scripts\New-KoLiteReleaseHighlights.ps1.
+          Local Copilot post-processing is supported by scripts\New-KsrReleaseHighlights.ps1.
           The release-highlights skill previews reviewed local Copilot output before applying only
           the Changes section of this draft.
           '@
@@ -720,7 +720,7 @@ jobs:
           $changesTemplate = @'
           ## Changes
 
-          _Use the `ko-lite-release-highlights` skill to generate, review, and apply this section._
+          _Use the `ksr-release-highlights` skill to generate, review, and apply this section._
           '@
           $changes = $changesTemplate
 
@@ -729,14 +729,14 @@ jobs:
 
           Download and extract one Windows x64 archive:
 
-          - **Self-contained:** `ko-lite-{{version}}-win-x64-self-contained.zip` includes the .NET runtime.
+          - **Self-contained:** `kusto-slice-runner-{{version}}-win-x64-self-contained.zip` includes the .NET runtime.
 
-          - **Framework-dependent:** `ko-lite-{{version}}-win-x64-framework-dependent.zip` requires the .NET 10 ASP.NET Core Runtime (x64).
+          - **Framework-dependent:** `kusto-slice-runner-{{version}}-win-x64-framework-dependent.zip` requires the .NET 10 ASP.NET Core Runtime (x64).
 
-          Both archives extract with `Start-KoLiteApp.ps1` at the package root:
+          Both archives extract with `Start-KsrApp.ps1` at the package root:
 
           ```powershell
-          .\Start-KoLiteApp.ps1
+          .\Start-KsrApp.ps1
           ```
 
           Open `http://127.0.0.1:5057`.
@@ -771,7 +771,7 @@ jobs:
       - name: Upload release-note grounding
         uses: actions/upload-artifact@v7
         with:
-          name: ko-lite-release-grounding-${{ steps.validate.outputs.version }}
+          name: ksr-release-grounding-${{ steps.validate.outputs.version }}
           path: ${{ steps.generated-notes.outputs.grounding-dir }}
           if-no-files-found: error
           retention-days: 30
