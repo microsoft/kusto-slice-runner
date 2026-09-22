@@ -10,10 +10,10 @@ NuGet inventory. This file is a browser-asset summary, not the complete release 
 | @kurkle/color | 0.3.4 | MIT | Transitive dependency of Chart.js in `package-lock.json` |
 | Cytoscape.js | 3.34.3 | MIT | `package-lock.json`, `src\Ksr.LocalApp\wwwroot\lib\cytoscape\cytoscape.min.js` |
 | cytoscape-dagre | 4.0.1 | MIT | `package-lock.json`, `src\Ksr.LocalApp\wwwroot\lib\cytoscape\cytoscape-dagre.js` (bundles dagre/graphlib, MIT) |
-| marked | 18.0.12 | MIT | `package-lock.json`, `src\Ksr.LocalApp\wwwroot\lib\marked\marked.umd.js` (renders the Copilot failure analysis) |
-| jsdom | 30.0.1 | MIT | Development-only DOM simulation for `npm run test:js` |
-| Playwright | 1.60.0 | Apache-2.0 | Development-only documentation screenshot capture; `package-lock.json` |
-| playwright-core | 1.60.0 | Apache-2.0 | Development-only Playwright browser driver; `package-lock.json` |
+| marked | 18.0.13 | MIT | `package-lock.json`, `src\Ksr.LocalApp\wwwroot\lib\marked\marked.umd.js` (renders the Copilot failure analysis) |
+| jsdom | 30.1.0 | MIT | Development-only DOM simulation for `npm run test:js` |
+| Playwright | 1.63.0 | Apache-2.0 | Development-only documentation screenshot capture; `package-lock.json` |
+| playwright-core | 1.63.0 | Apache-2.0 | Development-only Playwright browser driver; `package-lock.json` |
 
 The Chart.js, Cytoscape.js, and marked browser bundles (and the Chart.js source map) are tracked under `src\Ksr.LocalApp\wwwroot\lib` so the .NET app can run without requiring npm during every build. Refresh them with:
 

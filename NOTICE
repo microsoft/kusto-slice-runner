@@ -17,7 +17,7 @@ cytoscape 3.34.3 - MIT
 
 cytoscape-dagre 4.0.1 - MIT
 
-marked 18.0.12 - MIT
+marked 18.0.13 - MIT
 
 
 cytoscape-dagre also bundles Dagre/Graphlib code. Preserve the distribution's
@@ -338,7 +338,7 @@ SOFTWARE.
 
 
 ========================================================================
-marked 18.0.12 / LICENSE
+marked 18.0.13 / LICENSE
 
 # License information
 
