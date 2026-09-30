@@ -240,7 +240,9 @@ namespace Ksr.LocalApp.Tests
                     "-BaseUrl", server.BaseUrl,
                     "-Confirm:$false");
                 Assert.NotEqual(0, stop.ExitCode);
-                Assert.Contains("version shipped with that app", stop.Error, StringComparison.Ordinal);
+                Assert.True(
+                    stop.Error.Contains("version shipped with that app", StringComparison.Ordinal),
+                    $"Stop script did not report the incompatible service. Output: {stop.Output}\nError: {stop.Error}");
                 Assert.Equal(0, server.PostCount);
 
                 var vacuum = await RunPowerShellAsync(
@@ -249,14 +251,18 @@ namespace Ksr.LocalApp.Tests
                     "-DatabasePath", Path.Combine(temporaryOutput, "missing.db"),
                     "-DryRun");
                 Assert.NotEqual(0, vacuum.ExitCode);
-                Assert.Contains("version shipped with that app", vacuum.Error, StringComparison.Ordinal);
+                Assert.True(
+                    vacuum.Error.Contains("version shipped with that app", StringComparison.Ordinal),
+                    $"Vacuum script did not report the incompatible service. Output: {vacuum.Output}\nError: {vacuum.Error}");
 
                 var publish = await RunPowerShellAsync(
                     Path.Combine(root, "scripts", "Publish-KsrApp.ps1"),
                     "-BaseUrl", server.BaseUrl,
                     "-OutputDirectory", temporaryOutput);
                 Assert.NotEqual(0, publish.ExitCode);
-                Assert.Contains("version shipped with that app", publish.Error, StringComparison.Ordinal);
+                Assert.True(
+                    publish.Error.Contains("version shipped with that app", StringComparison.Ordinal),
+                    $"Publish script did not report the incompatible service. Output: {publish.Output}\nError: {publish.Error}");
                 Assert.False(Directory.Exists(temporaryOutput));
             }
             finally
@@ -265,6 +271,33 @@ namespace Ksr.LocalApp.Tests
                 {
                     Directory.Delete(temporaryOutput, recursive: true);
                 }
+            }
+        }
+
+        [Fact]
+        public async Task Incompatible_server_responds_without_capturing_the_test_synchronization_context()
+        {
+            var context = new TrackingSynchronizationContext();
+            var previousContext = SynchronizationContext.Current;
+            IncompatibleHttpServer server;
+            try
+            {
+                SynchronizationContext.SetSynchronizationContext(context);
+                server = new IncompatibleHttpServer(200, "{}");
+            }
+            finally
+            {
+                SynchronizationContext.SetSynchronizationContext(previousContext);
+            }
+
+            await using (server)
+            {
+                using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+                using var response = await client.GetAsync($"{server.BaseUrl}/control/v1/shutdown");
+
+                Assert.Equal(System.Net.HttpStatusCode.OK, response.StatusCode);
+                Assert.Equal("{}", await response.Content.ReadAsStringAsync());
+                Assert.Equal(0, context.PostCount);
             }
         }
 
@@ -553,6 +586,19 @@ namespace Ksr.LocalApp.Tests
 
         private sealed record ProcessResult(int ExitCode, string Output, string Error);
 
+        private sealed class TrackingSynchronizationContext : SynchronizationContext
+        {
+            private int postCount;
+
+            public int PostCount => Volatile.Read(ref postCount);
+
+            public override void Post(SendOrPostCallback callback, object? state)
+            {
+                Interlocked.Increment(ref postCount);
+                _ = Task.Run(() => callback(state));
+            }
+        }
+
         private sealed class IncompatibleHttpServer : IAsyncDisposable
         {
             private readonly System.Net.Sockets.TcpListener listener =
@@ -595,7 +641,7 @@ namespace Ksr.LocalApp.Tests
             {
                 while (!cancellation.IsCancellationRequested)
                 {
-                    var client = await listener.AcceptTcpClientAsync(cancellation.Token);
+                    var client = await listener.AcceptTcpClientAsync(cancellation.Token).ConfigureAwait(false);
                     _ = Task.Run(() => Respond(client), cancellation.Token);
                 }
             }
