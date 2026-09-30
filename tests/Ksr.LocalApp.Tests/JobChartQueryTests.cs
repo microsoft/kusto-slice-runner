@@ -180,7 +180,7 @@ namespace Ksr.LocalApp.Tests
         }
 
         [Fact]
-        public void Charts_omit_the_current_incomplete_bucket()
+        public void Charts_include_the_current_incomplete_bucket_as_provisional()
         {
             catalog.Create(Schedule("job.complete-buckets"));
             var jobId = JobId("job.complete-buckets");
@@ -199,14 +199,70 @@ namespace Ksr.LocalApp.Tests
             var dashboard = query.GetDashboardCharts(TimeSpan.FromDays(1));
             var details = query.GetJobDetailsCharts(jobId, TimeSpan.FromDays(1));
 
-            Assert.Equal(At(120), dashboard.AttemptSuccess.RangeEndUtc);
+            Assert.Equal(At(180), dashboard.AttemptSuccess.RangeEndUtc);
             Assert.Equal(24, dashboard.AttemptSuccess.Series.Single().Points.Count);
-            Assert.Equal(1, dashboard.AttemptSuccess.Series.Single().Points.Sum(point => point.Denominator));
+            Assert.Equal(2, dashboard.AttemptSuccess.Series.Single().Points.Sum(point => point.Denominator));
             Assert.Equal(1, dashboard.AttemptSuccess.Series.Single().Points.Sum(point => point.Numerator));
-            Assert.Equal(1, dashboard.SuccessAfterRetries.Series.Single().Points.Sum(point => point.Denominator));
-            Assert.Equal(1, details.AttemptResults.Points.Sum(point => point.TotalCount));
+            Assert.Equal(2, dashboard.SuccessAfterRetries.Series.Single().Points.Sum(point => point.Denominator));
+            Assert.Equal(2, details.AttemptResults.Points.Sum(point => point.TotalCount));
             Assert.Equal(1, details.AttemptResults.Points.Sum(point => point.SuccessCount));
             Assert.Equal(1, details.SuccessfulDurations.SampleCount);
+            Assert.Equal(At(120), details.AttemptResults.Timing.CurrentBucketStartUtc);
+            Assert.Equal(1, details.AttemptResults.Points[^1].ErrorCount);
+        }
+
+        [Fact]
+        public void Job_started_in_the_open_hour_has_both_charts_and_observed_success_rate()
+        {
+            catalog.Create(Schedule("job.just-started"));
+            var jobId = JobId("job.just-started");
+            var lease = state.AcquireLease("current-lease", jobId, At(0), At(5), "worker", TimeSpan.FromMinutes(30), At(122));
+            Assert.NotNull(lease);
+            Assert.True(state.CompleteLease("current-complete", jobId, At(0), At(5), "worker", lease.LeaseToken!, At(125)));
+            readModels.RecordAttempt("current-success", jobId, At(0), At(5), 1, "Succeeded", "worker", At(122), At(125));
+
+            var query = new JobChartQuery(factory, new ManualClock(At(126)));
+            var details = query.GetJobDetailsCharts(jobId, TimeSpan.FromDays(1));
+            var dashboard = query.GetDashboardCharts(TimeSpan.FromDays(1));
+
+            Assert.Equal(At(120), details.AttemptResults.Timing.CurrentBucketStartUtc);
+            Assert.Equal(At(126), details.AttemptResults.Timing.AsOfUtc);
+            Assert.Equal(details.AttemptResults.Timing, details.SuccessfulDurations.Timing);
+            Assert.Equal(dashboard.AttemptSuccess.Timing, dashboard.SuccessAfterRetries.Timing);
+            Assert.Equal(1, details.AttemptResults.Points[^1].SuccessCount);
+            Assert.Equal(1, details.SuccessfulDurations.Points[^1].Count);
+            Assert.True(details.AttemptResults.HasData);
+            Assert.True(details.SuccessfulDurations.HasData);
+            Assert.Equal(1, dashboard.AttemptSuccess.Series.Single().Points[^1].Denominator);
+            Assert.Equal(100, dashboard.AttemptSuccess.Series.Single().Points[^1].Percent);
+            Assert.Equal(1, dashboard.SuccessAfterRetries.Series.Single().Points[^1].Denominator);
+        }
+
+        [Theory]
+        [InlineData(-1, 1)]
+        [InlineData(0, 0)]
+        [InlineData(1, 0)]
+        public void Chart_queries_exclude_running_and_at_or_after_as_of_outcomes(int completionOffsetTicks, int expectedCount)
+        {
+            var jobId = catalog.Create(Schedule("job.as-of")).JobId;
+            var asOf = At(126);
+            var completion = asOf.AddTicks(completionOffsetTicks);
+            var lease = state.AcquireLease("as-of-lease", jobId, At(0), At(5), "worker", TimeSpan.FromMinutes(30), At(122));
+            Assert.NotNull(lease);
+            Assert.True(state.CompleteLease("as-of-complete", jobId, At(0), At(5), "worker", lease.LeaseToken!, completion));
+            readModels.RecordAttempt("as-of-success", jobId, At(0), At(5), 1, "Succeeded", "worker", At(122), completion);
+            var runningLease = state.AcquireLease("as-of-running", jobId, At(5), At(10), "worker", TimeSpan.FromMinutes(30), At(123));
+            Assert.NotNull(runningLease);
+            readModels.RecordAttempt("as-of-started", jobId, At(5), At(10), 1, "Started", "worker", At(123), null);
+
+            var query = new JobChartQuery(factory, new ManualClock(asOf));
+            var dashboard = query.GetDashboardCharts(TimeSpan.FromDays(1));
+            var details = query.GetJobDetailsCharts(jobId, TimeSpan.FromDays(1));
+
+            Assert.Equal(expectedCount, dashboard.AttemptSuccess.Series.Single().Points.Sum(point => point.Denominator));
+            Assert.Equal(expectedCount, dashboard.SuccessAfterRetries.Series.Single().Points.Sum(point => point.Denominator));
+            Assert.Equal(expectedCount, details.AttemptResults.Points.Sum(point => point.TotalCount));
+            Assert.Equal(expectedCount, details.SuccessfulDurations.SampleCount);
         }
 
         [Fact]

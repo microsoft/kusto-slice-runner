@@ -104,7 +104,7 @@
             <h2>Success Statistics</h2>
             <p class="muted chart-help">
                 The first chart counts every completed execution-unit attempt, including chunk retries. The second chart scores whether each logical slice eventually succeeded after retries.
-                Charts show complete UTC-aligned buckets through <span class="mono">@AppFormatting.Iso(Model.Data.Charts.AttemptSuccess.RangeEndUtc)</span>; the current incomplete bucket is omitted.
+                <partial name="_ChartWindowStatus" model="Model.Data.Charts.AttemptSuccess.Timing" />
             </p>
         </div>
         <div class="range-picker">

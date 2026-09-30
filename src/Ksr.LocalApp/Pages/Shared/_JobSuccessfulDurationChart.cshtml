@@ -12,6 +12,8 @@
         rangeStartUtc = AppFormatting.Iso(Model.RangeStartUtc),
         rangeEndUtc = AppFormatting.Iso(Model.RangeEndUtc),
         bucketMs = (long)Model.BucketSize.TotalMilliseconds,
+        asOfUtc = AppFormatting.Iso(Model.Timing.AsOfUtc),
+        currentBucketStartUtc = Model.Timing.CurrentBucketStartUtc is { } start ? AppFormatting.Iso(start) : null,
         yAxisTitle = "Duration",
         series = new[]
         {
@@ -37,7 +39,7 @@
 @if (!Model.HasData)
 {
     <p class="empty">
-        No successful executions with duration data occurred in the completed chart buckets for the selected period.
+        No successful executions with duration data occurred in the selected period as of @AppFormatting.Iso(Model.Timing.AsOfUtc).
         @if (Model.MissingDurationCount > 0)
         {
             <span>@Model.MissingDurationCount successful execution(s) were missing duration data.</span>

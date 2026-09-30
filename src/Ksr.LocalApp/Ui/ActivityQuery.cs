@@ -30,7 +30,8 @@ namespace Ksr.LocalApp.Ui
         IReadOnlyList<ExecutionsProcessedPoint> Points,
         DateTimeOffset RangeStartUtc,
         DateTimeOffset RangeEndUtc,
-        TimeSpan BucketSize)
+        TimeSpan BucketSize,
+        ChartWindowTiming Timing)
     {
         public bool HasData => Points.Any(p => p.TotalCount > 0);
     }
@@ -390,7 +391,7 @@ namespace Ksr.LocalApp.Ui
                 lastDay,
                 last7Days,
                 last30Days,
-                new ExecutionsProcessedChart(points, window.Since, window.Until, window.BucketSize));
+                new ExecutionsProcessedChart(points, window.Since, window.Until, window.BucketSize, window.Timing));
         }
     }
 }

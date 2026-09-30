@@ -1,0 +1,9 @@
+@* Copyright (c) Microsoft Corporation.
+   Licensed under the MIT License. *@
+@model ChartWindowTiming
+
+Complete UTC-aligned buckets through <span class="mono">@AppFormatting.Iso(Model.CompleteThroughUtc)</span>.
+@if (Model.CurrentBucketStartUtc is { } start)
+{
+    <span>The current bucket, <span class="mono">@AppFormatting.Iso(start)</span> to <span class="mono">@AppFormatting.Iso(Model.AsOfUtc)</span> so far, is provisional and shaded light purple. Refresh to see new results.</span>
+}

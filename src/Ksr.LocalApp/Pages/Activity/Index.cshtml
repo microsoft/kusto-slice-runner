@@ -268,7 +268,7 @@ else if (Model.Data is { } data)
             <h2>Executions processed over time</h2>
             <p class="muted chart-help">
                 Execution units by latest terminal completion, succeeded vs. failed/dead-lettered.
-                The chart shows complete UTC-aligned buckets through <span class="mono">@AppFormatting.Iso(data.Chart.RangeEndUtc)</span>; the current incomplete bucket is omitted.
+                <partial name="_ChartWindowStatus" model="data.Chart.Timing" />
             </p>
         </div>
         <div class="range-picker">

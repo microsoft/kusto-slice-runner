@@ -110,6 +110,31 @@ namespace Ksr.LocalApp.Tests
         }
 
         [Fact]
+        public void Open_bucket_reports_recorded_outcomes_but_not_at_as_of_future_or_running_attempts()
+        {
+            var jobId = catalog.Create(Schedule("activity.open-bucket")).JobId;
+            var asOf = Now.AddMinutes(30);
+            SeedSlice(jobId, At(0), DurableSliceStatus.Completed);
+            SeedSlice(jobId, At(5), DurableSliceStatus.Running);
+            SeedSlice(jobId, At(10), DurableSliceStatus.Failed);
+            SeedSlice(jobId, At(15), DurableSliceStatus.Failed);
+            readModels.RecordAttempt("current-success", jobId, At(0), At(5), 1, "Succeeded", "worker", asOf.AddMinutes(-6), asOf.AddTicks(-1));
+            readModels.RecordAttempt("current-running", jobId, At(5), At(10), 1, "Started", "worker", asOf.AddMinutes(-2), null);
+            readModels.RecordAttempt("at-as-of-failure", jobId, At(10), At(15), 1, "Failed", "worker", asOf.AddMinutes(-1), asOf);
+            readModels.RecordAttempt("future-failure", jobId, At(15), At(20), 1, "Failed", "worker", asOf.AddTicks(1), asOf.AddTicks(2));
+
+            var data = new ActivityQuery(factory, new ManualClock(asOf), readModels, diagnostics).GetActivity(TimeSpan.FromDays(1));
+
+            Assert.Equal(Now, data.Chart.Timing.CurrentBucketStartUtc);
+            Assert.Equal(asOf, data.Chart.Timing.AsOfUtc);
+            Assert.Equal(1, data.Chart.Points[^1].SucceededCount);
+            Assert.Equal(0, data.Chart.Points[^1].FailedCount);
+            Assert.Equal(1, data.Chart.Points.Sum(point => point.TotalCount));
+            Assert.Equal(1, data.LastDay.Succeeded);
+            Assert.Equal(0, data.LastDay.Failed);
+        }
+
+        [Fact]
         public void Reports_zeroes_for_an_empty_store()
         {
             catalog.Create(Schedule("activity.empty"));

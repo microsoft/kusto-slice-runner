@@ -319,7 +319,10 @@ namespace Ksr.LocalApp.Tests
             Assert.Contains("aria-label=\"Healthy", dashboard);
             Assert.Contains("Execution Attempt Success Rate by Function", dashboard);
             Assert.Contains("Logical Slice Success Rate After Retries by Function", dashboard);
-            Assert.Contains("the current incomplete bucket is omitted", dashboard);
+            Assert.Contains("Complete UTC-aligned buckets through", dashboard);
+            Assert.Contains("is provisional and shaded light purple", dashboard);
+            Assert.Equal(2, Regex.Matches(dashboard, "\"currentBucketStartUtc\":").Count);
+            Assert.Equal(2, Regex.Matches(dashboard, "\"asOfUtc\":").Count);
             Assert.Contains("src=\"/lib/chartjs/chart.umd.min.js?v=", dashboard);
             Assert.Contains("class=\"ksr-table job-table job-table-dashboard\"", dashboard);
             Assert.Contains("data-dashboard-filter-input=\"true\"", dashboard);
@@ -363,6 +366,8 @@ namespace Ksr.LocalApp.Tests
             Assert.Contains("data-chartjs-job=\"job-successful-duration-chart\"", details);
             Assert.Contains("\"kind\":\"result-counts\"", details);
             Assert.Contains("\"kind\":\"duration\"", details);
+            Assert.Equal(2, Regex.Matches(details, "\"currentBucketStartUtc\":").Count);
+            Assert.Equal(2, Regex.Matches(details, "\"asOfUtc\":").Count);
             Assert.Contains("Averages include 1 successful execution(s)", details);
             Assert.Contains("no successful executions were missing duration data", details);
             Assert.Contains("\"missingCount\":0", details);
@@ -2768,6 +2773,8 @@ namespace Ksr.LocalApp.Tests
             Assert.Contains("Executions processed over time", page);
             Assert.Contains("aria-label=\"Executions processed over time\"", page);
             Assert.Contains("data-chartjs-activity=\"executions-processed-chart\"", page);
+            Assert.Contains("\"currentBucketStartUtc\":", page);
+            Assert.Contains("\"asOfUtc\":", page);
         }
 
         [Fact]

@@ -7,6 +7,11 @@ using Microsoft.Data.Sqlite;
 
 namespace Ksr.LocalApp.Ui
 {
+    public sealed record ChartWindowTiming(
+        DateTimeOffset AsOfUtc,
+        DateTimeOffset CompleteThroughUtc,
+        DateTimeOffset? CurrentBucketStartUtc);
+
     // A half-open time window [Since, Until) split into fixed-size buckets.
     // Centralizes the bucket-index arithmetic shared by the chart builders so the
     // windowing math has a single source of truth.
@@ -14,7 +19,8 @@ namespace Ksr.LocalApp.Ui
         DateTimeOffset Since,
         DateTimeOffset Until,
         TimeSpan BucketSize,
-        IReadOnlyList<DateTimeOffset> Buckets)
+        IReadOnlyList<DateTimeOffset> Buckets,
+        ChartWindowTiming Timing)
     {
         public int Count => Buckets.Count;
 
@@ -26,7 +32,13 @@ namespace Ksr.LocalApp.Ui
         // builders previously duplicated.
         public int IndexOf(DateTimeOffset time)
         {
-            var index = (int)((time.ToUniversalTime() - Since).Ticks / BucketSize.Ticks);
+            var utc = time.ToUniversalTime();
+            if (utc < Since || utc >= Timing.AsOfUtc)
+            {
+                return -1;
+            }
+
+            var index = (int)((utc - Since).Ticks / BucketSize.Ticks);
             return index < 0 || index >= Buckets.Count ? -1 : index;
         }
     }
@@ -43,8 +55,8 @@ namespace Ksr.LocalApp.Ui
             this.connectionFactory = connectionFactory;
         }
 
-        // Returns the requested span as complete UTC-aligned buckets ending at the latest closed
-        // boundary. The current open bucket is intentionally omitted.
+        // Keeps the selected number of UTC-aligned buckets, including the current partial bucket
+        // when the as-of time falls between boundaries.
         public BucketWindow CreateWindow(DateTimeOffset now, TimeSpan range)
         {
             if (range <= TimeSpan.Zero)
@@ -58,9 +70,17 @@ namespace Ksr.LocalApp.Ui
                 throw new ArgumentException("The chart range must contain a whole number of buckets.", nameof(range));
             }
 
-            var until = AlignDown(now, size);
+            var asOfUtc = now.ToUniversalTime();
+            var completeThroughUtc = AlignDown(asOfUtc, size);
+            var currentBucketStartUtc = asOfUtc > completeThroughUtc ? completeThroughUtc : (DateTimeOffset?)null;
+            var until = currentBucketStartUtc is null ? completeThroughUtc : completeThroughUtc.Add(size);
             var since = until.Subtract(range);
-            return new BucketWindow(since, until, size, EnumerateBuckets(since, until, size));
+            return new BucketWindow(
+                since,
+                until,
+                size,
+                EnumerateBuckets(since, until, size),
+                new ChartWindowTiming(asOfUtc, completeThroughUtc, currentBucketStartUtc));
         }
 
         // Executes a windowed query. The `$since`/`$until` parameters are bound here;
@@ -76,7 +96,7 @@ namespace Ksr.LocalApp.Ui
             using var command = connection.CreateCommand();
             command.CommandText = commandText;
             command.Add("$since", SqliteStorage.Utc(window.Since));
-            command.Add("$until", SqliteStorage.Utc(window.Until));
+            command.Add("$until", SqliteStorage.Utc(window.Timing.AsOfUtc));
             bindParameters?.Invoke(command);
             using var reader = command.ExecuteReader();
             var results = new List<T>();

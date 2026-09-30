@@ -26,7 +26,8 @@ namespace Ksr.LocalApp.Ui
         IReadOnlyList<SuccessRateSeries> Series,
         DateTimeOffset RangeStartUtc,
         DateTimeOffset RangeEndUtc,
-        TimeSpan BucketSize)
+        TimeSpan BucketSize,
+        ChartWindowTiming Timing)
     {
         public bool HasData => Series.Any(s => s.Points.Any(p => p.Denominator > 0));
     }
@@ -72,7 +73,8 @@ namespace Ksr.LocalApp.Ui
         IReadOnlyList<JobAttemptResultPoint> Points,
         DateTimeOffset RangeStartUtc,
         DateTimeOffset RangeEndUtc,
-        TimeSpan BucketSize)
+        TimeSpan BucketSize,
+        ChartWindowTiming Timing)
     {
         public bool HasData => Points.Any(p => p.TotalCount > 0);
     }
@@ -94,7 +96,8 @@ namespace Ksr.LocalApp.Ui
         int MetricsDurationCount,
         int AttemptDurationFallbackCount,
         int RecoveredDurationCount,
-        int MissingDurationCount)
+        int MissingDurationCount,
+        ChartWindowTiming Timing)
     {
         public bool HasData => Points.Any(p => p.Count > 0);
         public int SampleCount => MetricsDurationCount + AttemptDurationFallbackCount + RecoveredDurationCount;
@@ -247,7 +250,8 @@ namespace Ksr.LocalApp.Ui
                 window.Buckets.Select((bucket, index) => new JobAttemptResultPoint(bucket, counts[index].SuccessCount, counts[index].RetryCount, counts[index].ErrorCount)).ToArray(),
                 window.Since,
                 window.Until,
-                window.BucketSize);
+                window.BucketSize,
+                window.Timing);
         }
 
         private JobSuccessfulDurationChart BuildJobSuccessfulDurationChart(string jobId, BucketWindow window)
@@ -308,7 +312,8 @@ namespace Ksr.LocalApp.Ui
                 metricsCount,
                 fallbackCount,
                 recoveredCount,
-                missingCount);
+                missingCount,
+                window.Timing);
         }
 
         private IReadOnlyList<JobAttemptResultCount> ReadJobAttemptResultCounts(string jobId, BucketWindow window)
@@ -555,7 +560,7 @@ namespace Ksr.LocalApp.Ui
                     labels.TryGetValue(jobId, out var label) ? label : jobId,
                     window.Buckets.Select((bucket, index) => new SuccessRatePoint(bucket, counts[jobId][index].Numerator, counts[jobId][index].Denominator)).ToArray()))
                 .ToArray();
-            return new SuccessRateChart(title, series, window.Since, window.Until, window.BucketSize);
+            return new SuccessRateChart(title, series, window.Since, window.Until, window.BucketSize, window.Timing);
         }
 
         private sealed record AttemptOutcome(string JobId, DateTimeOffset CompletedAtUtc, bool Succeeded);

@@ -12,6 +12,8 @@
         rangeStartUtc = AppFormatting.Iso(Model.RangeStartUtc),
         rangeEndUtc = AppFormatting.Iso(Model.RangeEndUtc),
         bucketMs = (long)Model.BucketSize.TotalMilliseconds,
+        asOfUtc = AppFormatting.Iso(Model.Timing.AsOfUtc),
+        currentBucketStartUtc = Model.Timing.CurrentBucketStartUtc is { } start ? AppFormatting.Iso(start) : null,
         yAxisTitle = "Executions",
         series = new[]
         {
@@ -60,7 +62,7 @@
 
 @if (!Model.HasData)
 {
-    <p class="empty">No successful, retryable, or terminal failed executions occurred in the completed chart buckets for the selected period.</p>
+    <p class="empty">No successful, retryable, or terminal failed executions occurred in the selected period as of @AppFormatting.Iso(Model.Timing.AsOfUtc).</p>
 }
 else
 {

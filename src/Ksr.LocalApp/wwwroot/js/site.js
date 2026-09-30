@@ -17,6 +17,25 @@
   ];
   var jobChartPalette = ["#1a7f37", "#d4a72c", "#cf222e", "#0969da", "#8250df"];
   var successRateChartEntries = [];
+  var provisionalBucketPlugin = {
+    id: "provisionalBucket",
+    beforeDraw: function (chart, _args, options) {
+      if (!options || !options.startUtc || !chart.chartArea || !chart.scales.x) return;
+      var start = Date.parse(options.startUtc);
+      var end = Date.parse(options.endUtc);
+      if (!Number.isFinite(start) || !Number.isFinite(end) || start >= end) return;
+
+      var area = chart.chartArea;
+      var left = Math.max(area.left, chart.scales.x.getPixelForValue(start));
+      var right = Math.min(area.right, chart.scales.x.getPixelForValue(end));
+      if (right <= left) return;
+
+      chart.ctx.save();
+      chart.ctx.fillStyle = "rgba(130, 80, 223, 0.12)";
+      chart.ctx.fillRect(left, area.top, right - left, area.bottom - area.top);
+      chart.ctx.restore();
+    }
+  };
 
   function tooltipRow(label, value) {
     var row = document.createElement("div");
@@ -117,15 +136,25 @@
     return date.toISOString().replace(".000Z", "Z");
   }
 
-  function formatBucketTitle(raw, bucketMs) {
+  function chartPointX(point, payload) {
+    return Number(point.x) === Date.parse(payload.currentBucketStartUtc)
+      ? Date.parse(payload.asOfUtc)
+      : point.x;
+  }
+
+  function formatBucketTitle(raw, bucketMs, payload) {
     if (!raw) return "";
-    var start = Number(raw.x);
+    var start = raw.bucket ? Date.parse(raw.bucket) : Number(raw.x);
     var width = Number(bucketMs);
     if (!Number.isFinite(start) || !Number.isFinite(width) || width <= 0) {
       return raw.bucket || "";
     }
 
-    return formatUtcInstant(start) + " to " + formatUtcInstant(start + width);
+    var title = formatUtcInstant(start) + " to " + formatUtcInstant(start + width);
+    if (payload && start === Date.parse(payload.currentBucketStartUtc)) {
+      title += " (provisional; as of " + payload.asOfUtc + ")";
+    }
+    return title;
   }
 
   function formatDurationTick(value) {
@@ -181,7 +210,7 @@
         jobId: series.jobId || series.name,
         data: series.points.map(function (point) {
           return {
-            x: point.x,
+            x: chartPointX(point, payload),
             y: point.y,
             numerator: point.numerator,
             denominator: point.denominator,
@@ -208,6 +237,7 @@
     return new Chart(canvas, {
       type: "line",
       data: { datasets: datasets },
+      plugins: [provisionalBucketPlugin],
       options: {
         animation: false,
         maintainAspectRatio: false,
@@ -218,6 +248,7 @@
           mode: "nearest"
         },
         plugins: {
+          provisionalBucket: { startUtc: payload.currentBucketStartUtc, endUtc: payload.rangeEndUtc },
           legend: {
             display: true,
             position: "bottom",
@@ -233,7 +264,7 @@
             callbacks: {
               title: function (items) {
                 var raw = items.length ? items[0].raw : null;
-                return formatBucketTitle(raw, payload.bucketMs);
+                return formatBucketTitle(raw, payload.bucketMs, payload);
               },
               label: function (context) {
                 var raw = context.raw || {};
@@ -314,7 +345,7 @@
     function seriesData(key) {
       return payload.points.map(function (point) {
         return {
-          x: point.x,
+          x: chartPointX(point, payload),
           y: point[key],
           succeeded: point.succeeded,
           failed: point.failed,
@@ -353,6 +384,7 @@
     return new Chart(canvas, {
       type: "line",
       data: { datasets: datasets },
+      plugins: [provisionalBucketPlugin],
       options: {
         animation: false,
         maintainAspectRatio: false,
@@ -360,6 +392,7 @@
         parsing: false,
         interaction: { intersect: false, mode: "index" },
         plugins: {
+          provisionalBucket: { startUtc: payload.currentBucketStartUtc, endUtc: payload.rangeEndUtc },
           legend: {
             display: true,
             position: "bottom",
@@ -369,7 +402,7 @@
             callbacks: {
               title: function (items) {
                 var raw = items.length ? items[0].raw : null;
-                return formatBucketTitle(raw, payload.bucketMs);
+                return formatBucketTitle(raw, payload.bucketMs, payload);
               },
               label: function (context) {
                 var raw = context.raw || {};
@@ -419,7 +452,7 @@
         label: series.name,
         data: (series.points || []).map(function (point) {
           return {
-            x: point.x,
+            x: chartPointX(point, payload),
             y: point.y,
             count: point.count,
             missingCount: point.missingCount,
@@ -447,6 +480,7 @@
     return new Chart(canvas, {
       type: "line",
       data: { datasets: datasets },
+      plugins: [provisionalBucketPlugin],
       options: {
         animation: false,
         maintainAspectRatio: false,
@@ -457,6 +491,7 @@
           mode: "nearest"
         },
         plugins: {
+          provisionalBucket: { startUtc: payload.currentBucketStartUtc, endUtc: payload.rangeEndUtc },
           legend: {
             display: true,
             position: "bottom",
@@ -472,7 +507,7 @@
             callbacks: {
               title: function (items) {
                 var raw = items.length ? items[0].raw : null;
-                return formatBucketTitle(raw, payload.bucketMs);
+                return formatBucketTitle(raw, payload.bucketMs, payload);
               },
               label: function (context) {
                 var raw = context.raw || {};

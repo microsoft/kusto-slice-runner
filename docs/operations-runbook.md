@@ -212,10 +212,20 @@ Kusto Slice Runner hosts a loopback-only `/api/v1` agent API with generated Open
 
 ## Dashboard success statistics
 
-The dashboard success charts use complete UTC-aligned buckets and omit the current open bucket. The
-UI shows the exact **complete through** boundary, so a 1-hour view can lag by less than one minute, a
-1-day view by less than one hour, and a 30-day view by less than one UTC day. Dashboard status pills
-and recent-failure rows remain current; only the historical chart buckets lag.
+Dashboard success charts, job-detail execution charts, and Activity's processed-executions chart
+use UTC-aligned buckets (1 minute for a 1-hour range, 1 hour for a 1-day range, 6 hours for a 7-day
+range, and 1 day for a 30-day range). The newest bucket includes outcomes recorded **so far** and
+is shaded light purple, labeled **provisional** with an as-of timestamp, and identified in tooltips.
+Its point sits at the as-of time inside the shaded interval rather than at the bucket's start;
+the tooltip still names the full UTC-aligned interval. A bucket without chartable outcomes has no dot.
+It replaces the oldest bucket so the chart range stays bounded. At an exact bucket boundary there
+is no partial bucket. Refresh to see newer outcomes; charts do not automatically poll.
+
+Success rates in that shaded bucket are the observed numerator/denominator of completed attempts
+or logical slices, even for small samples; they are not a forecast of the final bucket's success
+rate. In-flight attempts and incomplete logical slices are never counted as terminal outcomes.
+The page shows the last complete-through boundary separately from the provisional interval.
+Dashboard status pills and recent failures remain current independently of chart bucketing.
 
 The first chart counts completed **execution-unit attempts**: each chunk attempt for a chunked job,
 or each slice attempt for an unchunked job. Retryable failures, terminal failures, dead letters, and
