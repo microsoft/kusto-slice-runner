@@ -1,4 +1,7 @@
 <Project>
+  <!-- Copyright (c) Microsoft Corporation.
+       Licensed under the MIT license. -->
+
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>

@@ -3,6 +3,13 @@
 Kusto Slice Runner separates hosted release creation from optional local AI highlights.
 Pushes to `main` run CI but do not create releases.
 
+Repository fixes and green CI do not authorize public release. Complete the
+[owner approval and publication-history gates](release-readiness-checklist.md#approval-evidence-not-established-by-passing-ci)
+before changing visibility or publishing a draft. The current project does not
+require the Microsoft telemetry consent notice; keep its existing external-service
+disclosures. Source must not contain prebuilt binaries, but Windows packages built
+from source remain supported.
+
 ## 1. Create the draft in GitHub Actions
 
 1. Make sure the intended commit is on `main` and its CI checks are green.

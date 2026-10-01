@@ -1,31 +1,55 @@
 Kusto Slice Runner - third-party notices
 
-First-party source is licensed under LICENSE.txt. Dependencies retain their own
+First-party source is licensed under LICENSE.TXT. Dependencies retain their own
 licenses; the MIT license for this project does not relicense them.
 This inventory describes the currently restored application dependency graph and
 bundled browser assets. Reconcile it with each final release's SBOM, runtime
 packs, and archive contents before distributing binaries.
 
 
-BUNDLED JAVASCRIPT
+BUNDLED BROWSER COMPONENTS
 
-chart.js 4.5.1 - MIT
+chart.js 4.5.1 - MIT (browser charts)
 
-@kurkle/color 0.3.4 - MIT
+@kurkle/color 0.3.4 - MIT (color parsing and manipulation for Chart.js)
 
-cytoscape 3.34.3 - MIT
+cytoscape 3.34.3 - MIT (browser graph rendering and interaction)
 
-cytoscape-dagre 4.0.1 - MIT
+cytoscape-dagre 4.0.1 - MIT (Dagre layout integration for Cytoscape)
 
-marked 18.0.13 - MIT
+@dagrejs/dagre 3.0.0 - MIT (graph layout, bundled in cytoscape-dagre)
 
+@dagrejs/graphlib 4.0.1 - MIT (graph data structures, bundled in cytoscape-dagre)
 
-cytoscape-dagre also bundles Dagre/Graphlib code. Preserve the distribution's
-embedded license notices; verify the precise bundled versions and attribution
-against its release sources before public binary distribution.
+marked 18.0.13 - MIT (Markdown parsing)
 
+Bootstrap Icons - MIT (adapted SVG subset in Pages/Shared/_IconSprite.cshtml)
+
+The cytoscape-dagre package is 4.0.1; its upstream distribution banner says
+4.0.0. The bundled Dagre and Graphlib versions above are identified by their
+embedded version constants. Upstream distribution files are not modified.
+
+The Bootstrap sprite is an adapted selection, not an unmodified versioned
+Bootstrap Icons distribution. The original copy revision was not recorded.
+The attribution below uses the upstream v1.13.1 license; preserve the original
+Bootstrap Authors attribution for the copied and adapted icon paths.
 
 RESTORED APPLICATION NUGET DEPENDENCIES
+
+Azure.Core and System.ClientModel provide Azure client infrastructure;
+Azure.Identity provides authentication. The Microsoft.Azure.Kusto.Data and
+Cloud.Platform/Cloud.Platform.Msal packages provide Kusto access and authentication.
+Microsoft.AspNetCore.OpenApi and Microsoft.OpenApi provide the HTTP API schema.
+Microsoft.Data.Sqlite/Core and SQLitePCLRaw.bundle_e_sqlite3/config.e_sqlite3/core/
+provider.e_sqlite3 provide managed SQLite access; SQLite supplies the native engine.
+Microsoft.Identity.Client/Broker/Extensions.Msal/NativeInterop provide MSAL
+authentication and native broker integration. Microsoft.IdentityModel.Abstractions/
+JsonWebTokens/Logging/Tokens and System.IdentityModel.Tokens.Jwt support identity
+and token processing. Newtonsoft.Json provides JSON serialization.
+Microsoft.Bcl.AsyncInterfaces, Microsoft.Bcl.Cryptography,
+Microsoft.IO.RecyclableMemoryStream, System.IO.Hashing, System.Memory.Data, and
+System.Security.Cryptography.ProtectedData provide asynchronous interfaces,
+cryptography, pooled streams, hashing, binary-data, and protected-storage helpers.
 
 
 Azure.Core/1.57.0
@@ -277,43 +301,6 @@ SOFTWARE.
 
 
 ========================================================================
-cytoscape 3.34.3 / license-update.mjs
-
-import fs from 'fs';
-import path from 'path';
-
-import { fileURLToPath } from 'url';
-import { dirname } from 'path';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
-const year = (new Date()).getFullYear();
-
-const license = `Copyright (c) 2016-${year}, The Cytoscape Consortium.
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the “Software”), to deal in
-the Software without restriction, including without limitation the rights to
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
-of the Software, and to permit persons to whom the Software is furnished to do
-so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.`;
-
-fs.writeFileSync(path.join(__dirname, 'LICENSE'), license);
-
-
-========================================================================
 cytoscape-dagre 4.0.1 / LICENSE
 
 Copyright (c) 2016-2018, 2020, 2022, 2026, The Cytoscape Consortium.
@@ -335,6 +322,61 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+
+========================================================================
+@dagrejs/dagre 3.0.0 / LICENSE
+@dagrejs/graphlib 4.0.1 / LICENSE
+Sources: https://github.com/dagrejs/dagre/tree/v3.0.0
+         https://github.com/dagrejs/graphlib/tree/v4.0.1
+
+Copyright (c) 2012-2014 Chris Pettitt
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+
+========================================================================
+Bootstrap Icons / LICENSE
+Upstream license reference: https://github.com/twbs/icons/blob/v1.13.1/LICENSE
+Copied/adapted subset: src/Ksr.LocalApp/Pages/Shared/_IconSprite.cshtml
+
+The MIT License (MIT)
+
+Copyright (c) 2019-2024 The Bootstrap Authors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
 
 
 ========================================================================

@@ -38,7 +38,7 @@ namespace Ksr.LocalApp.Tests
         {
             catalog.Create(Schedule("job.analysis.prompt"));
             state.Append("failure-1", JobId("job.analysis.prompt"), At(0), At(5), DurableSliceStatus.Failed, expectedVersion: 0, reason: "AccountKey=abc123secret leaked");
-            state.Append("failure-2", JobId("job.analysis.prompt"), At(5), At(10), DurableSliceStatus.DeadLettered, expectedVersion: 0, reason: "cross-cluster timeout to azcore5");
+            state.Append("failure-2", JobId("job.analysis.prompt"), At(5), At(10), DurableSliceStatus.DeadLettered, expectedVersion: 0, reason: "cross-cluster timeout to demo-cluster");
             var job = catalog.Get(JobId("job.analysis.prompt"))!;
 
             var evidence = builder.Build(job);
@@ -47,7 +47,7 @@ namespace Ksr.LocalApp.Tests
             Assert.Contains("job.analysis.prompt", evidence.Prompt);
             Assert.Contains("https://ksr-example.invalid", evidence.Prompt);
             Assert.Contains("Dead-lettered slices", evidence.Prompt);
-            Assert.Contains("cross-cluster timeout to azcore5", evidence.Prompt);
+            Assert.Contains("cross-cluster timeout to demo-cluster", evidence.Prompt);
             Assert.DoesNotContain("abc123secret", evidence.Prompt);
             Assert.Contains("<redacted>", evidence.Prompt);
         }

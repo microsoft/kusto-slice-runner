@@ -155,6 +155,13 @@ Analyze failures with Copilot:
 
 See [SUPPORT.md](SUPPORT.md), [SECURITY.md](SECURITY.md), [CONTRIBUTING.md](CONTRIBUTING.md), and [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
+This project has adopted the
+[Microsoft Open Source Code of Conduct](https://opensource.microsoft.com/codeofconduct/).
+
+**Do not report security vulnerabilities through public GitHub issues.** Report
+them to the [Microsoft Security Response Center](https://msrc.microsoft.com/create-report);
+see [SECURITY.md](SECURITY.md) for the maintained reporting policy.
+
 ## Development history
 
 The development history was imported with original dates, public contributor
@@ -178,7 +185,7 @@ organization's data-sharing policy before using it, or disable the feature with
 
 ## License and third-party code
 
-KSR's first-party source is licensed under [MIT](LICENSE.txt). The repository
+KSR's first-party source is licensed under [MIT](LICENSE.TXT). The repository
 includes third-party Chart.js, Cytoscape.js, cytoscape-dagre, and marked browser
 assets, including bundled transitive components. See [NOTICE](NOTICE) and
 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) for attribution and dependencies.

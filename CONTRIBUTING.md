@@ -1,8 +1,8 @@
 # Contributing
 
-This project welcomes contributions and suggestions. Most contributions require you to agree to a
-Contributor License Agreement (CLA) declaring that you have the right to, and actually do, grant us
-the rights to use your contribution. For details, visit
+This project welcomes contributions and suggestions. All contributions are subject to
+Microsoft's Contributor License Agreement (CLA), declaring that you have the right to,
+and actually do, grant us the rights to use your contribution. For details, visit
 [Contributor License Agreements](https://cla.opensource.microsoft.com).
 
 When you submit a pull request, a CLA bot will automatically determine whether you need to provide
@@ -40,5 +40,5 @@ dotnet format .\Ksr.Local.sln --verify-no-changes --no-restore --verbosity minim
 
 - Build, tests, and default-severity `dotnet format` pass.
 - README and docs links still resolve.
-- New third-party dependencies are reflected in `THIRD-PARTY-NOTICES.md`.
+- New third-party dependencies and copied assets are reflected in `NOTICE` and `THIRD-PARTY-NOTICES.md`, with their original license information preserved.
 - Runtime artifacts such as SQLite databases, logs, `bin`, `obj`, and `.playwright-mcp` files are not included.

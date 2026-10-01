@@ -61,16 +61,32 @@ namespace Ksr.LocalApp.Tests
         public void Public_repository_documents_and_license_metadata_are_consistent()
         {
             var root = FindRepositoryRoot();
-            foreach (var name in new[] { "LICENSE.txt", "NOTICE", "SECURITY.md", "CODE_OF_CONDUCT.md", "CONTRIBUTING.md", "SUPPORT.md" })
+            var rootFiles = Directory.EnumerateFiles(root).Select(Path.GetFileName).ToArray();
+            foreach (var name in new[] { "LICENSE.TXT", "README.md", "NOTICE", "THIRD-PARTY-NOTICES.md", "SECURITY.md", "CODE_OF_CONDUCT.md", "CONTRIBUTING.md", "SUPPORT.md" })
             {
-                Assert.True(File.Exists(Path.Combine(root, name)), $"Missing {name}");
+                Assert.Contains(name, rootFiles);
             }
 
-            Assert.Contains("MIT License", File.ReadAllText(Path.Combine(root, "LICENSE.txt")), StringComparison.Ordinal);
+            var license = File.ReadAllText(Path.Combine(root, "LICENSE.TXT"));
+            Assert.Contains("MIT License", license, StringComparison.Ordinal);
+            Assert.Contains("Kusto Slice Runner", license, StringComparison.Ordinal);
+            Assert.Contains("Copyright (c) Microsoft Corporation.", license, StringComparison.Ordinal);
+            Assert.True(license.IndexOf("Kusto Slice Runner", StringComparison.Ordinal) <
+                license.IndexOf("Copyright (c) Microsoft Corporation.", StringComparison.Ordinal));
             Assert.Contains("\"license\": \"MIT\"", File.ReadAllText(Path.Combine(root, "package.json")), StringComparison.Ordinal);
-            Assert.Contains("Microsoft's Trademark & Brand Guidelines", File.ReadAllText(Path.Combine(root, "README.md")), StringComparison.Ordinal);
-            Assert.Contains("cla.opensource.microsoft.com", File.ReadAllText(Path.Combine(root, "CONTRIBUTING.md")), StringComparison.Ordinal);
+            var readme = File.ReadAllText(Path.Combine(root, "README.md"));
+            Assert.Contains("Microsoft's Trademark & Brand Guidelines", readme, StringComparison.Ordinal);
+            Assert.Contains("https://opensource.microsoft.com/codeofconduct/", readme, StringComparison.Ordinal);
+            Assert.Contains("https://msrc.microsoft.com/create-report", readme, StringComparison.Ordinal);
+            var contributing = File.ReadAllText(Path.Combine(root, "CONTRIBUTING.md"));
+            Assert.Matches(@"All contributions are subject to\s+Microsoft's Contributor License Agreement", contributing);
+            Assert.Contains("cla.opensource.microsoft.com", contributing, StringComparison.Ordinal);
             Assert.Contains("https://aka.ms/SECURITY.md", File.ReadAllText(Path.Combine(root, "SECURITY.md")), StringComparison.Ordinal);
+            var notice = File.ReadAllText(Path.Combine(root, "NOTICE"));
+            foreach (var component in new[] { "@dagrejs/dagre 3.0.0", "@dagrejs/graphlib 4.0.1", "Bootstrap Icons", "Chris Pettitt", "The Bootstrap Authors" })
+            {
+                Assert.Contains(component, notice, StringComparison.Ordinal);
+            }
         }
 
         [Fact]
@@ -79,7 +95,7 @@ namespace Ksr.LocalApp.Tests
             var root = FindRepositoryRoot();
             var workflow = File.ReadAllText(Path.Combine(root, ".github", "workflows", "release.yml"));
             var project = File.ReadAllText(Path.Combine(root, "src", "Ksr.LocalApp", "Ksr.LocalApp.csproj"));
-            foreach (var name in new[] { "LICENSE.txt", "NOTICE", "THIRD-PARTY-NOTICES.md" })
+            foreach (var name in new[] { "LICENSE.TXT", "NOTICE", "THIRD-PARTY-NOTICES.md" })
             {
                 Assert.Contains(name, workflow, StringComparison.Ordinal);
                 Assert.Contains($"Link=\"{name}\" CopyToPublishDirectory=\"PreserveNewest\"", project, StringComparison.Ordinal);

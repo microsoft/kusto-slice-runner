@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT license.
+
 name: Kusto Slice Runner Release
 
 on:
@@ -243,7 +246,7 @@ jobs:
               '.\CONTRIBUTING.md',
               '.\SECURITY.md',
               '.\SUPPORT.md',
-              '.\LICENSE.txt',
+              '.\LICENSE.TXT',
               '.\NOTICE',
               '.\CODE_OF_CONDUCT.md',
               '.\THIRD-PARTY-NOTICES.md'

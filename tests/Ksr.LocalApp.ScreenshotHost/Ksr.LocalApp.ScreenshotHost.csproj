@@ -1,4 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
+  <!-- Copyright (c) Microsoft Corporation.
+       Licensed under the MIT license. -->
+
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net10.0</TargetFramework>

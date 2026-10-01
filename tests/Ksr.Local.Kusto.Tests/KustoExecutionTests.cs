@@ -16,8 +16,8 @@ namespace Ksr.Local.Kusto.Tests
     {
         private const string RemoteSchemaMessage =
             "Semantic error: Errors occurred while resolving remote entities. "
-            + "Failed to resolve name or pattern 'MycroftContainerSnapshot' in one or more scopes: "
-            + "($Cluster='https://sample-query.westeurope.kusto.windows.net/', Database='AzureCP')";
+            + "Failed to resolve name or pattern 'DemoInventorySnapshot' in one or more scopes: "
+            + "($Cluster='https://sample-query.westeurope.kusto.windows.net/', Database='DemoDb')";
 
         [Fact]
         public void Request_builder_constructs_safe_command_with_parameters()

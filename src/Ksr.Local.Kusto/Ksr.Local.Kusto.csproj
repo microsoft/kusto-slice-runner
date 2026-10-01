@@ -1,5 +1,8 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
+  <!-- Copyright (c) Microsoft Corporation.
+       Licensed under the MIT license. -->
+
   <ItemGroup>
     <ProjectReference Include="..\Ksr.Local.Core\Ksr.Local.Core.csproj" />
   </ItemGroup>
