@@ -283,6 +283,39 @@ namespace Ksr.LocalApp.Tests
             Assert.Contains(firstJson.RootElement.GetProperty("mode").GetString(), new[] { "DrainRequested", "Drained", "Stopping" });
         }
 
+        [Theory]
+        [InlineData("/")]
+        [InlineData("/activity")]
+        public async Task Branding_uses_local_svg_for_header_and_favicon(string path)
+        {
+            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+
+            var html = await client.GetStringAsync(path);
+            var brand = Regex.Match(html, "<a class=\"brand\" href=\"/\" aria-label=\"Kusto Slice Runner\">(?<content>.*?)</a>", RegexOptions.Singleline);
+            Assert.True(brand.Success);
+
+            var image = Regex.Match(brand.Groups["content"].Value, "<img\\b[^>]*>");
+            Assert.True(image.Success);
+            Assert.Contains("class=\"brand-logo\"", image.Value);
+            Assert.Contains("width=\"34\" height=\"34\" alt=\"\"", image.Value);
+            var source = Regex.Match(image.Value, "src=\"(?<url>/images/ksr-logo\\.svg\\?v=[^\"]+)\"");
+            Assert.True(source.Success);
+
+            var favicon = Regex.Match(html, "<link\\b[^>]*rel=\"icon\"[^>]*>");
+            Assert.True(favicon.Success);
+            Assert.Contains("type=\"image/svg+xml\"", favicon.Value);
+            Assert.Contains($"href=\"{source.Groups["url"].Value}\"", favicon.Value);
+
+            using var response = await client.GetAsync(source.Groups["url"].Value);
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Equal("image/svg+xml", response.Content.Headers.ContentType?.MediaType);
+            var svg = await response.Content.ReadAsStringAsync();
+            Assert.Contains("viewBox=\"0 0 64 64\"", svg);
+            Assert.Contains("<title id=\"title\">KSR - Kusto Slice Runner</title>", svg);
+            Assert.DoesNotContain("OneDrive", html);
+            Assert.DoesNotContain("Desktop", html);
+        }
+
         [Fact]
         public async Task Dashboard_history_and_slice_routes_render_seeded_sqlite_data()
         {
