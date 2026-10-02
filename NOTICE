@@ -21,7 +21,7 @@ cytoscape-dagre 4.0.1 - MIT (Dagre layout integration for Cytoscape)
 
 @dagrejs/graphlib 4.0.1 - MIT (graph data structures, bundled in cytoscape-dagre)
 
-marked 18.0.13 - MIT (Markdown parsing)
+marked 18.0.14 - MIT (Markdown parsing)
 
 Bootstrap Icons - MIT (adapted SVG subset in Pages/Shared/_IconSprite.cshtml)
 
@@ -380,7 +380,7 @@ THE SOFTWARE.
 
 
 ========================================================================
-marked 18.0.13 / LICENSE
+marked 18.0.14 / LICENSE
 
 # License information
 

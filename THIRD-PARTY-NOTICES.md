@@ -13,8 +13,8 @@ NuGet inventory. This file is a browser-asset summary, not the complete release 
 | @dagrejs/dagre | 3.0.0 | MIT | Version constant in the cytoscape-dagre bundle; [upstream](https://github.com/dagrejs/dagre/tree/v3.0.0) |
 | @dagrejs/graphlib | 4.0.1 | MIT | Version constant in the cytoscape-dagre bundle; [upstream](https://github.com/dagrejs/graphlib/tree/v4.0.1) |
 | Bootstrap Icons | Adapted subset; original copy revision unrecorded | MIT | `src\Ksr.LocalApp\Pages\Shared\_IconSprite.cshtml`; [upstream license reference](https://github.com/twbs/icons/blob/v1.13.1/LICENSE) |
-| marked | 18.0.13 | MIT | `package-lock.json`, `src\Ksr.LocalApp\wwwroot\lib\marked\marked.umd.js` (renders the Copilot failure analysis) |
-| jsdom | 30.1.0 | MIT | Development-only DOM simulation for `npm run test:js` |
+| marked | 18.0.14 | MIT | `package-lock.json`, `src\Ksr.LocalApp\wwwroot\lib\marked\marked.umd.js` (renders the Copilot failure analysis) |
+| jsdom | 30.1.1 | MIT | Development-only DOM simulation for `npm run test:js` |
 | Playwright | 1.63.0 | Apache-2.0 | Development-only documentation screenshot capture; `package-lock.json` |
 | playwright-core | 1.63.0 | Apache-2.0 | Development-only Playwright browser driver; `package-lock.json` |
 
