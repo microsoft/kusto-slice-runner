@@ -42,6 +42,9 @@ jobs:
       - name: Restore JavaScript assets
         run: npm ci
 
+      - name: Verify Markdown formatting
+        run: npm run format:md:check
+
       - name: Test browser behavior
         run: npm run test:js
 

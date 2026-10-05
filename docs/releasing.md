@@ -1,21 +1,21 @@
 # Creating a Kusto Slice Runner release
 
-Kusto Slice Runner separates hosted release creation from optional local AI highlights.
-Pushes to `main` run CI but do not create releases.
+Kusto Slice Runner separates hosted release creation from optional local AI
+highlights. Pushes to `main` run CI but do not create releases.
 
 Repository fixes and green CI do not authorize public release. Complete the
 [owner approval and publication-history gates](release-readiness-checklist.md#approval-evidence-not-established-by-passing-ci)
 before changing visibility or publishing a draft. The current project does not
-require the Microsoft telemetry consent notice; keep its existing external-service
-disclosures. Source must not contain prebuilt binaries, but Windows packages built
-from source remain supported.
+require the Microsoft telemetry consent notice; keep its existing
+external-service disclosures. Source must not contain prebuilt binaries, but
+Windows packages built from source remain supported.
 
 ## 1. Create the draft in GitHub Actions
 
 1. Make sure the intended commit is on `main` and its CI checks are green.
 2. Choose an unused `vMAJOR.MINOR.PATCH` version.
-3. Open **Actions**, select **Kusto Slice Runner Release**, choose **Run workflow**, keep
-   the branch set to `main`, and enter the version.
+3. Open **Actions**, select **Kusto Slice Runner Release**, choose **Run
+   workflow**, keep the branch set to `main`, and enter the version.
 
 The hosted workflow runs all quality gates, builds and smoke-tests both Windows
 x64 packages, creates `SHA256SUMS.txt`, and creates a draft with three sections:
@@ -32,10 +32,10 @@ copilot login
 ```
 
 Invoke the `ksr-release-highlights` skill in GitHub Copilot CLI. When exactly
-one strict-SemVer draft carrying the Kusto Slice Runner release-workflow marker exists, the
-skill selects it automatically. If multiple eligible drafts exist, choose from
-the versions and URLs it presents. If none exist, run the release workflow
-first. An explicitly requested `vMAJOR.MINOR.PATCH` remains supported.
+one strict-SemVer draft carrying the Kusto Slice Runner release-workflow marker
+exists, the skill selects it automatically. If multiple eligible drafts exist,
+choose from the versions and URLs it presents. If none exist, run the release
+workflow first. An explicitly requested `vMAJOR.MINOR.PATCH` remains supported.
 
 The script requires PowerShell 7. It reads the selected draft, finds the
 previous published release, retrieves the commits in that comparison range, and
@@ -87,13 +87,13 @@ packages remain valid.
 
 Both Windows package types include `Start-KsrApp.ps1`, `Stop-KsrApp.ps1`,
 `Ksr.Startup.psm1`, `Register-KsrStartup.ps1`, `Get-KsrStartup.ps1`, and
-`Unregister-KsrStartup.ps1` at the package root. Archive validation checks
-that the startup helpers are present. Neither packaging nor extraction registers
-a startup task.
+`Unregister-KsrStartup.ps1` at the package root. Archive validation checks that
+the startup helpers are present. Neither packaging nor extraction registers a
+startup task.
 
 Users can explicitly opt into startup at Windows sign-in, choosing the default
-visible console or background mode. The per-user task/settings live outside
-the replaceable app directory. A new extraction path needs re-registration;
-an in-place upgrade at a stable path retains the registration. Follow the
+visible console or background mode. The per-user task/settings live outside the
+replaceable app directory. A new extraction path needs re-registration; an
+in-place upgrade at a stable path retains the registration. Follow the
 [startup and upgrade precautions](operations-runbook.md#automatic-startup-at-windows-sign-in)
 before replacing any running deployment.

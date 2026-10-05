@@ -1,0 +1,10 @@
+**/bin/
+**/obj/
+**/TestResults/
+**/wwwroot/lib/
+node_modules/
+.playwright-mcp/
+artifacts/
+logs/
+publish/
+run-app/

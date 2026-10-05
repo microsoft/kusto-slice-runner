@@ -20,17 +20,17 @@ pwsh -File .\scripts\New-KsrReleaseHighlights.ps1 -PrepareUpdate
 Activate when the user asks for AI release highlights or a summary for an
 existing Kusto Slice Runner release draft.
 
-If the user supplies a version, require strict `vMAJOR.MINOR.PATCH` form and pass
-it explicitly. Never infer or increment a version.
+If the user supplies a version, require strict `vMAJOR.MINOR.PATCH` form and
+pass it explicitly. Never infer or increment a version.
 
 ## Workflow
 
 1. Resolve the repository root.
-2. Run `scripts\New-KsrReleaseHighlights.ps1 -PrepareUpdate` with PowerShell
-   7 (`pwsh`). Add `-Version vMAJOR.MINOR.PATCH` only when the user supplied or
+2. Run `scripts\New-KsrReleaseHighlights.ps1 -PrepareUpdate` with PowerShell 7
+   (`pwsh`). Add `-Version vMAJOR.MINOR.PATCH` only when the user supplied or
    selected that version.
-3. If no workflow-owned draft exists, stop and tell the user to run the
-   **Kusto Slice Runner Release** workflow first. Do not ask for or invent a version.
+3. If no workflow-owned draft exists, stop and tell the user to run the **Kusto
+   Slice Runner Release** workflow first. Do not ask for or invent a version.
 4. If multiple workflow-owned drafts exist, use `ask_user` to present the exact
    versions and URLs printed by the script, then rerun `-PrepareUpdate` with the
    selected version.
@@ -39,9 +39,8 @@ it explicitly. Never infer or increment a version.
    before any GitHub write. Tell the user not to edit the draft concurrently
    during the brief apply step because GitHub release edits do not expose an
    atomic conditional-write precondition.
-6. If `changesWasPlaceholder` is false, also show the existing
-   `originalChanges` value and require a distinct confirmation that it may be
-   overwritten.
+6. If `changesWasPlaceholder` is false, also show the existing `originalChanges`
+   value and require a distinct confirmation that it may be overwritten.
 7. If the user declines or cancels, delete only the exact transient update-plan
    path and stop without changing GitHub.
 8. After approval, apply the reviewed plan:
@@ -54,6 +53,7 @@ it explicitly. Never infer or increment a version.
 
    Add `-AllowOverwriteChanges` only after the user explicitly approved
    replacing non-placeholder Changes content.
+
 9. Return the draft URL printed by the script and state that the release remains
    a draft. The script deletes the consumed update plan after successful
    verification.

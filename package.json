@@ -4,6 +4,8 @@
   "private": true,
   "description": "Local-first Kusto Slice Runner dashboard assets.",
   "scripts": {
+    "format:md": "prettier --write \"**/*.md\"",
+    "format:md:check": "prettier --check \"**/*.md\"",
     "copy:chartjs": "node ./scripts/copy-chartjs.mjs",
     "copy:cytoscape": "node ./scripts/copy-cytoscape.mjs",
     "copy:marked": "node ./scripts/copy-marked.mjs",
@@ -21,6 +23,7 @@
   },
   "devDependencies": {
     "jsdom": "^30.1.1",
-    "playwright": "1.63.0"
+    "playwright": "1.63.0",
+    "prettier": "3.9.9"
   }
 }

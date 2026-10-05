@@ -8,19 +8,20 @@ metadata:
 
 # Kusto Slice Runner job manager
 
-Use this skill only against a running local Kusto Slice Runner app. It drives the versioned
-agent API through:
+Use this skill only against a running local Kusto Slice Runner app. It drives
+the versioned agent API through:
 
 ```powershell
 .\.github\skills\ksr-job-manager\scripts\Invoke-KsrJobApi.ps1
 ```
 
-The generated OpenAPI document at `/api/v1/openapi/v1.json` is the endpoint-shape
-source of truth. `docs\local-api.md` explains workflows and safety.
+The generated OpenAPI document at `/api/v1/openapi/v1.json` is the
+endpoint-shape source of truth. `docs\local-api.md` explains workflows and
+safety.
 
 For health-gated historical cleanup and downstream recovery, use
-[ksr-gap-repair](../ksr-gap-repair/SKILL.md). It reuses this helper,
-checks recent logical-slice health, and leaves `healthPolicy: "recent"` gaps
+[ksr-gap-repair](../ksr-gap-repair/SKILL.md). It reuses this helper, checks
+recent logical-slice health, and leaves `healthPolicy: "recent"` gaps
 report-only unless explicitly requested. This skill remains the low-level API
 contract; gap repair supplies the bounded authorization and recovery workflow.
 
@@ -29,7 +30,8 @@ contract; gap repair supplies the bounded authorization and recovery workflow.
 Allowed:
 
 - read jobs, detailed system status, queue/slice/chunk/attempt/event/log/audit
-  diagnostics, throughput, failures, rerun history, repair history, and dependencies;
+  diagnostics, throughput, failures, rerun history, repair history, and
+  dependencies;
 - create or replace one validated schedule;
 - additive/update-only batch import and compatible export;
 - explicit pause/resume;
@@ -48,10 +50,10 @@ Never:
 
 ## Core workflow
 
-The standalone throttling advisor has been retired. Do not call `/throttling`
-or `/throttling/apply`, and do not require
-`retention.ingestionThrottlesDeleted` in system status. Ordinary attempts,
-errors, retries, and failure diagnostics remain available through this API.
+The standalone throttling advisor has been retired. Do not call `/throttling` or
+`/throttling/apply`, and do not require `retention.ingestionThrottlesDeleted` in
+system status. Ordinary attempts, errors, retries, and failure diagnostics
+remain available through this API.
 
 1. Confirm the app and API version:
 
@@ -88,7 +90,8 @@ errors, retries, and failure diagnostics remain available through this API.
    A single object or array is validated locally and normalized to the API's
    `{ schedules: [...] }` envelope. Import is additive/update-only.
 
-5. For large operational reads, request bounded pages and opt in to continuation:
+5. For large operational reads, request bounded pages and opt in to
+   continuation:
 
    ```powershell
    & $helper -Action Get-Logs -JobId $id -Query @{ limit = 200 } -AllPages
@@ -107,15 +110,16 @@ errors, retries, and failure diagnostics remain available through this API.
 - Create returns `201`; repair returns `202` and a durable `Location`.
 - Single-job reads/mutations return an ETag derived from `catalogVersion`.
 - Update, pause, resume, soft-delete, and restore require `If-Match`.
-- Update and batch import reject soft-deleted targets; restore them explicitly first.
+- Update and batch import reject soft-deleted targets; restore them explicitly
+  first.
 
 Soft-delete retains the active-dependent guard. Use `-Force` only after naming
 the dependent jobs and confirming the user accepts the break.
 
 ## Repair workflow
 
-Repair fills failed gaps without Kusto cleanup and preserves successful siblings.
-Always preview first:
+Repair fills failed gaps without Kusto cleanup and preserves successful
+siblings. Always preview first:
 
 ```powershell
 $preview = & $helper -Action Preview-Repair -JobId $id `
