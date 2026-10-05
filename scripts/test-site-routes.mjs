@@ -112,7 +112,7 @@ assert.deepEqual(JSON.parse(dom.window.localStorage.getItem(columnStorageKey)), 
 
 assert.equal(charts.length, 6);
 const chartById = Object.fromEntries(charts.map(chart => [chart.canvas.id, chart]));
-const provisionalX = Date.parse("2026-01-01T01:17:00Z");
+const provisionalX = Date.parse("2026-01-01T01:30:00Z");
 const provisionalIds = [
   "executions-processed-chart",
   "success-rate-by-function-chart",
@@ -121,12 +121,12 @@ const provisionalIds = [
 ];
 for (const id of provisionalIds) {
   const point = chartById[id].config.data.datasets[0].data.at(-1);
-  assert.equal(point.x, provisionalX, `${id} should plot its provisional value at the as-of time`);
+  assert.equal(point.x, provisionalX, `${id} should plot its provisional value at the bucket midpoint`);
   assert.equal(point.bucket, "2026-01-01T01:00:00Z");
 }
-assert.equal(chartById["executions-processed-chart"].config.data.datasets[0].data[0].x, 1767225600000);
-assert.equal(chartById["success-rate-complete-chart"].config.data.datasets[0].data[0].x, 1767229200000);
-assert.equal(chartById["executions-processed-legacy-chart"].config.data.datasets[0].data[0].x, 1767225600000);
+assert.equal(chartById["executions-processed-chart"].config.data.datasets[0].data[0].x, 1767227400000);
+assert.equal(chartById["success-rate-complete-chart"].config.data.datasets[0].data[0].x, 1767231000000);
+assert.equal(chartById["executions-processed-legacy-chart"].config.data.datasets[0].data[0].x, 1767227400000);
 assert.equal(chartById["executions-processed-chart"].config.options.scales.y.title.text, "Executions processed");
 const activityTooltip = chartById["executions-processed-chart"].config.options.plugins.tooltip.callbacks;
 assert.equal(
@@ -235,4 +235,138 @@ assert.match(
 
 console.log("site.js rendered-route tests passed.");
 dom.window.close();
+
+const midpointFixtures = [];
+const rangeStart = Date.parse("2026-01-01T00:00:00Z");
+const iso = value => new Date(value).toISOString().replace(".000Z", "Z");
+for (const bucketMs of [60000, 3600000, 21600000, 86400000]) {
+  const rangeEnd = rangeStart + 4 * bucketMs;
+  const currentStart = rangeEnd - bucketMs;
+  for (const state of ["early", "middle", "late", "boundary", "legacy", "sparse"]) {
+    const elapsed = state === "early" ? 1 : state === "late" ? bucketMs - 1 : bucketMs / 2;
+    const timing = {
+      rangeStartUtc: iso(rangeStart),
+      rangeEndUtc: iso(rangeEnd),
+      bucketMs,
+      ...(state === "legacy" ? {} : {
+        asOfUtc: iso(state === "boundary" ? rangeEnd : currentStart + elapsed),
+        currentBucketStartUtc: state === "boundary" ? null : iso(currentStart)
+      })
+    };
+    for (const kind of ["attempt-success", "logical-success", "result-counts", "duration", "processed"]) {
+      const points = [0, 1, 2, 3].filter(index => state !== "sparse" || index !== 1).map(index => {
+        const x = rangeStart + index * bucketMs;
+        const value = [2, null, 0, 3][index];
+        const common = {
+          x,
+          ...(index === 0 ? {} : { bucket: iso(x) }),
+          label: iso(x)
+        };
+        if (kind === "processed") {
+          return { ...common, succeeded: value, failed: value === null ? null : 0, total: value };
+        }
+        if (kind === "duration") {
+          return {
+            ...common, y: value === null ? null : value * 1000, count: value || 0,
+            missingCount: value === null ? 1 : 0, durationText: value === null ? "n/a" : `${value} s`
+          };
+        }
+        if (kind === "result-counts") return { ...common, y: value, count: value || 0 };
+        return {
+          ...common, y: value === null ? null : value * 25,
+          numerator: value || 0, denominator: value === null ? 0 : 4,
+          percentText: value === null ? "n/a" : `${value * 25}.0%`
+        };
+      });
+      const attribute = kind === "processed" ? "activity"
+        : kind.endsWith("success") ? "success" : "job";
+      midpointFixtures.push({
+        id: `midpoint-${bucketMs}-${state}-${kind}`,
+        attribute,
+        payload: kind === "processed" ? { ...timing, points } : {
+          ...timing,
+          kind,
+          series: [
+            { name: "Primary", points },
+            { name: "Comparison", points: points.map(point => ({ ...point })) }
+          ]
+        }
+      });
+    }
+  }
+}
+
+const midpointDom = new JSDOM(`<!doctype html><html><body>${midpointFixtures.map(fixture => `
+  <figure data-chartjs-${fixture.attribute}="${fixture.id}">
+    <canvas id="${fixture.id}"></canvas>
+    <script type="application/json" id="${fixture.id}-data">${JSON.stringify(fixture.payload)}</script>
+  </figure>`).join("")}</body></html>`, {
+  url: "http://127.0.0.1:5057/",
+  runScripts: "outside-only"
+});
+const midpointCharts = new Map();
+const parsedPayloads = [];
+const parseJson = midpointDom.window.JSON.parse;
+midpointDom.window.JSON.parse = function (text) {
+  const value = parseJson(text);
+  if (value && value.bucketMs) parsedPayloads.push({ value, original: JSON.stringify(value) });
+  return value;
+};
+midpointDom.window.Chart = function (canvas, config) {
+  midpointCharts.set(canvas.id, config);
+  return { data: config.data };
+};
+midpointDom.window.eval(siteScript);
+assert.equal(midpointCharts.size, midpointFixtures.length);
+assert.equal(parsedPayloads.length, midpointFixtures.length);
+for (const { value, original } of parsedPayloads) {
+  assert.equal(JSON.stringify(value), original, "Rendering must not mutate source timestamps or values");
+}
+
+for (const { id, payload } of midpointFixtures) {
+  const config = midpointCharts.get(id);
+  const tooltip = config.options.plugins.tooltip.callbacks;
+  assert.equal(config.options.scales.x.type, "linear");
+  assert.equal(config.options.scales.x.min, Date.parse(payload.rangeStartUtc));
+  assert.equal(config.options.scales.x.max, Date.parse(payload.rangeEndUtc));
+  assert.equal(config.options.plugins.provisionalBucket.startUtc, payload.currentBucketStartUtc);
+  assert.equal(config.options.plugins.provisionalBucket.endUtc, payload.rangeEndUtc);
+  for (const [datasetIndex, dataset] of config.data.datasets.entries()) {
+    const originals = payload.points || payload.series[datasetIndex].points;
+    assert.equal(dataset.data.length, originals.length, `${id}: no missing buckets should be filled or removed`);
+    for (const [index, raw] of dataset.data.entries()) {
+      const original = originals[index];
+      assert.equal(raw.x, original.x + payload.bucketMs / 2, `${id}: every point should be a fixed midpoint`);
+      assert.equal(raw.bucket, original.bucket || iso(original.x), `${id}: keep the original bucket start`);
+      for (const key of Object.keys(original).filter(key => key !== "x" && key !== "bucket")) {
+        assert.equal(raw[key], original[key], `${id}: preserve ${key}`);
+      }
+      if (payload.points) {
+        assert.equal(raw.y, original[datasetIndex === 0 ? "succeeded" : "failed"]);
+      }
+      const isProvisional = original.x === Date.parse(payload.currentBucketStartUtc);
+      assert.equal(tooltip.title([{ raw }]),
+        `${iso(original.x)} to ${iso(original.x + payload.bucketMs)}` +
+        (isProvisional ? ` (provisional; as of ${payload.asOfUtc})` : ""),
+        `${id}: tooltips should name the original interval, including x-only input points`);
+      if (index > 0) {
+        assert.equal(raw.x - dataset.data[index - 1].x, original.x - originals[index - 1].x,
+          `${id}: spacing must preserve skipped buckets`);
+      }
+      if (raw.y === null || raw.y === 0) {
+        assert.equal(dataset.pointRadius({ raw }), raw.y === 0 && id.endsWith("success") ? 5.5 : 0,
+          `${id}: empty buckets should not acquire dots`);
+      }
+    }
+    assert.equal(dataset.data.at(-1).x - dataset.data.at(-2).x, payload.bucketMs,
+      `${id}: the final gap must be exactly one bucket`);
+    if (payload.currentBucketStartUtc) {
+      const last = dataset.data.at(-1);
+      assert.ok(last.x > Date.parse(payload.currentBucketStartUtc));
+      assert.ok(last.x < Date.parse(payload.rangeEndUtc));
+    }
+  }
+}
+midpointDom.window.close();
+console.log("site.js bucket midpoint spacing tests passed.");
 await import("./test-performance-ui.mjs");

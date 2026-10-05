@@ -288,11 +288,15 @@ processed-executions chart use UTC-aligned buckets (1 minute for a 1-hour range,
 1 hour for a 1-day range, 6 hours for a 7-day range, and 1 day for a 30-day
 range). The newest bucket includes outcomes recorded **so far** and is shaded
 light purple, labeled **provisional** with an as-of timestamp, and identified in
-tooltips. Its point sits at the as-of time inside the shaded interval rather
-than at the bucket's start; the tooltip still names the full UTC-aligned
-interval. A bucket without chartable outcomes has no dot. It replaces the oldest
-bucket so the chart range stays bounded. At an exact bucket boundary there is no
-partial bucket. Refresh to see newer outcomes; charts do not automatically poll.
+tooltips. Every point sits at the midpoint of its full UTC-aligned bucket, so
+adjacent buckets have consistent spacing and the current point stays inside the
+shaded interval. A midpoint represents the bucket, not an event timestamp; early
+in the current bucket it can be later than the as-of time, but its value still
+includes only outcomes recorded so far. The tooltip names the full UTC-aligned
+interval and the provisional as-of time. A bucket without chartable outcomes has
+no dot. The current bucket replaces the oldest bucket so the chart range stays
+bounded. At an exact bucket boundary there is no partial bucket. Refresh to see
+newer outcomes; charts do not automatically poll.
 
 Success rates in that shaded bucket are the observed numerator/denominator of
 completed attempts or logical slices, even for small samples; they are not a

@@ -137,9 +137,7 @@
   }
 
   function chartPointX(point, payload) {
-    return Number(point.x) === Date.parse(payload.currentBucketStartUtc)
-      ? Date.parse(payload.asOfUtc)
-      : point.x;
+    return Number(point.x) + Number(payload.bucketMs) / 2;
   }
 
   function formatBucketTitle(raw, bucketMs, payload) {
@@ -214,7 +212,7 @@
             y: point.y,
             numerator: point.numerator,
             denominator: point.denominator,
-            bucket: point.bucket,
+            bucket: point.bucket || formatUtcInstant(point.x),
             label: point.label,
             percentText: point.percentText
           };
@@ -350,7 +348,7 @@
           succeeded: point.succeeded,
           failed: point.failed,
           total: point.total,
-          bucket: point.bucket,
+          bucket: point.bucket || formatUtcInstant(point.x),
           label: point.label
         };
       });
@@ -456,7 +454,7 @@
             y: point.y,
             count: point.count,
             missingCount: point.missingCount,
-            bucket: point.bucket,
+            bucket: point.bucket || formatUtcInstant(point.x),
             label: point.label,
             durationText: point.durationText
           };
