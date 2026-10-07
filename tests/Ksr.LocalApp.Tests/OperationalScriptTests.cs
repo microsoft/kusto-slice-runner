@@ -79,7 +79,7 @@ namespace Ksr.LocalApp.Tests
             Assert.Contains("https://opensource.microsoft.com/codeofconduct/", readme, StringComparison.Ordinal);
             Assert.Contains("https://msrc.microsoft.com/create-report", readme, StringComparison.Ordinal);
             var contributing = File.ReadAllText(Path.Combine(root, "CONTRIBUTING.md"));
-            Assert.Matches(@"All contributions are subject to\s+Microsoft's Contributor License Agreement", contributing);
+            Assert.Matches(@"All\s+contributions\s+are\s+subject\s+to\s+Microsoft's\s+Contributor\s+License\s+Agreement", contributing);
             Assert.Contains("cla.opensource.microsoft.com", contributing, StringComparison.Ordinal);
             Assert.Contains("https://aka.ms/SECURITY.md", File.ReadAllText(Path.Combine(root, "SECURITY.md")), StringComparison.Ordinal);
             var notice = File.ReadAllText(Path.Combine(root, "NOTICE"));
