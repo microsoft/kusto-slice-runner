@@ -60,6 +60,9 @@ Run `npm run format:md:check` to verify formatting without changing files. CI
 runs this check after `npm ci`. Editors with a Prettier integration can use the
 repository's `.prettierrc.json` configuration for Markdown formatting.
 
+The `.gitattributes` rule keeps Markdown checkouts on LF line endings, including
+on Windows, so Git's `core.autocrlf` setting does not conflict with Prettier.
+
 ### Aggregation scale diagnostics
 
 The SQLite repository's 100,000-attempt scale test remains in the normal .NET
