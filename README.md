@@ -1,5 +1,7 @@
 # Kusto Slice Runner (KSR)
 
+<img src="src/Ksr.LocalApp/wwwroot/images/ksr-logo.svg" alt="Kusto Slice Runner logo" width="96" />
+
 Kusto Slice Runner is a local, developer-desktop system for scheduled Kusto
 set-or-append jobs. It is designed for an authenticated user or service identity
 that already has permission to execute the configured Kusto functions and append
