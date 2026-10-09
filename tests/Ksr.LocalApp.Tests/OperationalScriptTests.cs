@@ -181,6 +181,10 @@ namespace Ksr.LocalApp.Tests
             Assert.Contains("description:", skill, StringComparison.Ordinal);
             Assert.Contains("../ksr-job-manager/SKILL.md", skill, StringComparison.Ordinal);
             Assert.Contains(@"scripts\Invoke-KsrJobApi.ps1", skill, StringComparison.Ordinal);
+            Assert.Contains(@"..\ksr-job-manager\scripts\Invoke-KsrJobApi.ps1", skill, StringComparison.Ordinal);
+            Assert.Contains("relative to this skill's base", skill, StringComparison.Ordinal);
+            Assert.Contains("Do not resolve it from the", skill, StringComparison.Ordinal);
+            Assert.Contains("current working directory", skill, StringComparison.Ordinal);
             Assert.Contains("../../../docs/local-api.md", skill, StringComparison.Ordinal);
             Assert.Contains("../../../docs/schedule-json.md", skill, StringComparison.Ordinal);
             Assert.Contains("../../../docs/operations-runbook.md", skill, StringComparison.Ordinal);
@@ -194,6 +198,18 @@ namespace Ksr.LocalApp.Tests
             {
                 Assert.Contains("ksr-gap-repair", File.ReadAllText(path), StringComparison.Ordinal);
             }
+        }
+
+        [Fact]
+        public void Job_manager_skill_resolves_its_helper_from_the_loaded_skill_directory()
+        {
+            var root = FindRepositoryRoot();
+            var skill = File.ReadAllText(Path.Combine(root, ".github", "skills", "ksr-job-manager", "SKILL.md"));
+
+            Assert.Contains(@"scripts\Invoke-KsrJobApi.ps1", skill, StringComparison.Ordinal);
+            Assert.Contains("relative to this skill's base directory", skill, StringComparison.Ordinal);
+            Assert.Contains("not from the current working directory", skill, StringComparison.Ordinal);
+            Assert.DoesNotContain(@".\.github\skills\ksr-job-manager\scripts\Invoke-KsrJobApi.ps1", skill, StringComparison.Ordinal);
         }
 
         [Fact]

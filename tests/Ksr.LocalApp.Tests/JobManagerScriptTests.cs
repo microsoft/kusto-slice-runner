@@ -154,6 +154,41 @@ namespace Ksr.LocalApp.Tests
         }
 
         [Fact]
+        public async Task Import_validation_resolves_the_bundled_validator_outside_the_repository()
+        {
+            var requests = new List<RecordedRequest>();
+            await using var server = new FakeHttpServer(request =>
+            {
+                requests.Add(request);
+                return Task.FromResult(FakeResponse.Json("""{"supportedApiVersions":["v1"]}"""));
+            });
+
+            var workingDirectory = Path.Combine(
+                Path.GetTempPath(),
+                "ksr-job-manager-tests",
+                Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(workingDirectory);
+            try
+            {
+                var result = await RunHelperFromDirectory(
+                    server.BaseUrl,
+                    workingDirectory,
+                    "-Action", "Import",
+                    "-Json", "{}");
+
+                Assert.NotEqual(0, result.ExitCode);
+                Assert.Contains("Schedule JSON failed local validation; nothing was sent", result.Error, StringComparison.Ordinal);
+                Assert.DoesNotContain("Schedule validator not found", result.Error, StringComparison.Ordinal);
+                var request = Assert.Single(requests);
+                Assert.Equal("/api/v1/system/status", request.Path);
+            }
+            finally
+            {
+                Directory.Delete(workingDirectory, recursive: true);
+            }
+        }
+
+        [Fact]
         public async Task Repair_requires_the_preview_token_before_mutation()
         {
             var requests = new List<RecordedRequest>();
@@ -203,9 +238,18 @@ namespace Ksr.LocalApp.Tests
 
         private static async Task<ProcessResult> RunHelper(string baseUrl, params string[] arguments)
         {
+            return await RunHelperFromDirectory(baseUrl, Environment.CurrentDirectory, arguments);
+        }
+
+        private static async Task<ProcessResult> RunHelperFromDirectory(
+            string baseUrl,
+            string workingDirectory,
+            params string[] arguments)
+        {
             var startInfo = new ProcessStartInfo
             {
                 FileName = "pwsh",
+                WorkingDirectory = workingDirectory,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,

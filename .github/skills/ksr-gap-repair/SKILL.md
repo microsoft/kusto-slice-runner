@@ -156,9 +156,13 @@ stale local job definition.
 
 ## 5. Repair upstream-first
 
-Resolve `$helper` from the installed job-manager skill, not an assumed checkout.
-These recipes assume `$jobId` is a selected permanent GUID and the other
-variables come from the reviewed scope:
+These skills are siblings in the supported Kusto Slice Runner skill bundle.
+Before using the recipes, resolve
+`..\ksr-job-manager\scripts\Invoke-KsrJobApi.ps1` relative to this skill's base
+directory and keep its resolved path in `$helper`. Do not resolve it from the
+current working directory or an assumed checkout. The recipes assume `$jobId`
+is a selected permanent GUID and the other variables come from the reviewed
+scope:
 
 ```powershell
 $jobs = & $helper -Action Get-Jobs
