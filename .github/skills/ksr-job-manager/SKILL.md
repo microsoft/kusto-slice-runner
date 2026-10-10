@@ -12,8 +12,8 @@ Use this skill only against a running local Kusto Slice Runner app. It drives
 the versioned agent API through the helper bundled at
 `scripts\Invoke-KsrJobApi.ps1` relative to this skill's base directory. Resolve
 that path from the loaded skill, not from the current working directory or an
-assumed Kusto Slice Runner checkout, and keep its resolved path in `$helper`
-for the commands below.
+assumed Kusto Slice Runner checkout, and keep its resolved path in `$helper` for
+the commands below.
 
 Install/use the complete Kusto Slice Runner skill bundle: the helper finds the
 sibling `ksr-schedule-json` validator relative to its own script directory.
