@@ -239,26 +239,6 @@ historical gaps and identify downstream windows not yet due. Paused, unhealthy,
 excluded or unrelated blocking prerequisites mean partial recovery, not success
 or permission to repair them.
 
-Older apps can leave an unchunked repair batch `Queued` after its work
-completed. Treat this as **stale repair bookkeeping**, not an execution gap,
-only when bounded, fully paged reads prove that every affected parent and child
-is Completed, each repair's exact `workItemId` maps to a Completed queue row and
-a Succeeded attempt, and no active repair work remains. Match GUID, UTC window,
-queue/attempt identity and raw chunk IDs; a later successful attempt on the same
-window is not proof of this repair's outcome. If evidence was pruned, is
-unavailable or contradicts another read, report an unresolved diagnostic issue,
-not success.
-
-Record proven stale bookkeeping in the in-app report, preserving the API's
-actual status. Do not claim that the API batch is Completed, requeue successful
-work, edit SQLite, or keep a follow-up alive solely for that discrepancy. For
-recurring notifications, proven stale bookkeeping alone is a healthy no-op for
-execution recovery and must not repeatedly trigger an external alert. This
-exception does not declare full batch-history consistency or suppress real gaps,
-failed repairs, unhealthy jobs, incomplete downstream recovery, or
-API/diagnostic errors. If stale bookkeeping coexists with a new failure, report
-the failure normally. Missing evidence remains reportable on each affected run.
-
 Report repaired logical slices and executions separately, downstream recovery,
 preserved work, recent-policy exclusions, unhealthy/insufficient-evidence skips,
 remaining blockers and monitor state. This verifies **Kusto Slice Runner

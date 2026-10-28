@@ -188,10 +188,6 @@ namespace Ksr.LocalApp.Tests
             Assert.Contains("../../../docs/local-api.md", skill, StringComparison.Ordinal);
             Assert.Contains("../../../docs/schedule-json.md", skill, StringComparison.Ordinal);
             Assert.Contains("../../../docs/operations-runbook.md", skill, StringComparison.Ordinal);
-            Assert.Contains("stale repair bookkeeping", skill, StringComparison.Ordinal);
-            Assert.Contains("exact `workItemId`", skill, StringComparison.Ordinal);
-            Assert.Contains("must not repeatedly trigger an external alert", skill, StringComparison.Ordinal);
-            Assert.Contains("Missing evidence remains reportable", skill, StringComparison.Ordinal);
 
             foreach (var path in new[]
             {

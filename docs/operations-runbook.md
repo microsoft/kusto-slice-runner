@@ -1039,38 +1039,6 @@ A slice that dead-lettered on **attempt 1** with a transient reason is a good
 requeue candidate; one that dead-lettered on attempt 3 already exhausted its
 retries.
 
-### Repair-history bookkeeping upgrades
-
-Older builds updated terminal repair history through chunk records only. An
-unchunked repair could therefore remain `Queued` in repair list/detail responses
-after its queue item was Completed and its attempt Succeeded. That is stale
-repair metadata, not a reason to replay successful output or reset the database.
-Current builds record terminal outcomes for both execution kinds and publish
-unchunked queue/history mappings atomically.
-
-Startup reconciles stale unchunked history in bounded, idempotent transactions.
-Only retained terminal queue records linked to the exact repair, job, and UTC
-window establish an outcome; Completed maps to Completed and DeadLettered to
-Failed. Valid terminal history is preserved. Active, blocked, childless,
-unlinked, and unprovable work stays unchanged. Completion timestamps come from
-recorded terminal history, not startup time. Reconciliation never changes job
-definitions, slice/queue state, attempts, or Kusto output.
-
-This is a startup data upgrade, including in scheduler-disabled instances. Do
-not start a development build against an older app's live database to test it.
-For a live upgrade, obtain explicit deployment/restart authorization, gracefully
-drain the published app, take an app-stopped backup of the SQLite database and
-any remaining WAL/SHM sidecars, and deploy the complete matching release bundle.
-Verify the affected batch and window through the existing
-`/api/v1/operations/repairs` and slice/attempt/queue diagnostics afterward; do
-not submit another repair just to refresh history.
-
-If retention has already removed the exact evidence, leave the old outcome
-unresolved rather than guessing from a later successful execution. A recurring
-cleanup agent may suppress external alerts for proven stale bookkeeping alone
-while recording the actual API status in its in-app report. Missing evidence,
-real failures, or incomplete recovery remain reportable.
-
 ## Orphaned leases and recovery
 
 A slice is **leased** while a worker holds it. If that worker faults or its
