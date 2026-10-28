@@ -85,6 +85,19 @@ Repair preserves the existing count/token safety:
 - Successful siblings and chunks with active automatic retry work are untouched.
 - Paused or soft-deleted jobs are rejected.
 
+Repair-history outcomes are persisted when the exact queue item completes or
+dead-letters, for both unchunked and chunked work. Batch summaries remain
+pending until enqueue is finalized and reflect all of their required work; a
+failed batch can be known to have failed before its other executions finish.
+`completedAtUtc` is populated only when required work has settled, using the
+recorded terminal timestamps rather than a later read or upgrade time.
+
+Older builds could leave unchunked repair slices and batches `Queued` despite
+successful execution. Startup now reconciles those rows in bounded transactions
+using retained, exactly linked terminal queue records. Missing/pruned evidence
+is not inferred from a currently Completed window. See the
+[repair-history upgrade precautions](operations-runbook.md#repair-history-bookkeeping-upgrades).
+
 The agent API does **not** expose whole-slice rerun, Kusto cleanup, hard delete,
 or mark-complete operations.
 

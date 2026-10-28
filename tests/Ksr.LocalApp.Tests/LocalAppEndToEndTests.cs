@@ -117,6 +117,8 @@ namespace Ksr.LocalApp.Tests
             Assert.Equal(DurableSliceStatus.Completed, state.Get(JobId("e2e.repair"), At(0), At(5)).Status);
             Assert.Equal(DurableSliceStatus.Completed, state.Get(JobId("e2e.repair"), At(5), At(10)).Status);
             Assert.Contains(executor.Requests, r => r.JobId == JobId("e2e.repair"));
+            Assert.All(repair.GetRepairSlices(repairPlan.RepairBatchId), slice => Assert.Equal(Ksr.Local.Core.Repair.RepairSliceStatus.Completed, slice.Status));
+            Assert.Equal("Completed", new SqliteDiagnosticsReadModelRepository(sqlite).GetRepairBatch(repairPlan.RepairBatchId)!.Status);
 
             var lifecycle = new SqliteJobLifecycleService(sqlite, catalog);
             var life = catalog.Create(Schedule("e2e.lifecycle", maxParallelism: 1));

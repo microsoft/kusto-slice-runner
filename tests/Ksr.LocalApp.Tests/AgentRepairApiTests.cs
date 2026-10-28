@@ -7,6 +7,7 @@ using System.Text;
 using System.Text.Json;
 using Ksr.Local.Sqlite.Catalog;
 using Ksr.Local.Sqlite.Connections;
+using Ksr.Local.Sqlite.Queue;
 using Ksr.Local.Sqlite.Schema;
 using Ksr.Local.Sqlite.State;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -70,6 +71,18 @@ namespace Ksr.LocalApp.Tests
 
             using var detail = await client.GetAsync(create.Headers.Location);
             Assert.Equal(HttpStatusCode.OK, detail.StatusCode);
+
+            var queue = new SqliteWorkQueueRepository(sqlite);
+            var item = queue.Claim("default", "test-worker", TimeSpan.FromMinutes(5), DateTimeOffset.UtcNow)!;
+            Assert.True(queue.Complete(item.QueueItemId, "test-worker"));
+            using var completedDetail = await client.GetAsync(create.Headers.Location);
+            using var completedBody = JsonDocument.Parse(await completedDetail.Content.ReadAsStringAsync());
+            Assert.Equal("Completed", Assert.Single(completedBody.RootElement.GetProperty("slices").EnumerateArray()).GetProperty("status").GetString());
+            using var batches = await client.GetAsync($"/api/v1/operations/repairs?jobId={job.JobId}");
+            using var batchesBody = JsonDocument.Parse(await batches.Content.ReadAsStringAsync());
+            var batch = Assert.Single(batchesBody.RootElement.GetProperty("items").EnumerateArray());
+            Assert.Equal("Completed", batch.GetProperty("status").GetString());
+            Assert.NotEqual(JsonValueKind.Null, batch.GetProperty("completedAtUtc").ValueKind);
         }
 
         [Fact]

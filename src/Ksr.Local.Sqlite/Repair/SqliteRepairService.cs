@@ -214,16 +214,16 @@ namespace Ksr.Local.Sqlite.Repair
                     continue;
                 }
 
-                var work = queue.Enqueue(
+                queue.EnqueueRepair(
                     request.JobId,
                     slice.StartUtc,
                     slice.EndUtc,
                     $"repair|{batchId}|{request.JobId}|{SqliteStorage.Utc(slice.StartUtc)}|{SqliteStorage.Utc(slice.EndUtc)}",
                     clock.UtcNow,
-                    priority: 100,
-                    payloadJson: JsonSerializer.Serialize(new { workKind = "Repair", repairBatchId = batchId, outputStrategy = request.OutputStrategy.ToString(), sliceKey = slice.ToKey().Value }));
+                    payloadJson: JsonSerializer.Serialize(new { workKind = "Repair", repairBatchId = batchId, outputStrategy = request.OutputStrategy.ToString(), sliceKey = slice.ToKey().Value }),
+                    repairBatchId: batchId,
+                    repairSliceId: StableId("repair-slice", batchId, slice.ToKey().Value));
                 queued++;
-                UpsertRepairSlice(batchId, slice, RepairSliceStatus.Queued, work.QueueItemId, null);
             }
 
             UpdateBatchStatus(batchId, queued > 0 ? RepairBatchStatus.Queued : RepairBatchStatus.Planned);
@@ -706,10 +706,12 @@ namespace Ksr.Local.Sqlite.Repair
         private void UpdateBatchStatus(string batchId, RepairBatchStatus status)
         {
             using var c = connectionFactory.OpenConnection();
-            using var cmd = SqliteStorage.Command(c, null, """
+            using var tx = c.BeginTransaction(System.Data.IsolationLevel.Serializable);
+            using var cmd = SqliteStorage.Command(c, tx, """
                 UPDATE repair_batches
                 SET status=CASE
                         WHEN status IN ('Completed','Failed') THEN status
+                        WHEN $status='Planned' AND status IN ('Queued','Running') THEN status
                         ELSE $status
                     END
                 WHERE repair_batch_id=$id;
@@ -717,6 +719,8 @@ namespace Ksr.Local.Sqlite.Repair
             cmd.Add("$status", status.ToString());
             cmd.Add("$id", batchId);
             cmd.ExecuteNonQuery();
+            SqliteRepairHistory.RefreshBatch(c, tx, batchId);
+            tx.Commit();
         }
 
         private static string StableId(params string[] parts)
