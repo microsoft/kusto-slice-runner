@@ -85,6 +85,9 @@ Repair preserves the existing count/token safety:
 - Successful siblings and chunks with active automatic retry work are untouched.
 - Paused or soft-deleted jobs are rejected.
 
+Repair history records terminal queue outcomes for both unchunked and chunked
+work. `completedAtUtc` is populated once all required work has settled.
+
 The agent API does **not** expose whole-slice rerun, Kusto cleanup, hard delete,
 or mark-complete operations.
 

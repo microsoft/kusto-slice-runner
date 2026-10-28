@@ -43,6 +43,173 @@ namespace Ksr.Local.Sqlite.Tests
         }
 
         [Fact]
+        public void Fast_workers_see_repair_mapping_atomically_and_cannot_finalize_an_unpublished_batch()
+        {
+            catalog.Create(Schedule("job.fast-repair"));
+            var jobId = JobId("job.fast-repair");
+            var completed = 0;
+            var callbackFactory = new CallbackConnectionFactory(factory, () =>
+            {
+                var item = queue.List(jobId).FirstOrDefault(item => item.State == DurableWorkQueueState.Queued);
+                if (item is null) return;
+                var batchId = QueryString("SELECT repair_batch_id FROM repair_slices WHERE enqueued_queue_item_id=$id;", ("$id", item.QueueItemId));
+                var history = Assert.Single(Service().GetRepairSlices(batchId), slice => slice.WorkItemId == item.QueueItemId);
+                Assert.Equal(item.QueueItemId, history.WorkItemId);
+                var claim = queue.Claim("default", "fast-worker", TimeSpan.FromMinutes(5), At(30))!;
+                Assert.True(queue.Complete(claim.QueueItemId, "fast-worker"));
+                Assert.Equal("Planned", QueryString("SELECT status FROM repair_batches WHERE repair_batch_id=$id;", ("$id", history.BatchId)));
+                completed++;
+            });
+            var service = new SqliteRepairService(factory, catalog, state, new SqliteWorkQueueRepository(callbackFactory), clock);
+
+            var repair = service.PlanAndEnqueue(new RepairPlanRequest(jobId, At(0), At(10), "tester", "fast repair"));
+
+            Assert.Equal(2, completed);
+            Assert.All(service.GetRepairSlices(repair.RepairBatchId), slice => Assert.Equal(RepairSliceStatus.Completed, slice.Status));
+            Assert.Equal("Completed", QueryString("SELECT status FROM repair_batches WHERE repair_batch_id=$id;", ("$id", repair.RepairBatchId)));
+        }
+
+        [Fact]
+        public async Task Unchunked_repair_execution_completes_history_and_survives_queue_retention()
+        {
+            catalog.Create(Schedule("job.unchunked-execute"));
+            var jobId = JobId("job.unchunked-execute");
+            state.Append("failed", jobId, At(0), At(5), DurableSliceStatus.DeadLettered, 0, "boom");
+            var repair = Service().PlanAndEnqueue(new RepairPlanRequest(
+                jobId, At(0), At(5), "tester", "repair", Scope: RepairSliceScope.FailedAndDeadLetteredOnly));
+            var executor = new RecordingExecutor();
+            var worker = new SqliteLocalWorker(catalog, state, queue, readModels, executor, clock, new LocalWorkerOptions(WorkerId: "repair-worker"));
+
+            Assert.True((await worker.RunOnceAsync()).Succeeded);
+
+            var item = Assert.Single(queue.List(jobId));
+            var completedAt = QueryString("SELECT updated_at_utc FROM work_queue WHERE queue_item_id=$id;", ("$id", item.QueueItemId));
+            Assert.Equal(DurableSliceStatus.Completed, state.Get(jobId, At(0), At(5)).Status);
+            Assert.Equal(RepairSliceStatus.Completed, Assert.Single(Service().GetRepairSlices(repair.RepairBatchId)).Status);
+            Assert.Equal("Completed", QueryString("SELECT status FROM repair_batches WHERE repair_batch_id=$id;", ("$id", repair.RepairBatchId)));
+            Assert.Equal(completedAt, QueryString("SELECT completed_at_utc FROM repair_batches WHERE repair_batch_id=$id;", ("$id", repair.RepairBatchId)));
+            Assert.Single(executor.Requests);
+            Assert.False(queue.Complete(item.QueueItemId, "repair-worker"));
+            Assert.False(queue.DeadLetter(item.QueueItemId, "repair-worker"));
+            Assert.Equal(1, readModels.CleanupOldReadModels(DateTimeOffset.UtcNow.AddDays(1), DateTimeOffset.UtcNow.AddDays(1)).QueueRowsDeleted);
+            new KsrSqliteSchema(factory).EnsureSchema();
+            var history = Assert.Single(Service().GetRepairSlices(repair.RepairBatchId));
+            Assert.Equal(RepairSliceStatus.Completed, history.Status);
+            Assert.Null(history.WorkItemId);
+            Assert.Equal(completedAt, QueryString("SELECT completed_at_utc FROM repair_batches WHERE repair_batch_id=$id;", ("$id", repair.RepairBatchId)));
+        }
+
+        [Theory]
+        [InlineData(false, "Completed")]
+        [InlineData(true, "Failed")]
+        public void Unchunked_repair_waits_for_all_windows_and_rejects_stale_terminal_calls(bool fail, string expected)
+        {
+            catalog.Create(Schedule("job.unchunked-terminal"));
+            var jobId = JobId("job.unchunked-terminal");
+            var repair = Service().PlanAndEnqueue(new RepairPlanRequest(jobId, At(0), At(10), "tester", "repair"));
+            var first = queue.Claim("default", "worker-a", TimeSpan.FromMinutes(5), At(30))!;
+            Assert.False(queue.Complete(first.QueueItemId, "wrong-worker"));
+            Assert.Equal("Queued", BatchStatus());
+            Assert.True(queue.Abandon(first.QueueItemId, "worker-a", At(31)));
+            Assert.Equal("Queued", BatchStatus());
+            Assert.Null(QueryScalar("SELECT completed_at_utc FROM repair_batches WHERE repair_batch_id=$id;", ("$id", repair.RepairBatchId)) as string);
+            var second = queue.Claim("default", "worker-b", TimeSpan.FromMinutes(5), At(30))!;
+            Assert.True(queue.Complete(second.QueueItemId, "worker-b"));
+            Assert.Equal("Queued", BatchStatus());
+            Assert.Contains(Service().GetRepairSlices(repair.RepairBatchId), slice => slice.Status == RepairSliceStatus.Queued);
+            Assert.NotNull(queue.Claim("default", "worker-c", TimeSpan.FromMinutes(5), At(31)));
+            Assert.False(queue.Complete(first.QueueItemId, "worker-a"));
+            Assert.True(fail ? queue.DeadLetter(first.QueueItemId, "worker-c") : queue.Complete(first.QueueItemId, "worker-c"));
+            Assert.Equal(expected, BatchStatus());
+            Assert.Equal(expected, Service().GetRepairSlices(repair.RepairBatchId).Single(slice => slice.WorkItemId == first.QueueItemId).Status.ToString());
+            Assert.Equal(
+                QueryString("SELECT updated_at_utc FROM work_queue WHERE queue_item_id=$id;", ("$id", first.QueueItemId)),
+                QueryString("SELECT completed_at_utc FROM repair_batches WHERE repair_batch_id=$id;", ("$id", repair.RepairBatchId)));
+
+            string BatchStatus() => QueryString("SELECT status FROM repair_batches WHERE repair_batch_id=$id;", ("$id", repair.RepairBatchId));
+        }
+
+        [Fact]
+        public void Startup_reconciles_exact_terminal_history_in_multiple_pages_without_inventing_outcomes()
+        {
+            catalog.Create(Schedule("job.history-upgrade"));
+            var jobId = JobId("job.history-upgrade");
+            var repair = Service().PlanAndEnqueue(new RepairPlanRequest(jobId, At(0), At(5 * 205), "tester", "legacy"));
+            ExecuteNonQuery($"""
+                UPDATE work_queue SET state='Completed',updated_at_utc='2026-02-01T01:00:00.0000000Z' WHERE job_id='{jobId}';
+                UPDATE work_queue SET state='DeadLettered' WHERE job_id='{jobId}' AND slice_start_utc='2026-01-01T00:00:00.0000000Z';
+                """);
+
+            new KsrSqliteSchema(factory).EnsureSchema();
+            new KsrSqliteSchema(factory).EnsureSchema();
+
+            var slices = Service().GetRepairSlices(repair.RepairBatchId);
+            Assert.Equal(204, slices.Count(slice => slice.Status == RepairSliceStatus.Completed));
+            Assert.Single(slices, slice => slice.Status == RepairSliceStatus.Failed);
+            Assert.Equal("Failed", QueryString("SELECT status FROM repair_batches WHERE repair_batch_id=$id;", ("$id", repair.RepairBatchId)));
+            Assert.Equal("2026-02-01T01:00:00.0000000Z", QueryString("SELECT completed_at_utc FROM repair_batches WHERE repair_batch_id=$id;", ("$id", repair.RepairBatchId)));
+            Assert.Equal(205, queue.List(jobId).Count);
+            Assert.Equal(DurableSliceStatus.Queued, state.Get(jobId, At(0), At(5)).Status);
+        }
+
+        [Theory]
+        [InlineData("Completed", "DeadLettered")]
+        [InlineData("Failed", "Completed")]
+        public void Startup_does_not_rewrite_established_terminal_history(string outcome, string queueOutcome)
+        {
+            catalog.Create(Schedule("job.established-history"));
+            var jobId = JobId("job.established-history");
+            var repair = Service().PlanAndEnqueue(new RepairPlanRequest(jobId, At(0), At(5), "tester", "legacy"));
+            ExecuteNonQuery($"""
+                UPDATE work_queue SET state='{queueOutcome}',updated_at_utc='2026-02-02T00:00:00.0000000Z' WHERE job_id='{jobId}';
+                UPDATE repair_slices SET status='{outcome}',updated_at_utc='2026-02-01T00:00:00.0000000Z' WHERE repair_batch_id='{repair.RepairBatchId}';
+                UPDATE repair_batches SET status='{outcome}',completed_at_utc='2026-02-01T00:00:00.0000000Z' WHERE repair_batch_id='{repair.RepairBatchId}';
+                """);
+
+            new KsrSqliteSchema(factory).EnsureSchema();
+
+            Assert.Equal(outcome, Assert.Single(Service().GetRepairSlices(repair.RepairBatchId)).Status.ToString());
+            Assert.Equal(outcome, QueryString("SELECT status FROM repair_batches WHERE repair_batch_id=$id;", ("$id", repair.RepairBatchId)));
+            Assert.Equal("2026-02-01T00:00:00.0000000Z", QueryString("SELECT completed_at_utc FROM repair_batches WHERE repair_batch_id=$id;", ("$id", repair.RepairBatchId)));
+        }
+
+        [Theory]
+        [InlineData("Completed", "Completed")]
+        [InlineData("DeadLettered", "Failed")]
+        [InlineData("Queued", "Queued")]
+        [InlineData("Leased", "Queued")]
+        [InlineData("Pruned", "Queued")]
+        [InlineData("WrongWindow", "Queued")]
+        [InlineData("Blocked", "Blocked")]
+        public void Startup_reconciliation_uses_exact_queue_evidence_not_a_later_completed_parent(string evidence, string expected)
+        {
+            catalog.Create(Schedule("job.history-evidence"));
+            var jobId = JobId("job.history-evidence");
+            var repair = Service().PlanAndEnqueue(new RepairPlanRequest(jobId, At(0), At(5), "tester", "legacy"));
+            state.Append("later-success", jobId, At(0), At(5), DurableSliceStatus.Completed, 1, "later run");
+            var item = Assert.Single(queue.List(jobId));
+            ExecuteNonQuery($"UPDATE work_queue SET state='Completed',updated_at_utc='2026-02-01T01:00:00.0000000Z' WHERE queue_item_id='{item.QueueItemId}';");
+            if (evidence is "Queued" or "Leased" or "DeadLettered")
+                ExecuteNonQuery($"UPDATE work_queue SET state='{evidence}' WHERE queue_item_id='{item.QueueItemId}';");
+            if (evidence == "Pruned")
+                ExecuteNonQuery($"DELETE FROM work_queue WHERE queue_item_id='{item.QueueItemId}';");
+            if (evidence == "WrongWindow")
+                ExecuteNonQuery($"UPDATE repair_slices SET slice_end_utc='2026-01-01T00:10:00.0000000Z' WHERE enqueued_queue_item_id='{item.QueueItemId}';");
+            if (evidence == "Blocked")
+                ExecuteNonQuery($"UPDATE repair_slices SET status='Blocked' WHERE repair_batch_id='{repair.RepairBatchId}';");
+
+            new KsrSqliteSchema(factory).EnsureSchema();
+            new KsrSqliteSchema(factory).EnsureSchema();
+
+            Assert.Equal(expected, Assert.Single(Service().GetRepairSlices(repair.RepairBatchId)).Status.ToString());
+            Assert.Equal(expected is "Completed" or "Failed" ? expected : "Queued",
+                QueryString("SELECT status FROM repair_batches WHERE repair_batch_id=$id;", ("$id", repair.RepairBatchId)));
+            Assert.Equal(expected is "Completed" or "Failed" ? "2026-02-01T01:00:00.0000000Z" : null,
+                QueryScalar("SELECT completed_at_utc FROM repair_batches WHERE repair_batch_id=$id;", ("$id", repair.RepairBatchId)) as string);
+            Assert.Equal(DurableSliceStatus.Completed, state.Get(jobId, At(0), At(5)).Status);
+        }
+
+        [Fact]
         public void Creates_repair_batch_for_missing_and_failed_slices_with_idempotent_enqueue()
         {
             catalog.Create(Schedule("job.repair"));
@@ -58,6 +225,10 @@ namespace Ksr.Local.Sqlite.Tests
             Assert.All(queue.List(JobId("job.repair")), item => Assert.StartsWith("repair|", item.IdempotencyKey, StringComparison.Ordinal));
             Assert.Contains(service.GetRepairSlices(first.RepairBatchId), s => s.Status == RepairSliceStatus.Queued && s.Slice.StartUtc == At(0));
             Assert.Contains(service.GetRepairSlices(first.RepairBatchId), s => s.Status == RepairSliceStatus.Queued && s.Slice.StartUtc == At(5));
+            Assert.Equal("Queued", QueryString("SELECT status FROM repair_batches WHERE repair_batch_id=$id;", ("$id", first.RepairBatchId)));
+            while (queue.Claim("default", "duplicate-repair-worker", TimeSpan.FromMinutes(5), At(30)) is { } item)
+                Assert.True(queue.Complete(item.QueueItemId, "duplicate-repair-worker"));
+            Assert.Equal("Completed", QueryString("SELECT status FROM repair_batches WHERE repair_batch_id=$id;", ("$id", first.RepairBatchId)));
         }
 
         [Fact]
@@ -306,9 +477,9 @@ namespace Ksr.Local.Sqlite.Tests
         [Fact]
         public async Task Repaired_chunk_that_fails_again_keeps_successful_sibling_untouched()
         {
-            catalog.Create(Schedule("job.chunk-repair-refail", chunks: 2));
+            catalog.Create(Schedule("job.chunk-repair-refail", chunks: 3));
             var slice = new SliceRange(JobId("job.chunk-repair-refail"), At(0), At(5));
-            var children = chunkState.EnsureWindow(slice, 2, "test");
+            var children = chunkState.EnsureWindow(slice, 3, "test");
             foreach (var child in children)
             {
                 chunkState.MarkQueued($"queued-{child.ChunkId}", child.Execution, actor: "test");
@@ -319,7 +490,7 @@ namespace Ksr.Local.Sqlite.Tests
                 }
                 else
                 {
-                    chunkState.DeadLetterLease("dead-1", child.Execution, "worker-1", lease.LeaseToken!, At(11), "permanent", "Permanent");
+                    chunkState.DeadLetterLease($"dead-{child.ChunkId}", child.Execution, $"worker-{child.ChunkId}", lease.LeaseToken!, At(11), "permanent", "Permanent");
                 }
             }
 
@@ -344,15 +515,19 @@ namespace Ksr.Local.Sqlite.Tests
             var run = await worker.RunOnceAsync();
 
             Assert.True(run.DeadLettered);
-            Assert.Equal([1], executor.Executions.Select(execution => execution.ChunkId).ToArray());
+            Assert.Equal("Failed", QueryString("SELECT status FROM repair_batches WHERE repair_batch_id=$id;", ("$id", repair.RepairBatchId)));
+            Assert.Null(QueryScalar("SELECT completed_at_utc FROM repair_batches WHERE repair_batch_id=$id;", ("$id", repair.RepairBatchId)) as string);
+            Assert.True((await worker.RunOnceAsync()).DeadLettered);
+            Assert.Equal([1, 2], executor.Executions.Select(execution => execution.ChunkId).ToArray());
             Assert.Equal(DurableSliceStatus.DeadLettered, state.Get(slice.JobId, slice.StartUtc, slice.EndUtc).Status);
             Assert.Equal(DurableSliceStatus.Completed, chunkState.Get(children[0].Execution)!.Status);
             Assert.Equal(1, chunkState.Get(children[0].Execution)!.Attempt);
             Assert.Equal(DurableSliceStatus.DeadLettered, chunkState.Get(children[1].Execution)!.Status);
             Assert.Equal(2, chunkState.Get(children[1].Execution)!.Attempt);
-            Assert.Equal(RepairSliceStatus.Failed, Assert.Single(Service().GetRepairChunkExecutions(repair.RepairBatchId)).Status);
+            Assert.All(Service().GetRepairChunkExecutions(repair.RepairBatchId), child => Assert.Equal(RepairSliceStatus.Failed, child.Status));
             Assert.Equal(RepairSliceStatus.Failed, Assert.Single(Service().GetRepairSlices(repair.RepairBatchId)).Status);
             Assert.Equal("Failed", QueryString("SELECT status FROM repair_batches WHERE repair_batch_id=$id;", ("$id", repair.RepairBatchId)));
+            Assert.NotNull(QueryScalar("SELECT completed_at_utc FROM repair_batches WHERE repair_batch_id=$id;", ("$id", repair.RepairBatchId)) as string);
         }
 
         [Fact]
@@ -815,6 +990,25 @@ namespace Ksr.Local.Sqlite.Tests
             {
                 Requests.Add(slice);
                 return Task.FromResult(LocalSliceOutputResult.Success("test://repair"));
+            }
+
+        }
+
+        private sealed class CallbackConnectionFactory : IKsrSqliteConnectionFactory
+        {
+            private readonly IKsrSqliteConnectionFactory inner;
+            private readonly Action beforeOpen;
+
+            public CallbackConnectionFactory(IKsrSqliteConnectionFactory inner, Action beforeOpen)
+            {
+                this.inner = inner;
+                this.beforeOpen = beforeOpen;
+            }
+
+            public SqliteConnection OpenConnection()
+            {
+                beforeOpen();
+                return inner.OpenConnection();
             }
         }
 

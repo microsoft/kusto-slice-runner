@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 using Ksr.Local.Sqlite.Connections;
+using Ksr.Local.Sqlite.Repair;
 using Microsoft.Data.Sqlite;
 
 namespace Ksr.Local.Sqlite.Schema
@@ -39,6 +40,7 @@ namespace Ksr.Local.Sqlite.Schema
             EnsureColumn(connection, "operational_logs", "chunk_id", "INTEGER NULL");
             EnsureColumn(connection, "operational_logs", "total_chunks", "INTEGER NULL");
             ExecuteNonQuery(connection, AdditiveIndexSql);
+            SqliteRepairHistory.ReconcileUnchunked(connection);
             ExecuteNonQuery(connection, "DROP TABLE IF EXISTS ingestion_throttle_observations;");
         }
 
